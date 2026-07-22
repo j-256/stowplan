@@ -37,7 +37,7 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
     if (!navigator.onLine || value.outbox.length === 0) return;
     setSyncing(true);
     try {
-      const response = await fetch("/api/sync", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ commands: value.outbox.map(x => x.envelope), workspaceId: value.state.workspace.id }) });
+      const response = await fetch("/api/sync", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ commands: value.outbox.map(x => x.envelope), snapshot: value.state, workspaceId: value.state.workspace.id }) });
       if (response.status === 401 || response.status === 404) return;
       if (!response.ok) throw new Error(`Sync failed (${response.status})`);
       const body = await response.json() as { state: WorkspaceState };
