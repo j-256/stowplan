@@ -21,14 +21,13 @@ const Store = createContext<StoreValue | null>(null);
 export function StowplanProvider({ children }: { children: React.ReactNode }) {
   const [replica, setReplica] = useState<LocalReplica | null>(null);
   const [loaded, setLoaded] = useState(false);
-  const [online, setOnline] = useState(true);
+  const [online, setOnline] = useState(() => typeof navigator === "undefined" ? true : navigator.onLine);
   const [syncing, setSyncing] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const maxTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => { readReplica().then(value => { setReplica(value); setLoaded(true); }); }, []);
   useEffect(() => {
-    setOnline(navigator.onLine);
     const update = () => setOnline(navigator.onLine);
     addEventListener("online", update); addEventListener("offline", update);
     return () => { removeEventListener("online", update); removeEventListener("offline", update); };
