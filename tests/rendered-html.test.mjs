@@ -51,10 +51,13 @@ test("initializes OpenNext bindings for next dev and awaits runtime context fail
 
 test("keeps hierarchy and touch drag affordances in the shipped organizer", () => {
   const application = readFileSync(new URL("../src/client/stowplan-app.tsx", import.meta.url), "utf8");
+  const styles = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
   assert.match(application, /aria-label="Space hierarchy"/);
+  assert.match(application, /reorder within/);
   assert.match(application, /onPointerDown=/);
   assert.match(application, /"before" \| "inside" \| "after"/);
   assert.match(application, /const canReorder = Boolean\(locationFilter\)/);
+  assert.match(styles, /\.tree-select \.tree-name\{[^}]*overflow:visible[^}]*white-space:normal/);
 });
 
 test("ships task-oriented item, plan, and workspace controls", () => {

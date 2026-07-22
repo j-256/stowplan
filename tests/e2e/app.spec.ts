@@ -85,6 +85,38 @@ test("resets the active demo from the main menu", async ({ page }) => {
   expect(after.state.workspace.id).not.toBe(before.state.workspace.id);
 });
 
+test("reorders sibling spaces in Capture and advances in visible hierarchy order", async ({ page }) => {
+  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+
+  await expect(page.getByRole("button", { name: "Drag Right side to reorder within Kitchen" })).toBeVisible();
+  await page.locator('.capture-location-row[data-location-id="loc_right"] .queue-row').click();
+  await page.getByPlaceholder("Label code").fill("NEW");
+  await page.getByPlaceholder("Nested box or bin").fill("Priority bin");
+  await page.getByRole("button", { name: "Add inside Right side" }).click();
+
+  const priority = page.locator(".capture-location-row", { hasText: "Priority bin" });
+  const corner = page.locator('.capture-location-row[data-location-id="loc_unknown"]');
+  await expect(page.getByRole("button", { name: "Drag Priority bin to reorder within Right side" })).toBeVisible();
+  await priority.dragTo(corner);
+  await expect.poll(async () => {
+    const replica = await localReplica(page) as { state: { locations: { code: string; order: number }[] } };
+    const created = replica.state.locations.find((location) => location.code === "NEW")?.order ?? Number.POSITIVE_INFINITY;
+    const existing = replica.state.locations.find((location) => location.code === "C-04")?.order ?? Number.NEGATIVE_INFINITY;
+    return created < existing;
+  }).toBe(true);
+
+  await page.locator('.capture-location-row[data-location-id="loc_kitchen"] .queue-row').click();
+  await page.getByRole("button", { name: "Mark counted & next" }).click();
+  await expect(page.getByRole("heading", { name: "NEW · Priority bin" })).toBeVisible();
+
+  await page.locator("button.nav:visible", { hasText: "Spaces" }).click();
+  const overflow = await page.locator(".tree-panel").evaluate((panel) => ({
+    labels: [...panel.querySelectorAll<HTMLElement>(".tree-name")].filter((label) => label.scrollWidth > label.clientWidth || label.scrollHeight > label.clientHeight).map((label) => label.innerText),
+    panel: panel.scrollWidth > panel.clientWidth,
+  }));
+  expect(overflow).toEqual({ labels: [], panel: false });
+});
+
 test("supports drag organization and the partial-move fallback", async ({ page }) => {
   await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
   await page.locator("button.nav:visible", { hasText: "Spaces" }).click();
