@@ -186,6 +186,7 @@ function validateItem(state: WorkspaceState, item: ItemRecord): void {
         throw new DomainError("INVALID_QUANTITY", "Quantity must be greater than zero");
     }
     if (!item.unit.trim()) throw new DomainError("UNIT_REQUIRED", "Unit is required");
+    if (!Number.isFinite(item.order)) throw new DomainError("INVALID_ORDER", "Item order must be a number");
     requireLocation(state, item.locationId);
 }
 
@@ -228,6 +229,9 @@ function moveItemPatches(
     );
     const patches: FieldPatch[] = [];
     const remaining = item.quantity - quantity;
+    const destinationOrder = state.items
+        .filter((candidate) => candidate.locationId === destinationId && !candidate.archivedAt)
+        .reduce((maximum, candidate) => Math.max(maximum, candidate.order ?? 0), -1) + 1;
 
     if (matching) {
         patches.push(
@@ -249,6 +253,7 @@ function moveItemPatches(
     if (remaining === 0) {
         patches.push(
             patch("item", item.id, "locationId", item.locationId, destinationId),
+            patch("item", item.id, "order", item.order, destinationOrder),
             patch("item", item.id, "updatedAt", item.updatedAt, envelope.timestamp),
             patch("item", item.id, "version", item.version, item.version + 1),
         );
@@ -260,6 +265,7 @@ function moveItemPatches(
         createdAt: envelope.timestamp,
         id: `item_split_${envelope.id}`,
         locationId: destinationId,
+        order: destinationOrder,
         quantity,
         updatedAt: envelope.timestamp,
         version: 1,
@@ -431,6 +437,22 @@ function normalPatches(
             patch("item", item.id, "version", item.version, item.version + 1),
         );
         return { label: `Updated ${item.name}`, patches, subjectIds: [item.id] };
+    }
+
+    if (command.type === "item.reorder") {
+        const item = requireItem(state, command.id);
+        if (!Number.isFinite(command.order)) {
+            throw new DomainError("INVALID_ORDER", "Item order must be a number");
+        }
+        return {
+            label: `Reordered ${item.name}`,
+            patches: [
+                patch("item", item.id, "order", item.order, command.order),
+                patch("item", item.id, "updatedAt", item.updatedAt, envelope.timestamp),
+                patch("item", item.id, "version", item.version, item.version + 1),
+            ],
+            subjectIds: [item.id, item.locationId],
+        };
     }
 
     if (command.type === "item.delete") {

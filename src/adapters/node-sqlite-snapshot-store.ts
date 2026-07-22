@@ -1,5 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
-import type { WorkspaceState } from "../domain";
+import { normalizeWorkspaceState, type WorkspaceState } from "../domain";
 import type { SnapshotStore } from "../server/storage";
 
 interface SnapshotRow {
@@ -75,7 +75,7 @@ export class NodeSqliteSnapshotStore implements SnapshotStore {
             )
             .get(workspaceId) as unknown as SnapshotRow | undefined;
         if (!row) return null;
-        const state = JSON.parse(row.state_json) as WorkspaceState;
+        const state = normalizeWorkspaceState(JSON.parse(row.state_json) as WorkspaceState);
         if (state.workspace.revision !== row.revision) {
             throw new Error("Stored workspace revision does not match its snapshot");
         }

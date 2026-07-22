@@ -77,13 +77,21 @@ export function expectationsForCommand(
         return [locationExpectation(location, "")];
     }
 
-    if (command.type === "item.update" || command.type === "item.delete" || command.type === "item.move") {
+    if (
+        command.type === "item.update" ||
+        command.type === "item.reorder" ||
+        command.type === "item.delete" ||
+        command.type === "item.move"
+    ) {
         const item = state.items.find((candidate) => candidate.id === command.id);
         if (!item) return [];
         if (command.type === "item.update") {
             return Object.keys(command.changes).map((path) =>
                 itemExpectation(item, path as keyof ItemRecord),
             );
+        }
+        if (command.type === "item.reorder") {
+            return [itemExpectation(item, "order"), itemExpectation(item, "version")];
         }
         if (command.type === "item.move") {
             return [

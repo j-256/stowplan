@@ -29,6 +29,9 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
+.dev.vars
+!.dev.vars.example
 
 # vercel
 .vercel
@@ -37,7 +40,14 @@ yarn-error.log*
 next-env.d.ts
 *.tsbuildinfo
 /dist/
+/.open-next/
+/data/
+/docs/.vitepress/cache/
+/docs/.vitepress/dist/
+/playwright-report/
+/test-results/
 /.wrangler/
 /.sites-runtime/
 /outputs/
 /work/
+/stowplan-before-upgrade.sql
