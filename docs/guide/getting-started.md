@@ -18,3 +18,9 @@ Use short codes your label gun can print: `GAR-01`, `GAR-01-A`, `KIT-C03`, `KIT-
 ## Phone ergonomics
 
 The bottom navigation, 44-pixel targets, single-column capture form, sticky completion controls, safe-area spacing, and keyboard-friendly item loop are the primary interface. Desktop adds room for the location tree and structured inspector without changing the workflow.
+
+## Return to the main menu
+
+Choose the house icon in the page header, or open **Settings → Open main menu**. The menu can continue the current workspace, start another workspace, or open the kitchen demo. Switching does not erase work; saved workspaces remain available under **Settings → Workspaces on this device**.
+
+When the kitchen demo is active, the main menu also shows **Reset kitchen demo**. Reset requires confirmation, discards only that demo’s changes and queued backup commands, and creates a fresh demo. It does not touch any other workspace on the device.

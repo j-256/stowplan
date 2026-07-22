@@ -1,6 +1,6 @@
 {
   "name": "stowplan",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "license": "AGPL-3.0-only",
   "author": "j-256 (James Klein)",
@@ -15,6 +15,7 @@
   "scripts": {
     "install:ci": "bash scripts/install-ci.sh",
     "dev": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vite",
+    "dev:next": "bash scripts/sites-env.sh -- next dev",
     "build": "bash scripts/build-verified.sh",
     "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
     "start:node": "node scripts/node-server.mjs",
@@ -22,6 +23,7 @@
     "test:unit": "vitest run",
     "test:render": "node --test tests/rendered-html.test.mjs",
     "test:node-smoke": "node scripts/smoke-node.mjs",
+    "test:next-dev-smoke": "node scripts/smoke-next-dev.mjs",
     "test:e2e": "playwright test",
     "test:coverage": "vitest run --coverage",
     "typecheck": "tsc --noEmit",
@@ -32,7 +34,7 @@
     "docs:build": "vitepress build docs",
     "docs:check": "node scripts/check-docs-build.mjs",
     "docs:preview": "vitepress preview docs",
-    "build:next": "next build",
+    "build:next": "bash scripts/sites-env.sh -- next build",
     "build:cloudflare": "bash scripts/sites-env.sh -- opennextjs-cloudflare build",
     "preview:cloudflare": "bash scripts/sites-env.sh -- opennextjs-cloudflare build && bash scripts/sites-env.sh -- opennextjs-cloudflare preview",
     "deploy:cloudflare": "bash scripts/sites-env.sh -- opennextjs-cloudflare build && bash scripts/sites-env.sh -- opennextjs-cloudflare deploy"

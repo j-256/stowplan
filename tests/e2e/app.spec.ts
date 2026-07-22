@@ -34,6 +34,11 @@ test("onboards, captures, edits, searches, plans, rolls back, and persists local
   await page.getByRole("button", { name: "Save & add next" }).click();
   await expect(page.getByText("Test tea towels", { exact: true })).toBeVisible();
 
+  await page.getByLabel("Open main menu").click();
+  await expect(page.getByRole("heading", { name: "Where to next?" })).toBeVisible();
+  await page.getByRole("button", { name: "Continue current workspace" }).click();
+  await expect(page.getByText("Test tea towels", { exact: true })).toBeVisible();
+
   await page.getByRole("button", { name: "Edit Test tea towels" }).click();
   await page.getByLabel("Category").fill("Linens");
   await page.getByLabel("Tags, comma-separated").fill("washable, prep");
@@ -53,6 +58,21 @@ test("onboards, captures, edits, searches, plans, rolls back, and persists local
   await page.getByLabel("Change theme").click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   expect(consoleErrors).toEqual([]);
+});
+
+test("resets the active demo from the main menu", async ({ page }) => {
+  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+  const before = await localReplica(page) as { state: { workspace: { id: string } } };
+  await page.getByLabel("Qty").fill("1");
+  await page.getByLabel("What is it?").fill("Temporary demo item");
+  await page.getByRole("button", { name: "Save & add next" }).click();
+  await page.getByLabel("Open main menu").click();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Reset kitchen demo" }).click();
+  await expect(page.getByRole("heading", { name: "Capture" })).toBeVisible();
+  await expect(page.getByText("Temporary demo item", { exact: true })).toHaveCount(0);
+  const after = await localReplica(page) as { state: { workspace: { id: string } } };
+  expect(after.state.workspace.id).not.toBe(before.state.workspace.id);
 });
 
 test("supports drag organization and the partial-move fallback", async ({ page }) => {
