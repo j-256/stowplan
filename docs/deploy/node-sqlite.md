@@ -9,9 +9,12 @@ npm ci
 npm run build:next
 STOWPLAN_SQLITE_PATH="$PWD/data/stowplan.sqlite" \
 AUTH_BASE_URL="http://localhost:3000" \
+AUTH_ADMIN_EMAILS="owner@example.test" \
 AUTH_DEV_ENABLED="true" \
 npm run start:node
 ```
+
+To exercise the full control plane, visit `http://localhost:3000/account?returnTo=/admin` and use the local development form with `owner@example.test`. The automated equivalent is `npm run test:node-smoke`, which signs in, claims a workspace, and reads `/api/admin/overview` against a temporary SQLite database.
 
 For production, use HTTPS at the reverse proxy, remove `AUTH_DEV_ENABLED`, set provider secrets in the service manager, and set:
 

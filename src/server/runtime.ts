@@ -19,6 +19,6 @@ export interface RuntimeEnv {
 export async function runtimeEnv(): Promise<RuntimeEnv> {
   const injected = (globalThis as typeof globalThis & { __STOWPLAN_ENV?: RuntimeEnv }).__STOWPLAN_ENV;
   if (injected) return injected;
-  try { return getCloudflareContext({ async: true }).then(context => context.env as RuntimeEnv); }
+  try { return { ...process.env, ...(await getCloudflareContext({ async: true })).env } as RuntimeEnv; }
   catch { return process.env as RuntimeEnv; }
 }

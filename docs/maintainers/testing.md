@@ -14,12 +14,14 @@ npm run build
 npm run test:render
 npm run build:next
 npm run test:node-smoke
+npx wrangler d1 migrations apply stowplan --local --config wrangler.jsonc
+npm run test:next-dev-smoke
 npm run build:cloudflare
 npx wrangler deploy --dry-run --config wrangler.jsonc
 npm sbom --omit=dev --sbom-format cyclonedx > stowplan-sbom.cdx.json
 ```
 
-The suite covers domain invariants, whole-container planning, split/merge and bulk moves, field-aware conflicts, pluck/batch history, optimistic sync/idempotency, D1-compatible SQLite persistence, authentication/session revocation, concurrent guest-link single use, multi-workspace IndexedDB persistence, and deep backup validation. Coverage has checked-in minimums for the portable domain, server, and storage-adapter layers. The Node smoke starts the production standalone server against a temporary SQLite database and exercises health, security headers, authentication, workspace claiming, idempotent sync, authorized snapshot restore, admin reads, read-only guest reconciliation, and scanner-safe link redemption through HTTP.
+The suite covers domain invariants, whole-container planning, split/merge and bulk moves, field-aware conflicts, pluck/batch history, optimistic sync/idempotency, D1-compatible SQLite persistence, authentication/session revocation, concurrent guest-link single use, multi-workspace IndexedDB persistence, isolated demo reset, async runtime fallback, and deep backup validation. Coverage has checked-in minimums for the portable domain, server, and storage-adapter layers. The Node smoke starts the production standalone server against a temporary SQLite database and exercises health, security headers, authentication, provider discovery, workspace claiming, idempotent sync, authorized snapshot restore, admin reads, read-only guest reconciliation, and scanner-safe link redemption through HTTP.
 
 Browser gates use Chromium at mobile and desktop sizes, exercise onboarding → demo → capture → search → plan → activity → theme, run axe, inspect console errors, test offline reload, and verify the service worker never caches APIs.
 
@@ -38,7 +40,7 @@ Stowplan targets the newest Node 24 LTS patch recorded in `.nvmrc`, not the shor
 5. Check light/dark/system, reduced motion, keyboard-only, screen-reader labels, Pixel-class mobile viewport, and wide desktop.
 6. Build docs with `/stowplan/` and `/` bases; inspect generated links.
 7. Generate truthful screenshots from the final build.
-8. Generate an SBOM, review licenses, update changelog/version, sign/tag `v1.0.0`, and deploy code only after remote migrations.
+8. Generate an SBOM, review licenses, update changelog/version, sign/tag the release version, and deploy code only after remote migrations.
 9. Run health, login, sync, export, and restore smoke checks in production.
 
 Security reports follow `SECURITY.md`; do not open a public issue containing an auth bypass, secret, guest URL, or production export.

@@ -87,6 +87,22 @@ export async function writeReplica(replica: LocalReplica): Promise<void> {
   });
 }
 
+export async function replaceReplica(replica: LocalReplica, previousWorkspaceId?: string): Promise<void> {
+  const db = await database();
+  await new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction(STORE, "readwrite");
+    const store = transaction.objectStore(STORE);
+    store.put(replica, "active");
+    store.put(replica, workspaceKey(replica.state.workspace.id));
+    if (previousWorkspaceId && previousWorkspaceId !== replica.state.workspace.id) {
+      store.delete(workspaceKey(previousWorkspaceId));
+    }
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error);
+  });
+}
+
 export async function clearReplica(): Promise<void> {
   const db = await database();
   await new Promise<void>((resolve, reject) => {

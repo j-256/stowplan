@@ -25,6 +25,8 @@ jobs:
       - run: npm run test:render
       - run: npm run build:next
       - run: npm run test:node-smoke
+      - run: npx wrangler d1 migrations apply stowplan --local --config wrangler.jsonc
+      - run: npm run test:next-dev-smoke
       - run: npm run build:cloudflare
       - run: npx wrangler deploy --dry-run --config wrangler.jsonc
   browser:

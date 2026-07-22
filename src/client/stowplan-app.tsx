@@ -10,9 +10,11 @@ import {
   ClipboardList,
   Edit3,
   GripVertical,
+  Home,
   Map as MapIcon,
   Moon,
   PackagePlus,
+  RotateCcw,
   Search,
   Settings,
   Sun,
@@ -23,7 +25,7 @@ import {
   X,
 } from "lucide-react";
 import { createDemoState } from "../domain/demo";
-import { createEmptyState, createItem, createLocation } from "../domain/factories";
+import { createEmptyState, createItem, createLocation, newId } from "../domain/factories";
 import { DEFAULT_PLAN_WEIGHTS, generatePlan as buildMovePlan } from "../domain/planner";
 import type {
   CaptureStatus,
@@ -132,9 +134,10 @@ export function StowplanApp() {
 }
 
 function Application() {
-  const { state, initialize, dispatch, openWorkspace, online, pending, blocked, syncing } = useStowplan();
+  const { state, initialize, dispatch, openWorkspace, online, pending, blocked, replace, syncing } = useStowplan();
   const [view, setView] = useState<View>("capture");
   const [selected, setSelected] = useState<string | null>(null);
+  const [showWelcome, setShowWelcome] = useState(false);
   const [theme, setTheme] = useState<ThemePreference>("system");
   const [workspaceNotice, setWorkspaceNotice] = useState("");
 
@@ -166,12 +169,39 @@ function Application() {
     }).catch((error) => setWorkspaceNotice(error instanceof Error ? error.message : "Could not open the shared workspace"));
   }, [openWorkspace]);
 
+  const enter = (next: WorkspaceState) => {
+    setSelected(next.locations[0]?.id ?? null);
+    setView("capture");
+    setShowWelcome(false);
+  };
+  const start = async (demo: boolean) => {
+    const next = demo ? createDemoState(newId("ws_demo")) : createEmptyState();
+    await initialize(next);
+    enter(next);
+  };
+  const openDemo = async () => {
+    const demo = (await listWorkspaceReplicas()).find((workspace) => workspace.id.startsWith("ws_demo"));
+    if (demo) {
+      await openWorkspace(demo.id);
+      setSelected(null);
+      setView("capture");
+      setShowWelcome(false);
+      return;
+    }
+    await start(true);
+  };
+  const resetDemo = async () => {
+    if (!confirm("Reset the kitchen demo? Every change and queued backup belonging to this demo will be discarded. Your other workspaces are not affected.")) return;
+    const next = createDemoState(newId("ws_demo"));
+    await replace(next);
+    enter(next);
+  };
+
   if (!state) {
-    return <><Onboarding onStart={async (demo) => {
-      const next = demo ? createDemoState() : createEmptyState();
-      await initialize(next);
-      setSelected(next.locations[0]?.id ?? null);
-    }} />{workspaceNotice && <output className="workspace-notice onboarding-notice">{workspaceNotice}</output>}</>;
+    return <><Onboarding onStart={start} />{workspaceNotice && <output className="workspace-notice onboarding-notice">{workspaceNotice}</output>}</>;
+  }
+  if (showWelcome) {
+    return <Onboarding currentName={state.workspace.name} isDemo={state.workspace.id.startsWith("ws_demo")} onContinue={() => setShowWelcome(false)} onOpenDemo={openDemo} onResetDemo={resetDemo} onStart={start} />;
   }
   const current = state.locations.find((location) => location.id === selected) ?? state.locations.find((location) => !location.archivedAt) ?? null;
   return <div className="app-shell">
@@ -181,14 +211,14 @@ function Application() {
       <div className="sync">{online ? <Wifi /> : <WifiOff />}<span>{blocked ? `${blocked} need review` : syncing ? "Backing up…" : pending ? `${pending} saved on device` : online ? "Up to date" : "Working offline"}</span></div>
     </aside>
     <main>
-      <header><div><p className="eyebrow">{state.workspace.name}</p><h1>{nav.find((entry) => entry.id === view)?.label}</h1></div><button className="icon" aria-label="Change theme" onClick={() => setTheme(theme === "system" ? "dark" : theme === "dark" ? "light" : "system")}>{theme === "dark" ? <Moon /> : <Sun />}</button></header>
+      <header><div><p className="eyebrow">{state.workspace.name}</p><h1>{nav.find((entry) => entry.id === view)?.label}</h1></div><div className="header-actions"><button className="icon" aria-label="Open main menu" onClick={() => setShowWelcome(true)}><Home /></button><button className="icon" aria-label="Change theme" onClick={() => setTheme(theme === "system" ? "dark" : theme === "dark" ? "light" : "system")}>{theme === "dark" ? <Moon /> : <Sun />}</button></div></header>
       {view === "capture" && <Capture state={state} current={current} select={setSelected} commit={dispatch} />}
       {view === "spaces" && <Spaces state={state} current={current} select={setSelected} commit={dispatch} />}
       {view === "inventory" && <Inventory state={state} commit={dispatch} />}
       {view === "plan" && <Planner state={state} commit={dispatch} />}
       {view === "activity" && <History state={state} commit={dispatch} />}
       {workspaceNotice && <output className="workspace-notice">{workspaceNotice}</output>}
-      {view === "settings" && <Preferences state={state} theme={theme} setTheme={setTheme} openWorkspace={openWorkspace} />}
+      {view === "settings" && <Preferences state={state} theme={theme} setTheme={setTheme} openMenu={() => setShowWelcome(true)} openWorkspace={openWorkspace} />}
     </main>
     <nav className="bottom">{nav.map((entry) => <Nav key={entry.id} {...entry} active={entry.id === view} select={() => setView(entry.id)} />)}</nav>
   </div>;
@@ -200,8 +230,9 @@ function Brand() {
 function Nav({ label, icon: Icon, active, select }: { label: string; icon: typeof Boxes; active: boolean; select: () => void }) {
   return <button className="nav" data-active={active} onClick={select}><Icon /><span>{label}</span></button>;
 }
-function Onboarding({ onStart }: { onStart: (demo: boolean) => void }) {
-  return <main className="onboarding"><section><Brand /><p className="eyebrow">A calmer first pass</p><h1>Label it. Count it.<br />Find it later.</h1><p>Start with one box, drawer, or cabinet. Stowplan remembers nested containers and keeps working without connectivity or a healthy server.</p><div className="steps"><span><b>1</b>Label a space</span><span><b>2</b>Add what is inside</span><span><b>3</b>Mark it counted</span></div><button className="primary" onClick={() => onStart(false)}>Start my workspace</button><button className="linkish" onClick={() => onStart(true)}>Explore the kitchen demo instead</button><small>Your inventory is saved on this device first.</small></section></main>;
+function Onboarding({ currentName, isDemo = false, onContinue, onOpenDemo, onResetDemo, onStart }: { currentName?: string; isDemo?: boolean; onContinue?: () => void; onOpenDemo?: () => Promise<void>; onResetDemo?: () => Promise<void>; onStart: (demo: boolean) => Promise<void> }) {
+  if (currentName) return <main className="onboarding"><section><Brand /><p className="eyebrow">Main menu</p><h1>Where to next?</h1><p><strong>{currentName}</strong> is still open and saved on this device.</p><button className="primary" onClick={onContinue}>Continue current workspace</button><button onClick={() => void onStart(false)}>Start a new workspace</button>{isDemo ? <button className="danger menu-action" onClick={() => void onResetDemo?.()}><RotateCcw /> Reset kitchen demo</button> : <button className="linkish" onClick={() => void onOpenDemo?.()}>Open kitchen demo</button>}<small>Starting or opening another workspace does not erase your current one. Reset affects only the active demo.</small></section></main>;
+  return <main className="onboarding"><section><Brand /><p className="eyebrow">A calmer first pass</p><h1>Label it. Count it.<br />Find it later.</h1><p>Start with one box, drawer, or cabinet. Stowplan remembers nested containers and keeps working without connectivity or a healthy server.</p><div className="steps"><span><b>1</b>Label a space</span><span><b>2</b>Add what is inside</span><span><b>3</b>Mark it counted</span></div><button className="primary" onClick={() => void onStart(false)}>Start my workspace</button><button className="linkish" onClick={() => void onStart(true)}>Explore the kitchen demo instead</button><small>Your inventory is saved on this device first.</small></section></main>;
 }
 
 function Capture({ state, current, select, commit }: { state: WorkspaceState; current: Location | null; select: (id: string) => void; commit: Commit }) {
@@ -377,9 +408,9 @@ function History({ state, commit }: { state: WorkspaceState; commit: Commit }) {
   const undone = state.activities.filter((entry) => entry.status === "undone").length;
   return <div className="content"><div className="toolbar"><span>{state.activities.length} recorded changes</span><div className="history-batch"><label>Changes<input aria-label="Batch history count" type="number" min="1" max="100" value={count} onChange={(event) => setCount(Math.max(1, Math.min(100, Number(event.target.value) || 1)))} /></label><button disabled={!applied} onClick={() => void perform(commit, { type: "history.batchUndo", count: Math.min(count, applied) })}>Undo {Math.min(count, applied)}</button><button disabled={!undone} onClick={() => void perform(commit, { type: "history.batchRedo", count: Math.min(count, undone) })}>Redo {Math.min(count, undone)}</button></div></div><section className="panel history">{[...state.activities].reverse().map((entry) => <div key={entry.id}><Undo2 /><span><strong>{entry.label}</strong><small>{new Date(entry.timestamp).toLocaleString()} · {entry.patches.length} fields</small></span><b>{entry.status}</b><button onClick={() => void perform(commit, entry.status === "applied" ? { type: "history.undo", activityId: entry.id } : { type: "history.reapply", activityId: entry.id })}>{entry.status === "applied" ? "Undo this" : "Reapply"}</button></div>)}{!state.activities.length && <Empty title="No changes yet" text="Every meaningful change will be inspectable and reversible here." />}</section></div>;
 }
-function Preferences({ state, theme, setTheme, openWorkspace }: { state: WorkspaceState; theme: ThemePreference; setTheme: (theme: ThemePreference) => void; openWorkspace: (workspaceId: string) => Promise<void> }) {
+function Preferences({ state, theme, setTheme, openMenu, openWorkspace }: { state: WorkspaceState; theme: ThemePreference; setTheme: (theme: ThemePreference) => void; openMenu: () => void; openWorkspace: (workspaceId: string) => Promise<void> }) {
   const download = () => { const anchor = document.createElement("a"); const url = URL.createObjectURL(new Blob([JSON.stringify(state, null, 2)], { type: "application/json" })); anchor.href = url; anchor.download = `stowplan-${state.workspace.id}.json`; anchor.click(); URL.revokeObjectURL(url); };
-  return <div className="content settings"><section className="panel"><h2>Appearance</h2><div className="segments">{(["system", "light", "dark"] as const).map((entry) => <button data-active={theme === entry} key={entry} onClick={() => setTheme(entry)}>{entry}</button>)}</div><WorkspaceSwitcher currentId={state.workspace.id} openWorkspace={openWorkspace} /><h2>Backup & recovery</h2><p className="muted">Export a complete portable snapshot. Imports are validated and previewed before replacement.</p><button onClick={download}>Export JSON backup</button><a href="/recovery">Review sync issues or restore a backup</a><a href="/labels">Print text and QR labels</a></section><section className="panel"><h2>Account & server backup</h2><a href={`/account?workspace=${encodeURIComponent(state.workspace.id)}`}>Sign in, sync, or create a guest link</a><a href="/admin">Open admin control plane</a><h2>Help & source</h2><a href="/docs/">Read the offline quick guide</a><a target="_blank" rel="noreferrer" href={process.env.NEXT_PUBLIC_REPOSITORY_URL || "https://github.com/j-256/stowplan"}>View source repository</a><p className="license">AGPL-3.0-only<br />Copyright © 2026 James Klein (j-256)</p></section></div>;
+  return <div className="content settings"><section className="panel"><h2>Workspace</h2><button onClick={openMenu}><Home /> Open main menu</button><h2>Appearance</h2><div className="segments">{(["system", "light", "dark"] as const).map((entry) => <button data-active={theme === entry} key={entry} onClick={() => setTheme(entry)}>{entry}</button>)}</div><WorkspaceSwitcher currentId={state.workspace.id} openWorkspace={openWorkspace} /><h2>Backup & recovery</h2><p className="muted">Export a complete portable snapshot. Imports are validated and previewed before replacement.</p><button onClick={download}>Export JSON backup</button><a href="/recovery">Review sync issues or restore a backup</a><a href="/labels">Print text and QR labels</a></section><section className="panel"><h2>Account & server backup</h2><a href={`/account?workspace=${encodeURIComponent(state.workspace.id)}`}>Sign in, sync, or create a guest link</a><a href="/admin">Open admin control plane</a><h2>Help & source</h2><a href="/docs/">Read the offline quick guide</a><a target="_blank" rel="noreferrer" href={process.env.NEXT_PUBLIC_REPOSITORY_URL || "https://github.com/j-256/stowplan"}>View source repository</a><p className="license">AGPL-3.0-only<br />Copyright © 2026 James Klein (j-256)</p></section></div>;
 }
 function WorkspaceSwitcher({ currentId, openWorkspace }: { currentId: string; openWorkspace: (workspaceId: string) => Promise<void> }) {
   const [workspaces, setWorkspaces] = useState<LocalWorkspaceSummary[]>([]);

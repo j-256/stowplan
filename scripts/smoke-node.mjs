@@ -95,6 +95,7 @@ try {
   const identity = await me.json();
   assert.equal(identity.user.email, "owner@example.test");
   assert.equal(identity.user.globalRole, "admin");
+  assert.deepEqual(identity.providers, ["development"]);
 
   const timestamp = new Date().toISOString();
   const snapshot = {

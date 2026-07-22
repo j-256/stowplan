@@ -41,3 +41,10 @@ test("keeps private APIs out of the service-worker cache and ships install icons
   const manifest = JSON.parse(readFileSync(new URL("../public/manifest.webmanifest", import.meta.url), "utf8"));
   assert.deepEqual(manifest.icons.slice(0, 2).map((icon) => icon.sizes), ["192x192", "512x512"]);
 });
+
+test("initializes OpenNext bindings for next dev and awaits runtime context failures", () => {
+  const config = readFileSync(new URL("../next.config.ts", import.meta.url), "utf8");
+  assert.match(config, /initOpenNextCloudflareForDev\(\)/);
+  const runtime = readFileSync(new URL("../src/server/runtime.ts", import.meta.url), "utf8");
+  assert.match(runtime, /await getCloudflareContext\(\{ async: true \}\)/);
+});

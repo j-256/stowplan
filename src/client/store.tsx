@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { applyCommand } from "../domain/commands";
 import { createEnvelope } from "../domain/factories";
 import type { Command, SyncReceipt, WorkspaceState } from "../domain/types";
-import { readReplica, readWorkspaceReplica, reconcileReplica, writeReplica, type LocalReplica } from "./local-replica";
+import { readReplica, readWorkspaceReplica, reconcileReplica, replaceReplica, writeReplica, type LocalReplica } from "./local-replica";
 
 interface StoreValue {
   blocked: number;
@@ -173,7 +173,17 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
     return operation;
   }, [flushNow, schedule]);
 
-  const replace = initialize;
+  const replace = useCallback((state: WorkspaceState) => {
+    const operation = mutationQueue.current.then(async () => {
+      clearSchedule();
+      const current = await readReplica();
+      const next = { state, outbox: [], updatedAt: new Date().toISOString() } satisfies LocalReplica;
+      await replaceReplica(next, current?.state.workspace.id);
+      setReplica(next);
+    });
+    mutationQueue.current = operation.catch(() => undefined);
+    return operation;
+  }, [clearSchedule]);
   const value = useMemo(() => ({
     blocked: replica?.outbox.filter(entry => entry.status === "blocked").length ?? 0,
     dispatch,

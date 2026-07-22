@@ -80,7 +80,7 @@ function item(
     };
 }
 
-export function createDemoState(): WorkspaceState {
+export function createDemoState(workspaceId = "ws_demo"): WorkspaceState {
     const locations: Location[] = [
         location("loc_kitchen", "KIT", "Kitchen", "room", null, 0),
         location("loc_left", "KIT-L", "Left side", "zone", "loc_kitchen", 0),
@@ -200,7 +200,7 @@ export function createDemoState(): WorkspaceState {
         schemaVersion: SCHEMA_VERSION,
         workspace: {
             createdAt: timestamp,
-            id: "ws_demo",
+            id: workspaceId,
             name: "Kitchen reset",
             revision: 0,
             updatedAt: timestamp,
