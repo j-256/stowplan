@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 
 const origin = "http://127.0.0.1:3000";
 let output = "";
@@ -28,6 +28,27 @@ async function stop(child) {
       try { process.kill(-child.pid, "SIGKILL"); } catch { /* Already stopped. */ }
     }),
   ]);
+}
+
+console.log("Applying local D1 migrations…");
+const migration = spawnSync("bash", [
+  "scripts/sites-env.sh",
+  "--",
+  "./node_modules/.bin/wrangler",
+  "d1",
+  "migrations",
+  "apply",
+  "stowplan",
+  "--local",
+  "--config",
+  "wrangler.jsonc",
+], {
+  cwd: process.cwd(),
+  encoding: "utf8",
+  env: process.env,
+});
+if (migration.status !== 0) {
+  throw new Error(`Local D1 migration failed (${migration.status ?? "no status"})\n${migration.stdout}${migration.stderr}`);
 }
 
 console.log("Starting Next development server with OpenNext bindings…");

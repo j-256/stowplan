@@ -14,14 +14,13 @@ npm run build
 npm run test:render
 npm run build:next
 npm run test:node-smoke
-npx wrangler d1 migrations apply stowplan --local --config wrangler.jsonc
 npm run test:next-dev-smoke
 npm run build:cloudflare
 npx wrangler deploy --dry-run --config wrangler.jsonc
 npm sbom --omit=dev --sbom-format cyclonedx > stowplan-sbom.cdx.json
 ```
 
-The suite covers domain invariants, whole-container planning, split/merge and mixed-destination bulk moves, field-aware conflicts, pluck/batch history, optimistic sync/idempotency, D1-compatible SQLite persistence, authentication/session revocation, concurrent guest-link single use, multi-workspace IndexedDB persistence, isolated demo reset, UUID generation when `crypto.randomUUID` is unavailable, async runtime fallback, and deep backup validation. Coverage has checked-in minimums for the portable domain, server, and storage-adapter layers. The Node smoke starts the production standalone server against a temporary SQLite database and exercises health, security headers, authentication, provider discovery, workspace claiming, idempotent sync, authorized snapshot restore, admin reads, read-only guest reconciliation, and scanner-safe link redemption through HTTP.
+The suite covers domain invariants, whole-container planning, split/merge and mixed-destination bulk moves, field-aware conflicts, pluck/batch history, optimistic sync/idempotency, D1-compatible SQLite persistence, authentication/session revocation, concurrent guest-link single use, multi-workspace IndexedDB persistence, isolated demo reset, UUID generation when `crypto.randomUUID` is unavailable, async runtime fallback, and deep backup validation. Coverage has checked-in minimums for the portable domain, server, and storage-adapter layers. The Node smoke starts the production standalone server against a temporary SQLite database and exercises health, security headers, authentication, provider discovery, workspace claiming, idempotent sync, authorized snapshot restore, admin reads, read-only guest reconciliation, and scanner-safe link redemption through HTTP. The Next development smoke applies pending numbered migrations to its local D1 state before testing development sign-in and the admin control panel, so it also works from a fresh checkout.
 
 Browser gates use Chromium at mobile and desktop sizes, exercise onboarding → demo → capture → search → plan → activity → theme, run axe, inspect console errors, test offline reload, and verify the service worker never caches APIs.
 
