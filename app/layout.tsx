@@ -5,6 +5,8 @@ export const metadata: Metadata = {
   title: { default: "Stowplan", template: "%s · Stowplan" },
   description: "A local-first organizer for boxes, cabinets, drawers, and everything nested inside.",
   manifest: "/manifest.webmanifest",
+  icons: { icon: "/favicon.svg", shortcut: "/favicon.svg" },
+  other: { "codex-preview": "development" },
 };
 export const viewport: Viewport = { colorScheme: "light dark", themeColor: [{ media: "(prefers-color-scheme: light)", color: "#f3eee5" }, { media: "(prefers-color-scheme: dark)", color: "#151814" }] };
 

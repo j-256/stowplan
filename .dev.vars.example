@@ -1,0 +1,4 @@
+# Copy to .dev.vars for local Wrangler development only.
+AUTH_BASE_URL=http://localhost:8787
+AUTH_ADMIN_EMAILS=owner@example.com
+AUTH_DEV_ENABLED=true

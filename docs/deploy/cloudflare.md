@@ -1,0 +1,130 @@
+# Cloudflare Workers + D1
+
+This is the reference deployment. Commands below are intentionally explicit; run them from the repository root.
+
+## 1. Local bootstrap
+
+```bash
+npm ci
+npx wrangler login
+npx wrangler whoami
+```
+
+`whoami` is read-only and safe to repeat. Keep Node at the version in `.nvmrc`.
+
+## 2. Create D1 and bind it
+
+```bash
+npx wrangler d1 create stowplan
+```
+
+This creates a **remote** database and prints its UUID. Replace the all-zero `database_id` in `wrangler.jsonc` with that exact UUID. Do not create another database on retry; use:
+
+```bash
+npx wrangler d1 list
+npx wrangler d1 info stowplan
+```
+
+## 3. Apply schema locally
+
+```bash
+npx wrangler d1 migrations list stowplan --local
+npx wrangler d1 migrations apply stowplan --local
+```
+
+The apply command is safe to repeat; applied files are skipped. Start a production-like local Worker:
+
+```bash
+cp .dev.vars.example .dev.vars
+npm run build:cloudflare
+npx wrangler dev --config wrangler.jsonc
+```
+
+Open the printed localhost URL and verify `/api/health`. `.dev.vars` is ignored by Git and enables the explicit local development adapter; it does not create or change any remote secret. Delete `AUTH_DEV_ENABLED` from that file when testing a production provider. Never install that variable in production.
+
+## 4. Install production configuration and secrets
+
+Set non-secret `AUTH_BASE_URL` and `AUTH_ADMIN_EMAILS` in `wrangler.jsonc` under `vars`, or use secrets for privacy. Secrets are entered interactively and never echoed by Wrangler:
+
+```bash
+npx wrangler secret put AUTH_BASE_URL
+npx wrangler secret put AUTH_ADMIN_EMAILS
+npx wrangler secret put AUTH_GOOGLE_CLIENT_ID
+npx wrangler secret put AUTH_GOOGLE_CLIENT_SECRET
+npx wrangler secret put AUTH_GITHUB_CLIENT_ID
+npx wrangler secret put AUTH_GITHUB_CLIENT_SECRET
+```
+
+Only configure providers you will use. For Access:
+
+```bash
+npx wrangler secret put AUTH_CLOUDFLARE_ACCESS_TEAM_DOMAIN
+npx wrangler secret put AUTH_CLOUDFLARE_ACCESS_AUD
+npx wrangler secret put AUTH_ADMIN_REQUIRE_ACCESS
+# enter true only when every admin request passes through Access
+```
+
+Inspect secret **names** (values remain hidden):
+
+```bash
+npx wrangler secret list
+```
+
+## 5. Back up, migrate remotely, deploy
+
+For an existing installation, export before migration:
+
+```bash
+npx wrangler d1 export stowplan --remote --output stowplan-before-upgrade.sql
+npx wrangler d1 time-travel info stowplan
+```
+
+Review pending migrations, then apply explicitly to remote D1:
+
+```bash
+npx wrangler d1 migrations list stowplan --remote
+npx wrangler d1 migrations apply stowplan --remote
+```
+
+Build and deploy:
+
+```bash
+NEXT_PUBLIC_REPOSITORY_URL=https://github.com/YOUR_ACCOUNT/stowplan \
+NEXT_PUBLIC_DOCS_URL=https://YOUR_ACCOUNT.github.io/stowplan/ \
+npm run build:cloudflare
+npx wrangler deploy --config wrangler.jsonc
+```
+
+`NEXT_PUBLIC_*` values are compiled into browser assets; setting them only as Worker runtime variables is too late. The explicit config flag prevents another local build adapter from redirecting Wrangler. `wrangler deploy` creates a new Worker version; it does not apply D1 migrations automatically. Verify:
+
+```bash
+npx wrangler deployments list
+npx wrangler tail --status error
+```
+
+In another terminal, request `https://YOUR_ORIGIN/api/health`, sign in, create one local item, wait for “Up to date,” reload, and inspect `/admin`.
+
+## Preview and production origins
+
+OAuth callbacks must be registered per origin. Use separate provider clients for localhost, preview/custom staging, and production where the provider requires one callback. Set `AUTH_BASE_URL` to the externally visible origin; do not rely on a proxy’s internal hostname.
+
+## Backup, restore, and rollback
+
+Record the current bookmark before risky operations:
+
+```bash
+npx wrangler d1 time-travel info stowplan
+```
+
+Restore is destructive and cancels in-flight queries; replace the example timestamp only after reviewing it:
+
+```bash
+npx wrangler d1 time-travel info stowplan --timestamp="2026-07-22T12:00:00Z"
+npx wrangler d1 time-travel restore stowplan --timestamp="2026-07-22T12:00:00Z"
+```
+
+Wrangler prints a bookmark that can undo the restore. For Worker code rollback, inspect versions and roll back using the Cloudflare dashboard or the current Wrangler versions/deployments command supported by your account; never roll database state back merely because code was rolled back. Prefer forward-compatible migrations and a corrected deployment.
+
+## Free-tier discipline
+
+The 1.8-second debounce, eight-second maximum wait, foreground/online triggers, and five-minute reconciliation reduce Worker and D1 churn. Static assets are served separately; API responses are not cached. Monitor D1 rows/read/write usage and Worker requests in the dashboard before increasing reconciliation frequency.

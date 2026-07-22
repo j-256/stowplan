@@ -99,6 +99,18 @@ describe("organizer command engine", () => {
         expect(result.activities.at(-1)?.label).toContain("2 item records");
     });
 
+    it("reorders item records without changing their container", () => {
+        const state = createDemoState();
+        const result = applyCommand(
+            state,
+            createEnvelope(state, { type: "item.reorder", id: "item_sugar", order: -1 }),
+        ).state;
+
+        expect(result.items.find((item) => item.id === "item_sugar")?.order).toBe(-1);
+        expect(result.items.find((item) => item.id === "item_sugar")?.locationId).toBe("loc_bin");
+        expect(result.activities.at(-1)?.label).toBe("Reordered Brown sugar");
+    });
+
     it("requires a fresh subtree review before destructive deletion", () => {
         const state = createDemoState();
         expect(() =>
@@ -210,6 +222,17 @@ describe("planner and backup validation", () => {
         const preview = previewImport(current, incoming);
         expect(preview.valid).toBe(false);
         expect(preview.issues.some((candidate) => candidate.code === "LOCATION_CYCLE")).toBe(true);
+    });
+
+    it("rejects malformed nested backup records without throwing", () => {
+        const current = createDemoState();
+        const incoming = structuredClone(current) as unknown as { items: Record<string, unknown>[]; activities: unknown[] };
+        incoming.items[0].constraints = null;
+        incoming.activities = [{}];
+        expect(() => previewImport(current, incoming)).not.toThrow();
+        const preview = previewImport(current, incoming);
+        expect(preview.valid).toBe(false);
+        expect(preview.issues.map((candidate) => candidate.code)).toEqual(expect.arrayContaining(["ITEM_CONSTRAINTS", "STRING_REQUIRED"]));
     });
 
     it("creates cycle-safe new locations", () => {

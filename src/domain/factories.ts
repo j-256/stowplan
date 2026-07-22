@@ -87,6 +87,7 @@ export function createItem(
         category?: string;
         locationId: string;
         name: string;
+        order?: number;
         quantity?: number;
         unit?: string;
     },
@@ -103,6 +104,7 @@ export function createItem(
         locationId: input.locationId,
         name: input.name.trim(),
         notes: "",
+        order: input.order ?? 0,
         quantity: input.quantity ?? 1,
         tags: [],
         unit: input.unit?.trim() || "each",

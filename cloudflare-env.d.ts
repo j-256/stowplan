@@ -3,6 +3,7 @@ declare namespace Cloudflare {
         ASSETS: Fetcher;
         DB: D1Database;
         AUTH_ADMIN_EMAILS?: string;
+        AUTH_ADMIN_REQUIRE_ACCESS?: string;
         AUTH_BASE_URL?: string;
         AUTH_CLOUDFLARE_ACCESS_AUD?: string;
         AUTH_CLOUDFLARE_ACCESS_TEAM_DOMAIN?: string;

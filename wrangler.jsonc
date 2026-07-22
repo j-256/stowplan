@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "stowplan",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-05-22",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": { "binding": "ASSETS", "directory": ".open-next/assets" },
+  "d1_databases": [{
+    "binding": "DB",
+    "database_name": "stowplan",
+    "database_id": "00000000-0000-0000-0000-000000000000",
+    "migrations_dir": "migrations"
+  }],
+  "vars": {
+    "AUTH_SESSION_TTL_SECONDS": "2592000",
+    "NEXT_PUBLIC_REPOSITORY_URL": "https://github.com/j-256/stowplan"
+  }
+}

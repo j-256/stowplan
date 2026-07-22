@@ -1,108 +1,86 @@
-# vinext-starter
+# Stowplan
 
-A clean full-stack starter running on
-[vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
-Drizzle support.
+[![CI](https://github.com/j-256/stowplan/actions/workflows/ci.yml/badge.svg)](https://github.com/j-256/stowplan/actions/workflows/ci.yml)
+[![Documentation](https://github.com/j-256/stowplan/actions/workflows/docs.yml/badge.svg)](https://j-256.github.io/stowplan/)
+[![Release](https://img.shields.io/github/v/release/j-256/stowplan)](https://github.com/j-256/stowplan/releases)
+[![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](LICENSE)
+[![Node 24 LTS](https://img.shields.io/badge/node-24.18_LTS-5fa04e.svg)](.nvmrc)
 
-## Prerequisites
+A mobile-first, local-first organizer for rooms, cabinets, drawers, boxes, bins, and every container inside them. Label physical spaces, perform a fast first-pass count, search structured inventory, generate explainable move plans, and keep working through connectivity or server failures.
 
-- Node.js `>=22.13.0`
-- Linux with `flock`, `curl`, and GNU `timeout`
+## Why Stowplan
 
-## Sites Lifecycle
+- Container-first onboarding distinguishes uncounted, in-progress, known-empty, and counted spaces.
+- Quantity + unit + item capture, nested-container creation, and “mark counted & next” are optimized for a phone in one hand.
+- IndexedDB is the immediate source of truth; a durable outbox batches and retries authenticated server backups.
+- Multiple local workspaces are preserved; scanner-safe guest links open shared workspaces without erasing the current one.
+- Hierarchical moves are cycle-safe; partial quantities split/merge; bulk moves are atomic.
+- Item and space editors expose structured attributes, conditions, dimensions, partial moves, archive/delete review, drag-and-drop, and equivalent touch/keyboard controls.
+- Plans account for warmth, humidity, food safety, dimensions, grouping, access, distance, and whole-container moves.
+- Field-level history supports selected undo/reapply (“plucking”) and batch undo/redo without overwriting newer same-field edits.
+- Blocked offline work remains inspectable and exportable; an explicit recovery flow can rebase unresolved commands or reset to an authorized server copy.
+- Google, GitHub, Cloudflare Access, short one-time guest URLs, opaque revocable sessions, workspace roles, and an audited admin panel are built in.
+- Cloudflare Workers + D1 is the reference deployment; Node 24 + SQLite and containers are supported composition roots.
 
-The Sites lifecycle CLI runs the locked dependency install before returning this checkout. Edit the source under `app/`, then checkpoint when a coherent milestone is ready to inspect or share. The remote Sites builder runs `npm run build` against the pushed commit. Do not repeat install or build as a normal pre-checkpoint step.
+## Quick start
 
-This starter does not use `wrangler.jsonc`.
-
-`install:ci` is intentionally a single, non-retrying `npm ci`. It refuses a concurrent install for the same project, consumes a matching image-seeded npm cache with `--prefer-offline` while retaining registry fallback for a missing cache object, otherwise downloads and verifies the complete vinext tarball recorded in `package-lock.json`, limits npm to one socket, and terminates a stalled install. `build` applies a short timeout and then validates the Sites artifact. These helpers target Linux and use GNU `timeout`; they are not native macOS scripts.
-
-Scripts that need writable project-scoped home, npm, XDG, and temporary paths use `scripts/sites-env.sh`. The `dev` and `start` scripts honor the caller's runtime environment and keep Wrangler logs inside the checkout. The generated `.sites-runtime/` directory is disposable and ignored by Git.
-
-## Included Shape
-
-- edit site code under `app/`
-- `app/chatgpt-auth.ts` provides optional dispatch-owned ChatGPT sign-in helpers
-- `.openai/hosting.json` declares optional Sites D1 and R2 bindings
-- `vite.config.ts` simulates declared bindings for local development
-- `db/index.ts` reads the D1 binding from the Cloudflare Worker environment
-- `db/schema.ts` starts intentionally empty
-- `examples/d1/` contains an optional D1 example surface
-- `drizzle.config.ts` supports local migration generation when needed
-
-## Workspace Auth Headers
-
-OpenAI workspace sites can read the current user's email from
-`oai-authenticated-user-email`.
-
-SIWC-authenticated workspace sites may also receive
-`oai-authenticated-user-full-name` when the user's SIWC profile has a non-empty
-`name` claim. The full-name value is percent-encoded UTF-8 and is accompanied by
-`oai-authenticated-user-full-name-encoding: percent-encoded-utf-8`.
-
-Treat the full name as optional and fall back to email when it is absent:
-
-```tsx
-import { headers } from "next/headers";
-
-export default async function Home() {
-  const requestHeaders = await headers();
-  const email = requestHeaders.get("oai-authenticated-user-email");
-  const encodedFullName = requestHeaders.get("oai-authenticated-user-full-name");
-  const fullName =
-    encodedFullName &&
-    requestHeaders.get("oai-authenticated-user-full-name-encoding") ===
-      "percent-encoded-utf-8"
-      ? decodeURIComponent(encodedFullName)
-      : null;
-
-  const displayName = fullName ?? email;
-  // ...
-}
+```bash
+nvm use
+npm ci
+npm run dev
 ```
 
-## Optional Dispatch-Owned ChatGPT Sign-In
+Open the local URL and choose **Explore the kitchen demo**. Local organizing requires no provider credentials. To test Node-backed sync:
 
-Import the ready-to-use helpers from `app/chatgpt-auth.ts` when the site needs
-optional or required ChatGPT sign-in:
+```bash
+npm run build:next
+AUTH_BASE_URL=http://localhost:3000 AUTH_DEV_ENABLED=true npm run start:node
+```
 
-- Use `getChatGPTUser()` for optional signed-in UI.
-- Use `requireChatGPTUser(returnTo)` for server-rendered pages that should send
-  anonymous visitors through Sign in with ChatGPT.
-- Use `chatGPTSignInPath(returnTo)` and `chatGPTSignOutPath(returnTo)` for
-  browser links or actions.
-- Pass a same-origin relative `returnTo` path for the destination after sign-in
-  or sign-out. The helper validates and safely encodes it.
-- Mark protected pages with `export const dynamic = "force-dynamic"` because
-  they depend on per-request identity headers.
+See the [getting-started guide](https://j-256.github.io/stowplan/guide/getting-started) and [deployment matrix](https://j-256.github.io/stowplan/deploy/).
 
-Dispatch owns `/signin-with-chatgpt`, `/signout-with-chatgpt`, `/callback`, the
-OAuth cookies, and identity header injection. Do not implement app routes for
-those reserved paths. Routes that do not import and call the helper remain
-anonymous-compatible.
+## Repository map
 
-SIWC establishes identity only; it does not prove workspace membership. Use the
-Sites hosting platform's access policy controls for workspace-wide restrictions,
-or enforce explicit server-side membership or allowlist checks.
+```text
+app/                 Next.js UI and standard Request/Response API routes
+src/domain/          Deterministic model, commands, planner, import validation
+src/client/          IndexedDB replica, outbox, sync scheduling, UI
+src/server/          Persistence/auth/admin ports and services
+src/adapters/        D1 and Node SQLite adapters
+migrations/          Ordered durable schema migrations
+docs/                VitePress user, operator, maintainer, and agent docs
+tests/               Domain, sync, adapter, offline, and auth tests
+```
 
-Use SIWC for account pages, user-specific dashboards, saved records, and write
-actions tied to the current ChatGPT user. Leave public content anonymous.
+## Verify
 
-## Diagnostic Commands
+```bash
+npm ci
+npm audit --omit=dev --audit-level=high
+npm run typecheck
+npm run lint
+npm run test:coverage
+DOCS_BASE=/stowplan/ npm run docs:build && DOCS_BASE=/stowplan/ npm run docs:check
+DOCS_BASE=/ npm run docs:build && DOCS_BASE=/ npm run docs:check
+npm run build
+npm run test:render
+npm run build:next
+npm run test:node-smoke
+npm run build:cloudflare
+npx wrangler deploy --dry-run --config wrangler.jsonc
+npm sbom --omit=dev --sbom-format cyclonedx > stowplan-sbom.cdx.json
+```
 
-- `npm run install:ci`: perform the one bounded lockfile install
-- `npm run dev`: start the Vite/Vinext development server
-- `npm run build`: build and validate the deployable Sites artifact
-- `npm run start`: start the built Vinext application
-- `npm test`: build, validate, and verify the rendered development-preview metadata
-- `npm run validate:artifact`: recheck an existing artifact's manifest and ESM `default.fetch` export
-- `npm run db:generate`: generate Drizzle migrations after schema changes
+The GitHub Pages workflow deliberately builds and link-checks under `/stowplan/`; root-hosted docs receive the same validation. Exact `npx wrangler` bootstrap, migration, secret, deploy, backup, and recovery commands are in the [Cloudflare runbook](https://j-256.github.io/stowplan/deploy/cloudflare).
 
-Use build and validation commands for targeted diagnosis after a remote failure, not as part of the normal checkpoint path.
+## Security and privacy
 
-The timeout defaults can be overridden for a controlled canary with `SITES_INSTALL_TIMEOUT`, `SITES_INSTALL_KILL_AFTER`, `SITES_BUILD_TIMEOUT`, and `SITES_BUILD_KILL_AFTER`. A timeout fails the command; the helpers never retry an unchanged install or build.
+Inventory is private application data. APIs are uncached and workspace-scoped; session values, provider tokens, Access assertions, guest URLs, secrets, and production exports must never be logged or committed. Read [SECURITY.md](SECURITY.md) before reporting a vulnerability.
 
-## Learn More
+## Contributing
 
-- [vinext Documentation](https://github.com/cloudflare/vinext)
-- [Drizzle D1 Guide](https://orm.drizzle.team/docs/get-started/d1-new)
+Read [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md). Changes must preserve offline durability, deterministic commands, field-aware conflicts/history, server-side authorization, and mobile accessibility.
+
+## License
+
+Stowplan is licensed under `AGPL-3.0-only`. Network operators of modified versions must offer the corresponding source for the running version. Copyright © 2026 James Klein (j-256).

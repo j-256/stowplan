@@ -50,6 +50,7 @@ function item(
     unit: string,
     category: string,
     locationId: string,
+    order: number,
     overrides: Partial<ItemRecord> = {},
 ): ItemRecord {
     return {
@@ -69,6 +70,7 @@ function item(
         locationId,
         name,
         notes: "",
+        order,
         quantity,
         tags: [],
         unit,
@@ -118,7 +120,7 @@ export function createDemoState(): WorkspaceState {
     ];
 
     const items: ItemRecord[] = [
-        item("item_pasta", "Pasta", 6, "boxes", "Food", "loc_warm", {
+        item("item_pasta", "Pasta", 6, "boxes", "Food", "loc_warm", 0, {
             constraints: {
                 avoidHumidity: true,
                 avoidWarmth: true,
@@ -129,7 +131,7 @@ export function createDemoState(): WorkspaceState {
             frequency: "weekly",
             tags: ["dry goods"],
         }),
-        item("item_rice", "Rice", 2, "bags", "Food", "loc_food", {
+        item("item_rice", "Rice", 2, "bags", "Food", "loc_food", 0, {
             constraints: {
                 avoidHumidity: true,
                 avoidWarmth: true,
@@ -140,7 +142,7 @@ export function createDemoState(): WorkspaceState {
             frequency: "weekly",
             tags: ["dry goods"],
         }),
-        item("item_beans", "Canned beans", 8, "cans", "Food", "loc_lower", {
+        item("item_beans", "Canned beans", 8, "cans", "Food", "loc_lower", 0, {
             constraints: {
                 avoidHumidity: false,
                 avoidWarmth: true,
@@ -150,7 +152,7 @@ export function createDemoState(): WorkspaceState {
             },
             frequency: "weekly",
         }),
-        item("item_flour", "All-purpose flour", 1, "bag", "Baking", "loc_bin", {
+        item("item_flour", "All-purpose flour", 1, "bag", "Baking", "loc_bin", 0, {
             constraints: {
                 avoidHumidity: true,
                 avoidWarmth: true,
@@ -161,7 +163,7 @@ export function createDemoState(): WorkspaceState {
             frequency: "monthly",
             tags: ["baking"],
         }),
-        item("item_sugar", "Brown sugar", 2, "bags", "Baking", "loc_bin", {
+        item("item_sugar", "Brown sugar", 2, "bags", "Baking", "loc_bin", 1, {
             constraints: {
                 avoidHumidity: true,
                 avoidWarmth: true,
@@ -171,13 +173,13 @@ export function createDemoState(): WorkspaceState {
             },
             tags: ["baking"],
         }),
-        item("item_spatula", "Silicone spatulas", 4, "each", "Utensils", "loc_drawer", {
+        item("item_spatula", "Silicone spatulas", 4, "each", "Utensils", "loc_drawer", 0, {
             frequency: "daily",
         }),
-        item("item_lids", "Replacement blender lids", 3, "each", "Appliance parts", "loc_box", {
+        item("item_lids", "Replacement blender lids", 3, "each", "Appliance parts", "loc_box", 0, {
             frequency: "rarely",
         }),
-        item("item_manuals", "Appliance manuals", 5, "each", "Documents", "loc_box", {
+        item("item_manuals", "Appliance manuals", 5, "each", "Documents", "loc_box", 1, {
             constraints: {
                 avoidHumidity: true,
                 avoidWarmth: false,
