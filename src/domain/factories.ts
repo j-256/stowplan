@@ -27,8 +27,28 @@ const defaultConstraints: ItemConstraints = {
     requiredTags: [],
 };
 
+function uuidV4(): string {
+    const runtimeCrypto = globalThis.crypto;
+    if (typeof runtimeCrypto?.randomUUID === "function") return runtimeCrypto.randomUUID();
+    if (typeof runtimeCrypto?.getRandomValues !== "function") {
+        throw new Error("Secure random number generation is unavailable");
+    }
+
+    const bytes = runtimeCrypto.getRandomValues(new Uint8Array(16));
+    bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x40;
+    bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
+    const hexadecimal = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0"));
+    return [
+        hexadecimal.slice(0, 4).join(""),
+        hexadecimal.slice(4, 6).join(""),
+        hexadecimal.slice(6, 8).join(""),
+        hexadecimal.slice(8, 10).join(""),
+        hexadecimal.slice(10, 16).join(""),
+    ].join("-");
+}
+
 export function newId(prefix: string): string {
-    return `${prefix}_${crypto.randomUUID()}`;
+    return `${prefix}_${uuidV4()}`;
 }
 
 export function nowIso(): string {

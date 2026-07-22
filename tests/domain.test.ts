@@ -99,6 +99,26 @@ describe("organizer command engine", () => {
         expect(result.activities.at(-1)?.label).toContain("2 item records");
     });
 
+    it("leaves already placed records while bulk moving the rest", () => {
+        const state = createDemoState();
+        const result = applyCommand(
+            state,
+            createEnvelope(
+                state,
+                {
+                    type: "item.bulkMove",
+                    destinationId: "loc_food",
+                    itemIds: ["item_rice", "item_pasta"],
+                },
+                { id: "cmd_bulk_mixed" },
+            ),
+        ).state;
+
+        expect(result.items.find((item) => item.id === "item_rice")?.locationId).toBe("loc_food");
+        expect(result.items.find((item) => item.id === "item_pasta")?.locationId).toBe("loc_food");
+        expect(result.activities.at(-1)?.label).toBe("Moved 1 of 2 item records");
+    });
+
     it("reorders item records without changing their container", () => {
         const state = createDemoState();
         const result = applyCommand(
