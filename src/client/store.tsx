@@ -4,15 +4,19 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { applyCommand } from "../domain/commands";
 import { createEnvelope } from "../domain/factories";
 import type { Command, SyncReceipt, WorkspaceState } from "../domain/types";
-import { readReplica, readWorkspaceReplica, reconcileReplica, replaceReplica, writeReplica, type LocalReplica } from "./local-replica";
+import { deleteWorkspaceReplica, listWorkspaceReplicas, readReplica, readWorkspaceReplica, reconcileReplica, replaceReplica, writeReplica, type LocalReplica } from "./local-replica";
 
 interface StoreValue {
   blocked: number;
   dispatch: (command: Command) => Promise<void>;
   initialize: (state: WorkspaceState) => Promise<void>;
+  lastSyncAttemptAt: string | null;
+  lastSyncError: string | null;
+  lastSyncedAt: string | null;
   online: boolean;
   openWorkspace: (workspaceId: string) => Promise<void>;
   pending: number;
+  removeWorkspace: (workspaceId: string) => Promise<void>;
   replace: (state: WorkspaceState) => Promise<void>;
   state: WorkspaceState | null;
   syncing: boolean;
@@ -54,12 +58,28 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
     maxTimer.current = null;
   }, []);
 
+  const recordSyncAttempt = useCallback(async (workspaceId: string, error: string | null, syncedAt?: string) => {
+    const latest = await readReplica();
+    if (!latest || latest.state.workspace.id !== workspaceId) return;
+    const attemptedAt = new Date().toISOString();
+    const next: LocalReplica = {
+      ...latest,
+      lastSyncAttemptAt: attemptedAt,
+      lastSyncError: error,
+      lastSyncedAt: syncedAt ?? latest.lastSyncedAt ?? null,
+    };
+    await writeReplica(next);
+    setReplica(next);
+  }, []);
+
   const flush = useCallback((allowEmpty = false): Promise<void> => {
     if (flushPromise.current) return flushPromise.current;
     const operation = (async () => {
+      let attemptedWorkspaceId: string | null = null;
       try {
         const value = await readReplica();
         if (!value || !navigator.onLine) return;
+        attemptedWorkspaceId = value.state.workspace.id;
         const batch = value.outbox.filter(entry => entry.status === "pending");
         if (!allowEmpty && batch.length === 0) return;
         setSyncing(true);
@@ -68,29 +88,48 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ commands: batch.map(entry => entry.envelope), snapshot: value.state, workspaceId: value.state.workspace.id }),
         });
-        if (response.status === 401 || response.status === 404) return;
+        if (response.status === 401) {
+          await recordSyncAttempt(value.state.workspace.id, "Sign in to back up this workspace.");
+          return;
+        }
+        if (response.status === 404) {
+          await recordSyncAttempt(value.state.workspace.id, "The server workspace was not found.");
+          return;
+        }
         if (response.status === 403 && batch.length) {
           const latest = await readReplica();
           if (!latest || latest.state.workspace.id !== value.state.workspace.id) return;
           const denied = new Set(batch.map(entry => entry.envelope.id));
           const next = {
             ...latest,
+            lastSyncAttemptAt: new Date().toISOString(),
+            lastSyncError: "This account has read-only or no access to the workspace.",
             outbox: latest.outbox.map(entry => denied.has(entry.envelope.id) ? { ...entry, status: "blocked" as const, error: "This account has read-only or no access to the workspace" } : entry),
-            updatedAt: new Date().toISOString(),
           };
           await writeReplica(next);
           setReplica(next);
+          return;
+        }
+        if (response.status === 403) {
+          await recordSyncAttempt(value.state.workspace.id, "This account has read-only or no access to the workspace.");
           return;
         }
         if (!response.ok) throw new Error(`Sync failed (${response.status})`);
         const body = await response.json() as { receipts: SyncReceipt[]; state: WorkspaceState };
         const latest = await readReplica();
         if (!latest || latest.state.workspace.id !== value.state.workspace.id) return;
-        const next = reconcileReplica(latest, batch, body.state, body.receipts);
+        const syncedAt = new Date().toISOString();
+        const next = {
+          ...reconcileReplica(latest, batch, body.state, body.receipts),
+          lastSyncAttemptAt: syncedAt,
+          lastSyncError: null,
+          lastSyncedAt: syncedAt,
+        };
         await writeReplica(next);
         setReplica(next);
-      } catch {
+      } catch (error) {
         // Local state stays authoritative; visibility/manual/online events retry.
+        if (attemptedWorkspaceId) await recordSyncAttempt(attemptedWorkspaceId, error instanceof Error ? error.message : "Server backup is temporarily unavailable.");
       } finally {
         setSyncing(false);
       }
@@ -100,7 +139,7 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
       if (flushPromise.current === operation) flushPromise.current = null;
     });
     return operation;
-  }, []);
+  }, [recordSyncAttempt]);
 
   const flushNow = useCallback((allowEmpty = false) => {
     clearSchedule();
@@ -135,6 +174,7 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
       if (!current) return;
       const envelope = createEnvelope(current.state, command);
       const next: LocalReplica = {
+        ...current,
         state: applyCommand(current.state, envelope).state,
         outbox: [...current.outbox, { envelope, status: "pending" }],
         updatedAt: new Date().toISOString(),
@@ -148,7 +188,7 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
   }, [schedule]);
 
   const initialize = useCallback(async (state: WorkspaceState) => {
-    const next = { state, outbox: [], updatedAt: new Date().toISOString() } satisfies LocalReplica;
+    const next = { lastSyncAttemptAt: null, lastSyncError: null, lastSyncedAt: null, state, outbox: [], updatedAt: new Date().toISOString() } satisfies LocalReplica;
     await writeReplica(next);
     setReplica(next);
   }, []);
@@ -162,7 +202,8 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
         const response = await fetch(`/api/snapshot?workspaceId=${encodeURIComponent(workspaceId)}`, { cache: "no-store" });
         const body = await response.json() as { error?: string; state?: WorkspaceState };
         if (!response.ok || !body.state) throw new Error(body.error ?? "Could not open that workspace");
-        next = { state: body.state, outbox: [], updatedAt: new Date().toISOString() };
+        const syncedAt = new Date().toISOString();
+        next = { lastSyncAttemptAt: syncedAt, lastSyncError: null, lastSyncedAt: syncedAt, state: body.state, outbox: [], updatedAt: syncedAt };
       }
       await writeReplica(next);
       setReplica(next);
@@ -177,8 +218,23 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
     const operation = mutationQueue.current.then(async () => {
       clearSchedule();
       const current = await readReplica();
-      const next = { state, outbox: [], updatedAt: new Date().toISOString() } satisfies LocalReplica;
+      const next = { lastSyncAttemptAt: null, lastSyncError: null, lastSyncedAt: null, state, outbox: [], updatedAt: new Date().toISOString() } satisfies LocalReplica;
       await replaceReplica(next, current?.state.workspace.id);
+      setReplica(next);
+    });
+    mutationQueue.current = operation.catch(() => undefined);
+    return operation;
+  }, [clearSchedule]);
+
+  const removeWorkspace = useCallback((workspaceId: string) => {
+    const operation = mutationQueue.current.then(async () => {
+      clearSchedule();
+      const active = await readReplica();
+      await deleteWorkspaceReplica(workspaceId);
+      if (active?.state.workspace.id !== workspaceId) return;
+      const nextSummary = (await listWorkspaceReplicas())[0];
+      const next = nextSummary ? await readWorkspaceReplica(nextSummary.id) : null;
+      if (next) await writeReplica(next);
       setReplica(next);
     });
     mutationQueue.current = operation.catch(() => undefined);
@@ -188,13 +244,17 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
     blocked: replica?.outbox.filter(entry => entry.status === "blocked").length ?? 0,
     dispatch,
     initialize,
+    lastSyncAttemptAt: replica?.lastSyncAttemptAt ?? null,
+    lastSyncError: replica?.lastSyncError ?? null,
+    lastSyncedAt: replica?.lastSyncedAt ?? null,
     online,
     openWorkspace,
     pending: replica?.outbox.filter(entry => entry.status === "pending").length ?? 0,
+    removeWorkspace,
     replace,
     state: replica?.state ?? null,
     syncing,
-  }), [dispatch, initialize, online, openWorkspace, replace, replica, syncing]);
+  }), [dispatch, initialize, online, openWorkspace, removeWorkspace, replace, replica, syncing]);
   if (!loaded) return <div className="loading">Opening your local workspace…</div>;
   return <Store.Provider value={value}>{children}</Store.Provider>;
 }

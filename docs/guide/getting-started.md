@@ -21,6 +21,8 @@ The bottom navigation, 44-pixel targets, single-column capture form, sticky comp
 
 ## Return to the main menu
 
-Choose the house icon in the page header, or open **Settings → Open main menu**. The menu can continue the current workspace, start another workspace, or open the kitchen demo. Switching does not erase work; saved workspaces remain available under **Settings → Workspaces on this device**.
+Choose the house icon in the page header, or open **Settings → Open workspace menu**. The home screen lists every workspace stored on this device. Each card shows the last local edit, the last successful online backup, pending and blocked counts, and the actual changes waiting to upload. From there you can continue, switch, start another workspace, or open the kitchen demo.
+
+**Remove from this device** is deliberately literal. If a server copy exists, it remains available to reopen; the confirmation names the last backup. If the workspace was never backed up, the confirmation warns that the device holds the only copy. Any unsynced changes are counted before removal.
 
 When the kitchen demo is active, the main menu also shows **Reset kitchen demo**. Reset requires confirmation, discards only that demo’s changes and queued backup commands, and creates a fresh demo. It does not touch any other workspace on the device.

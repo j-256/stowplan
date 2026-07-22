@@ -12,13 +12,29 @@ export interface OutboxEntry {
 }
 
 export interface LocalReplica {
+  lastSyncAttemptAt?: string | null;
+  lastSyncError?: string | null;
+  lastSyncedAt?: string | null;
   state: WorkspaceState;
   outbox: OutboxEntry[];
   updatedAt: string;
 }
 
-export interface LocalWorkspaceSummary {
+export interface QueuedChangeSummary {
+  error: string | null;
   id: string;
+  label: string;
+  status: OutboxEntry["status"];
+  timestamp: string;
+}
+
+export interface LocalWorkspaceSummary {
+  blocked: number;
+  changes: QueuedChangeSummary[];
+  id: string;
+  lastSyncAttemptAt: string | null;
+  lastSyncError: string | null;
+  lastSyncedAt: string | null;
   name: string;
   pending: number;
   updatedAt: string;
@@ -67,11 +83,44 @@ export async function listWorkspaceReplicas(): Promise<LocalWorkspaceSummary[]> 
   for (const replica of replicas) {
     if (!replica?.state?.workspace) continue;
     normalizeWorkspaceState(replica.state);
-    const summary = { id: replica.state.workspace.id, name: replica.state.workspace.name, pending: replica.outbox.length, updatedAt: replica.updatedAt };
+    const summary = {
+      blocked: replica.outbox.filter((entry) => entry.status === "blocked").length,
+      changes: replica.outbox.map((entry) => ({
+        error: entry.error ?? null,
+        id: entry.envelope.id,
+        label: replica.state.activities.find((activity) => activity.commandId === entry.envelope.id)?.label ?? entry.envelope.command.type.replaceAll(".", " "),
+        status: entry.status,
+        timestamp: entry.envelope.timestamp,
+      })),
+      id: replica.state.workspace.id,
+      lastSyncAttemptAt: replica.lastSyncAttemptAt ?? null,
+      lastSyncError: replica.lastSyncError ?? null,
+      lastSyncedAt: replica.lastSyncedAt ?? null,
+      name: replica.state.workspace.name,
+      pending: replica.outbox.filter((entry) => entry.status === "pending").length,
+      updatedAt: replica.updatedAt,
+    };
     const previous = unique.get(summary.id);
     if (!previous || previous.updatedAt < summary.updatedAt) unique.set(summary.id, summary);
   }
   return [...unique.values()].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+}
+
+export async function deleteWorkspaceReplica(workspaceId: string): Promise<void> {
+  const db = await database();
+  await new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction(STORE, "readwrite");
+    const store = transaction.objectStore(STORE);
+    const activeRequest = store.get("active");
+    activeRequest.onsuccess = () => {
+      const active = activeRequest.result as LocalReplica | undefined;
+      store.delete(workspaceKey(workspaceId));
+      if (active?.state?.workspace?.id === workspaceId) store.delete("active");
+    };
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error);
+  });
 }
 
 export async function writeReplica(replica: LocalReplica): Promise<void> {

@@ -48,3 +48,23 @@ test("initializes OpenNext bindings for next dev and awaits runtime context fail
   const runtime = readFileSync(new URL("../src/server/runtime.ts", import.meta.url), "utf8");
   assert.match(runtime, /await getCloudflareContext\(\{ async: true \}\)/);
 });
+
+test("keeps hierarchy and touch drag affordances in the shipped organizer", () => {
+  const application = readFileSync(new URL("../src/client/stowplan-app.tsx", import.meta.url), "utf8");
+  assert.match(application, /aria-label="Space hierarchy"/);
+  assert.match(application, /onPointerDown=/);
+  assert.match(application, /"before" \| "inside" \| "after"/);
+  assert.match(application, /const canReorder = Boolean\(locationFilter\)/);
+});
+
+test("ships task-oriented item, plan, and workspace controls", () => {
+  const application = readFileSync(new URL("../src/client/stowplan-app.tsx", import.meta.url), "utf8");
+  assert.match(application, /Organize and find it/);
+  assert.match(application, /Placement requirements/);
+  assert.match(application, /affects a plan/);
+  assert.match(application, /What is waiting/);
+  assert.match(application, /This does not delete any server copy/);
+  const replica = readFileSync(new URL("../src/client/local-replica.ts", import.meta.url), "utf8");
+  assert.match(replica, /lastSyncedAt/);
+  assert.match(replica, /deleteWorkspaceReplica/);
+});
