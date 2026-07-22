@@ -2,6 +2,23 @@
 
 All notable changes follow Keep a Changelog. Versions use Semantic Versioning.
 
+## [1.1.0] - 2026-07-22
+
+### Added
+
+- Explicit nested trees and breadcrumbs in Capture, plus a connected hierarchy with before/inside/after drop cues in Spaces.
+- Pointer and touch dragging for container nesting, sibling ordering, item ordering, and item-to-container moves, with auto-scroll and non-drag fallbacks.
+- Containerless Inventory sorting, full location paths, visible edit/move actions, and contextual ordering only after filtering to one container.
+- A workspace-first home screen with last-backup timestamps, pending/blocked change inspection, and guarded device-only removal.
+- Keyboard-, touch-, and hover-accessible planner explanations with the exact scoring effect of every priority.
+
+### Changed
+
+- Mobile space selection now moves directly to the editor, while desktop preserves the two-pane tree and inspector workflow.
+- Hierarchical destinations are consistently indented in parent, filter, bulk-move, and partial-move controls.
+- Item editing now emphasizes identity and quantity, separates placement from metadata, and progressively discloses infrequent requirements and dimensions.
+- Mobile navigation keeps five primary workflows in reach and moves Settings to the page header.
+
 ## [1.0.1] - 2026-07-22
 
 ### Added

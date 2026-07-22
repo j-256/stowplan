@@ -9,13 +9,13 @@ Capture is container-first. Select a location, then repeat:
 
 The command is durable on the device before the network is contacted. Closing the tab or losing service does not erase accepted rows. Once the queue grows, use **Jump by code or name** to reach the physical label in your hand without scrolling.
 
-Tap an existing row to edit every structured attribute, move all or part of its quantity, or delete the record with confirmation. On a pointer device, drag rows to reorder them inside the current container; the adjacent up/down controls provide the same operation for touch, keyboard, and assistive technology.
+Tap an existing row to edit every structured attribute, move all or part of its quantity, or delete the record with confirmation. Drag the visible handle to reorder rows inside the current container; the handle supports pointer and touch input, while the adjacent up/down controls provide the keyboard and assistive-technology fallback.
 
 ## Nested containers
 
 Use **Add space** while looking at the parent. It nests there by default; check **Add as another top-level space** for another room, storage area, or other root. Every new container can have its own label and capture status. Moving that physical container later can replace many item-by-item plan steps.
 
-The nested-container shortcuts under the capture form let you descend without losing the current counting context. Printable text and optional QR labels are available from **Settings → Print text and QR labels**.
+The capture queue is itself a hierarchy, and the breadcrumb above the active container shows exactly where you are. Nested-container shortcuts under the capture form let you descend without losing the current counting context. Printable text and optional QR labels are available from **Settings → Print text and QR labels**.
 
 ## Counting rules
 

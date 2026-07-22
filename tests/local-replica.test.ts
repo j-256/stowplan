@@ -2,7 +2,7 @@ import "fake-indexeddb/auto";
 import { beforeEach, describe, expect, it } from "vitest";
 import { applyCommand } from "../src/domain/commands";
 import { createEmptyState, createEnvelope } from "../src/domain/factories";
-import { clearReplica, listWorkspaceReplicas, readReplica, readWorkspaceReplica, reconcileReplica, replaceReplica, writeReplica } from "../src/client/local-replica";
+import { clearReplica, deleteWorkspaceReplica, listWorkspaceReplicas, readReplica, readWorkspaceReplica, reconcileReplica, replaceReplica, writeReplica } from "../src/client/local-replica";
 
 describe("local replica", () => {
   beforeEach(async () => clearReplica());
@@ -13,6 +13,20 @@ describe("local replica", () => {
     expect((await readWorkspaceReplica(state.workspace.id))?.state.workspace.name).toBe("Offline home");
   });
   it("keeps inactive local workspaces available for switching",async()=>{const first=createEmptyState("First"),second=createEmptyState("Second");await writeReplica({state:first,outbox:[],updatedAt:"2026-07-22T00:00:00.000Z"});await writeReplica({state:second,outbox:[],updatedAt:"2026-07-22T01:00:00.000Z"});expect((await readReplica())?.state.workspace.id).toBe(second.workspace.id);expect((await readWorkspaceReplica(first.workspace.id))?.state.workspace.name).toBe("First");expect((await listWorkspaceReplicas()).map(workspace=>workspace.name)).toEqual(["Second","First"])});
+  it("summarizes server backup state and removes only the selected local replica", async () => {
+    const first = createEmptyState("First");
+    const second = createEmptyState("Second");
+    const envelope = createEnvelope(first, { type: "workspace.rename", name: "First renamed" });
+    const firstChanged = applyCommand(first, envelope).state;
+    await writeReplica({ state: firstChanged, outbox: [{ envelope, status: "pending" }], lastSyncedAt: "2026-07-22T01:00:00.000Z", updatedAt: "2026-07-22T02:00:00.000Z" });
+    await writeReplica({ state: second, outbox: [], updatedAt: "2026-07-22T03:00:00.000Z" });
+    const summary = (await listWorkspaceReplicas()).find((workspace) => workspace.id === first.workspace.id);
+    expect(summary).toMatchObject({ blocked: 0, lastSyncedAt: "2026-07-22T01:00:00.000Z", pending: 1 });
+    expect(summary?.changes[0]).toMatchObject({ label: "Renamed workspace to First renamed", status: "pending" });
+    await deleteWorkspaceReplica(first.workspace.id);
+    expect(await readWorkspaceReplica(first.workspace.id)).toBeNull();
+    expect((await readReplica())?.state.workspace.id).toBe(second.workspace.id);
+  });
   it("resets only the active workspace and preserves every other local workspace", async () => {
     const personal = createEmptyState("Personal");
     const demo = createEmptyState("Kitchen demo");
