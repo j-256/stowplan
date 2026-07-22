@@ -478,7 +478,14 @@ function normalPatches(
         requireLocation(state, command.destinationId);
         const working = clone(state);
         const patches: FieldPatch[] = [];
-        for (const id of [...new Set(command.itemIds)]) {
+        const itemIds = [...new Set(command.itemIds)];
+        const movableIds = itemIds.filter(
+            (id) => requireItem(working, id).locationId !== command.destinationId,
+        );
+        if (!movableIds.length) {
+            throw new DomainError("ALREADY_THERE", "Selected items are already in that location");
+        }
+        for (const id of movableIds) {
             const item = requireItem(working, id);
             const itemPatches = moveItemPatches(
                 working,
@@ -491,9 +498,11 @@ function normalPatches(
             patches.push(...itemPatches);
         }
         return {
-            label: `Moved ${command.itemIds.length} item records`,
+            label: movableIds.length === itemIds.length
+                ? `Moved ${movableIds.length} item record${movableIds.length === 1 ? "" : "s"}`
+                : `Moved ${movableIds.length} of ${itemIds.length} item records`,
             patches,
-            subjectIds: [...new Set([...command.itemIds, command.destinationId])],
+            subjectIds: [...new Set([...movableIds, command.destinationId])],
         };
     }
 

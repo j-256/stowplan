@@ -103,6 +103,9 @@ test("supports drag organization and the partial-move fallback", async ({ page }
   await expect(page.getByRole("button", { name: "Drag Brown sugar to reorder" })).toHaveCount(0);
   await page.getByLabel("Filter by location").selectOption("loc_bin");
   await expect(page.getByRole("button", { name: "Drag Brown sugar to reorder" })).toBeVisible();
+  await page.getByRole("checkbox", { name: "Select Brown sugar in Kitchen › Right side › Lower cabinet › Baking bin" }).check();
+  await expect(page.getByRole("combobox", { name: "Move selected items" }).locator('option[value="loc_bin"]')).toBeDisabled();
+  await page.getByRole("button", { name: "Clear" }).click();
   await page.locator('[data-item-id="item_sugar"]').dragTo(page.locator('[data-item-id="item_flour"]'));
   await expect.poll(async () => {
     const replica = await localReplica(page) as { state: { items: { id: string; order: number }[] } };
@@ -122,6 +125,8 @@ test("supports drag organization and the partial-move fallback", async ({ page }
     const replica = await localReplica(page) as { state: { items: { id: string; locationId: string; name: string; quantity: number }[] } };
     return replica.state.items.filter((item) => item.name === "Pasta").map((item) => [item.locationId, item.quantity]).sort();
   }).toEqual([["loc_food", 2], ["loc_warm", 4]]);
+  await expect(page.getByRole("checkbox", { name: "Select Pasta in Kitchen › Left side › Food cabinet" })).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: "Select Pasta in Kitchen › Left side › Cabinet above oven" })).toBeVisible();
 });
 
 test("shows workspace backup state and removes only the device copy", async ({ page }) => {
