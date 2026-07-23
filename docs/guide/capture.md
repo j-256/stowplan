@@ -13,9 +13,9 @@ Tap an existing row to edit every structured attribute, move all or part of its 
 
 ## Nested containers
 
-Use **Add space** while looking at the parent. It nests there by default; check **Add as another top-level space** for another room, storage area, or other root. Every new container can have its own label and capture status. Moving that physical container later can replace many item-by-item plan steps.
+Use **Add space** while looking at the parent. It nests there by default; check **Add as another top-level space** for another room, storage area, or other root. Enter the friendly name first and Stowplan suggests a unique Short ID that you can edit before saving. A Short ID you type yourself is never replaced when the name or type changes. Every new container can have its own label and capture status. Moving that physical container later can replace many item-by-item plan steps.
 
-The capture queue is itself a hierarchy, and the breadcrumb above the active container shows exactly where you are. Drag a container row or use its up/down controls to reorder it among siblings without leaving Capture; structural moves to a different parent remain in **Spaces**. **Mark counted & next** and **Known empty & next** follow this visible hierarchy order, wrapping to the first remaining unchecked container when needed. Nested-container shortcuts under the capture form let you descend without losing the current counting context. Printable text and optional QR labels are available from **Settings → Print text and QR labels**.
+The capture queue is itself a hierarchy, and the breadcrumb above the active container shows exactly where you are. Drag a container row or use its up/down controls to reorder it among siblings without leaving Capture; structural moves to a different parent remain in **Spaces**. **Mark counted & next** and **Known empty & next** follow this visible hierarchy order, wrapping to the first remaining unchecked container when needed. **Next unfinished** opens the next unchecked container without changing the status of the one you are reviewing. Nested-container shortcuts under the capture form let you descend without losing the current counting context. Printable text and optional QR labels are available from **Settings → Print text and QR labels**.
 
 ## Counting rules
 
