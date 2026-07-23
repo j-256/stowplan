@@ -1,4 +1,5 @@
 import { ConflictError, DomainError } from "./errors";
+import { isLegacyCompatibleIssue, validateSnapshot } from "./import";
 import type {
     ActivityRecord,
     AuditEvent,
@@ -17,6 +18,44 @@ import type {
 } from "./types";
 
 type Entity = ItemRecord | Location | MovePlan | WorkspaceState["workspace"];
+
+const unsafePathKeys = new Set(["__proto__", "constructor", "prototype"]);
+const locationChangeKeys = new Set([
+    "code",
+    "conditions",
+    "description",
+    "dimensions",
+    "kind",
+    "name",
+    "order",
+    "parentId",
+    "tags",
+]);
+const itemChangeKeys = new Set([
+    "category",
+    "constraints",
+    "dimensions",
+    "frequency",
+    "name",
+    "notes",
+    "quantity",
+    "tags",
+    "unit",
+]);
+const locationKinds = new Set([
+    "area",
+    "bin",
+    "box",
+    "cabinet",
+    "container",
+    "drawer",
+    "room",
+    "shelf",
+    "zone",
+]);
+const captureStatuses = new Set(["counted", "in_progress", "known_empty", "uncounted"]);
+const frequencies = new Set(["daily", "weekly", "monthly", "rarely"]);
+const planStatuses = new Set(["active", "completed", "discarded"]);
 
 function clone<T>(value: T): T {
     return structuredClone(value);
@@ -46,6 +85,105 @@ function equal(left: unknown, right: unknown): boolean {
     return false;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function pathKeys(path: string): string[] {
+    const keys = path.split(".");
+    if (
+        !path ||
+        keys.some((key) => !key || unsafePathKeys.has(key))
+    ) {
+        throw new DomainError("INVALID_PATCH", "A field patch contains an unsafe path");
+    }
+    return keys;
+}
+
+function assertAllowedChanges(
+    changes: unknown,
+    allowed: Set<string>,
+    entity: "item" | "location",
+): asserts changes is Record<string, unknown> {
+    if (!isRecord(changes)) {
+        throw new DomainError("INVALID_CHANGES", `${entity} changes must be an object`);
+    }
+    const unknown = Object.keys(changes).find(
+        (key) => !allowed.has(key) || key.includes(".") || unsafePathKeys.has(key),
+    );
+    if (unknown) {
+        throw new DomainError(
+            "INVALID_CHANGES",
+            `${unknown} cannot be changed through ${entity}.update`,
+        );
+    }
+}
+
+function validDimensions(value: unknown): boolean {
+    return value === null ||
+        (isRecord(value) &&
+            ["depth", "height", "width"].every(
+                (key) => Number.isFinite(value[key]) && Number(value[key]) > 0,
+            ) &&
+            (value.unit === "cm" || value.unit === "in"));
+}
+
+function validConditions(value: unknown): boolean {
+    return isRecord(value) &&
+        ["dark", "dry", "foodSafe"].every((key) => typeof value[key] === "boolean") &&
+        ["dry", "normal", "humid"].includes(String(value.humidity)) &&
+        ["cold", "cool", "normal", "warm"].includes(String(value.temperature));
+}
+
+function validConstraints(value: unknown): boolean {
+    return isRecord(value) &&
+        ["avoidHumidity", "avoidWarmth", "foodOnly"].every(
+            (key) => typeof value[key] === "boolean",
+        ) &&
+        (value.keepTogether === null || typeof value.keepTogether === "string") &&
+        Array.isArray(value.requiredTags) &&
+        value.requiredTags.every((tag) => typeof tag === "string");
+}
+
+function validateEnvelopeRuntime(envelope: CommandEnvelope): void {
+    if (
+        !isRecord(envelope) ||
+        typeof envelope.id !== "string" ||
+        !envelope.id.trim() ||
+        typeof envelope.workspaceId !== "string" ||
+        !envelope.workspaceId.trim() ||
+        typeof envelope.actorId !== "string" ||
+        !envelope.actorId.trim() ||
+        typeof envelope.deviceId !== "string" ||
+        !envelope.deviceId.trim() ||
+        typeof envelope.timestamp !== "string" ||
+        !Number.isFinite(Date.parse(envelope.timestamp)) ||
+        !Number.isSafeInteger(envelope.baseRevision) ||
+        envelope.baseRevision < 0 ||
+        !isRecord(envelope.command) ||
+        typeof envelope.command.type !== "string" ||
+        !envelope.command.type.trim() ||
+        !Array.isArray(envelope.expectations)
+    ) {
+        throw new DomainError("INVALID_COMMAND", "Command envelope is malformed");
+    }
+    for (const expectation of envelope.expectations) {
+        if (
+            !isRecord(expectation) ||
+            !["item", "location", "plan", "workspace"].includes(
+                String(expectation.target),
+            ) ||
+            typeof expectation.id !== "string" ||
+            !expectation.id.trim() ||
+            typeof expectation.path !== "string" ||
+            !Object.hasOwn(expectation, "value")
+        ) {
+            throw new DomainError("INVALID_EXPECTATION", "Field expectation is malformed");
+        }
+        if (expectation.path) pathKeys(expectation.path);
+    }
+}
+
 function collectionFor(state: WorkspaceState, target: Exclude<PatchTarget, "workspace">): Entity[] {
     if (target === "item") return state.items;
     if (target === "location") return state.locations;
@@ -59,7 +197,7 @@ function entityFor(state: WorkspaceState, target: PatchTarget, id: string): Enti
 
 function readPath(entity: unknown, path: string): unknown {
     if (!path) return entity;
-    return path.split(".").reduce<unknown>((value, key) => {
+    return pathKeys(path).reduce<unknown>((value, key) => {
         if (!value || typeof value !== "object") return undefined;
         return (value as Record<string, unknown>)[key];
     }, entity);
@@ -75,7 +213,7 @@ export function readPatchValue(
 }
 
 function writePath(entity: Entity, path: string, value: JsonValue | undefined): void {
-    const keys = path.split(".");
+    const keys = pathKeys(path);
     const last = keys.pop();
     if (!last) throw new DomainError("INVALID_PATCH", "A field patch needs a path");
     let cursor = entity as unknown as Record<string, unknown>;
@@ -139,10 +277,36 @@ function requireLocation(state: WorkspaceState, id: string): Location {
     return location;
 }
 
+function requireActiveLocation(state: WorkspaceState, id: string): Location {
+    const location = requireLocation(state, id);
+    if (location.archivedAt) {
+        throw new DomainError("LOCATION_ARCHIVED", `${location.name} is archived`);
+    }
+    return location;
+}
+
 function requireItem(state: WorkspaceState, id: string): ItemRecord {
     const item = state.items.find((candidate) => candidate.id === id);
     if (!item) throw new DomainError("ITEM_NOT_FOUND", `Item ${id} was not found`);
     return item;
+}
+
+function requireActiveItem(state: WorkspaceState, id: string): ItemRecord {
+    const item = requireItem(state, id);
+    if (item.archivedAt) {
+        throw new DomainError("ITEM_ARCHIVED", `${item.name} is archived`);
+    }
+    return item;
+}
+
+function nextItemVersion(item: ItemRecord): number {
+    if (!Number.isSafeInteger(item.version) || item.version >= Number.MAX_SAFE_INTEGER) {
+        throw new DomainError(
+            "ITEM_VERSION_EXHAUSTED",
+            `${item.name} has an invalid or exhausted version counter`,
+        );
+    }
+    return item.version + 1;
 }
 
 function requirePlan(state: WorkspaceState, id: string): MovePlan {
@@ -151,12 +315,63 @@ function requirePlan(state: WorkspaceState, id: string): MovePlan {
     return plan;
 }
 
+function assertPlanCanActivate(state: WorkspaceState, plan: MovePlan): void {
+    if (!Array.isArray(plan.steps) || plan.steps.length === 0) {
+        throw new DomainError("EMPTY_PLAN", "An active plan needs at least one move");
+    }
+    if (plan.steps.every((step) => step.completedAt)) {
+        throw new DomainError("PLAN_COMPLETE", "A fully completed plan cannot be made active again");
+    }
+    for (const step of plan.steps.filter((candidate) => !candidate.completedAt)) {
+        const source = requireActiveLocation(state, step.sourceId);
+        const destination = requireActiveLocation(state, step.destinationId);
+        if (source.id === destination.id) {
+            throw new DomainError("PLAN_STEP_STALE", "A plan move needs a different destination");
+        }
+        if (step.type === "item" && step.itemId) {
+            const item = requireItem(state, step.itemId);
+            if (
+                item.archivedAt ||
+                item.locationId !== step.sourceId ||
+                step.locationId !== null ||
+                step.quantity !== item.quantity
+            ) {
+                throw new DomainError(
+                    "PLAN_STEP_STALE",
+                    `${item.name} no longer matches the planned move`,
+                );
+            }
+        } else if (step.type === "location" && step.locationId) {
+            const location = requireActiveLocation(state, step.locationId);
+            if (
+                step.itemId !== null ||
+                step.quantity !== null ||
+                location.parentId !== step.sourceId ||
+                location.id === step.destinationId ||
+                descendantsOf(state, location.id).some(
+                    (candidate) => candidate.id === step.destinationId,
+                )
+            ) {
+                throw new DomainError(
+                    "PLAN_STEP_STALE",
+                    `${location.name} no longer matches the planned move`,
+                );
+            }
+        } else {
+            throw new DomainError("INVALID_PLAN_STEP", "Plan step has no movable subject");
+        }
+    }
+}
+
 function descendantsOf(state: WorkspaceState, id: string): Location[] {
     const descendants: Location[] = [];
+    const seen = new Set([id]);
     const queue = [id];
     while (queue.length) {
         const parentId = queue.shift() as string;
         for (const location of state.locations.filter((candidate) => candidate.parentId === parentId)) {
+            if (seen.has(location.id)) continue;
+            seen.add(location.id);
             descendants.push(location);
             queue.push(location.id);
         }
@@ -165,29 +380,164 @@ function descendantsOf(state: WorkspaceState, id: string): Location[] {
 }
 
 function validateLocation(state: WorkspaceState, location: Location, ignoreId?: string): void {
-    if (!location.name.trim()) throw new DomainError("NAME_REQUIRED", "Location name is required");
-    if (!location.code.trim()) throw new DomainError("CODE_REQUIRED", "Location code is required");
+    if (!isRecord(location)) {
+        throw new DomainError("INVALID_LOCATION", "Location must be an object");
+    }
+    if (typeof location.id !== "string" || !location.id.trim()) {
+        throw new DomainError("INVALID_LOCATION", "Location ID is required");
+    }
+    if (!ignoreId && state.locations.some((candidate) => candidate.id === location.id)) {
+        throw new DomainError("LOCATION_EXISTS", "A location with this ID already exists");
+    }
+    if (typeof location.name !== "string" || !location.name.trim()) {
+        throw new DomainError("NAME_REQUIRED", "Location name is required");
+    }
+    if (typeof location.code !== "string" || !location.code.trim()) {
+        throw new DomainError("CODE_REQUIRED", "Location code is required");
+    }
+    if (!Number.isFinite(location.order)) {
+        throw new DomainError("INVALID_ORDER", "Location order must be a number");
+    }
+    if (!locationKinds.has(String(location.kind))) {
+        throw new DomainError("INVALID_LOCATION", "Location type is invalid");
+    }
+    if (!captureStatuses.has(String(location.captureStatus))) {
+        throw new DomainError("INVALID_LOCATION", "Capture status is invalid");
+    }
+    if (
+        typeof location.description !== "string" ||
+        !Array.isArray(location.tags) ||
+        location.tags.some((tag) => typeof tag !== "string") ||
+        !validDimensions(location.dimensions) ||
+        !validConditions(location.conditions) ||
+        (location.archivedAt !== null && typeof location.archivedAt !== "string") ||
+        typeof location.createdAt !== "string" ||
+        typeof location.updatedAt !== "string"
+    ) {
+        throw new DomainError("INVALID_LOCATION", "Location fields are malformed");
+    }
+    if (
+        location.parentId !== null &&
+        (typeof location.parentId !== "string" || !location.parentId.trim())
+    ) {
+        throw new DomainError("INVALID_PARENT", "A location parent must be a location ID or null");
+    }
+    if (location.parentId === location.id) {
+        throw new DomainError("LOCATION_CYCLE", "A location cannot contain itself");
+    }
+    if (
+        ignoreId &&
+        location.parentId &&
+        descendantsOf(state, ignoreId).some((candidate) => candidate.id === location.parentId)
+    ) {
+        throw new DomainError("LOCATION_CYCLE", "A location cannot move inside its descendant");
+    }
     if (
         state.locations.some(
             (candidate) =>
                 candidate.id !== ignoreId &&
                 !candidate.archivedAt &&
-                candidate.code.toLocaleUpperCase() === location.code.toLocaleUpperCase(),
+                candidate.code.trim().toLocaleUpperCase() ===
+                    location.code.trim().toLocaleUpperCase(),
         )
     ) {
         throw new DomainError("CODE_IN_USE", `Location code ${location.code} is already in use`);
     }
-    if (location.parentId) requireLocation(state, location.parentId);
+    if (location.parentId) {
+        const parent = requireLocation(state, location.parentId);
+        if (!location.archivedAt && parent.archivedAt) {
+            throw new DomainError(
+                "PARENT_ARCHIVED",
+                `Restore ${parent.name} before placing an active space inside it`,
+            );
+        }
+    }
+}
+
+function captureProgressPatches(
+    state: WorkspaceState,
+    locationId: string,
+    timestamp: string,
+): FieldPatch[] {
+    const location = requireActiveLocation(state, locationId);
+    if (location.captureStatus !== "uncounted" && location.captureStatus !== "known_empty") {
+        return [];
+    }
+    return [
+        patch("location", location.id, "captureStatus", location.captureStatus, "in_progress"),
+        patch("location", location.id, "updatedAt", location.updatedAt, timestamp),
+    ];
+}
+
+function planInvalidationPatches(
+    state: WorkspaceState,
+    itemIds: string[] = [],
+    locationIds: string[] = [],
+): FieldPatch[] {
+    const affectedItems = new Set(itemIds);
+    const affectedLocations = new Set<string>();
+    for (const locationId of locationIds) {
+        let current = state.locations.find((location) => location.id === locationId);
+        const seen = new Set<string>();
+        while (current && !seen.has(current.id)) {
+            seen.add(current.id);
+            affectedLocations.add(current.id);
+            current = current.parentId
+                ? state.locations.find((location) => location.id === current?.parentId)
+                : undefined;
+        }
+    }
+    return state.plans
+        .filter(
+            (plan) =>
+                plan.status === "active" &&
+                plan.steps.some(
+                    (step) =>
+                        !step.completedAt &&
+                        ((step.itemId && affectedItems.has(step.itemId)) ||
+                            (step.locationId && affectedLocations.has(step.locationId)) ||
+                            affectedLocations.has(step.sourceId) ||
+                            affectedLocations.has(step.destinationId)),
+                ),
+        )
+        .map((plan) => patch("plan", plan.id, "status", plan.status, "discarded"));
 }
 
 function validateItem(state: WorkspaceState, item: ItemRecord): void {
-    if (!item.name.trim()) throw new DomainError("NAME_REQUIRED", "Item name is required");
+    if (!isRecord(item)) throw new DomainError("INVALID_ITEM", "Item must be an object");
+    if (typeof item.id !== "string" || !item.id.trim()) {
+        throw new DomainError("INVALID_ITEM", "Item ID is required");
+    }
+    if (typeof item.locationId !== "string" || !item.locationId.trim()) {
+        throw new DomainError("INVALID_LOCATION", "Item location is required");
+    }
+    if (typeof item.name !== "string" || !item.name.trim()) {
+        throw new DomainError("NAME_REQUIRED", "Item name is required");
+    }
     if (!Number.isFinite(item.quantity) || item.quantity <= 0) {
         throw new DomainError("INVALID_QUANTITY", "Quantity must be greater than zero");
     }
-    if (!item.unit.trim()) throw new DomainError("UNIT_REQUIRED", "Unit is required");
+    if (typeof item.unit !== "string" || !item.unit.trim()) {
+        throw new DomainError("UNIT_REQUIRED", "Unit is required");
+    }
     if (!Number.isFinite(item.order)) throw new DomainError("INVALID_ORDER", "Item order must be a number");
-    requireLocation(state, item.locationId);
+    if (
+        typeof item.category !== "string" ||
+        typeof item.notes !== "string" ||
+        !Array.isArray(item.tags) ||
+        item.tags.some((tag) => typeof tag !== "string") ||
+        !frequencies.has(String(item.frequency)) ||
+        !validDimensions(item.dimensions) ||
+        !validConstraints(item.constraints) ||
+        !Number.isSafeInteger(item.version) ||
+        item.version < 1 ||
+        (item.archivedAt !== null && typeof item.archivedAt !== "string") ||
+        typeof item.createdAt !== "string" ||
+        typeof item.updatedAt !== "string"
+    ) {
+        throw new DomainError("INVALID_ITEM", "Item fields are malformed");
+    }
+    if (!item.archivedAt) requireActiveLocation(state, item.locationId);
 }
 
 function equivalent(left: ItemRecord, right: ItemRecord): boolean {
@@ -209,7 +559,7 @@ function moveItemPatches(
     quantity: number,
     envelope: CommandEnvelope,
 ): FieldPatch[] {
-    requireLocation(state, destinationId);
+    requireActiveLocation(state, destinationId);
     if (item.locationId === destinationId) {
         throw new DomainError("ALREADY_THERE", `${item.name} is already in that location`);
     }
@@ -234,17 +584,24 @@ function moveItemPatches(
         .reduce((maximum, candidate) => Math.max(maximum, candidate.order ?? 0), -1) + 1;
 
     if (matching) {
+        const mergedQuantity = matching.quantity + quantity;
+        if (!Number.isFinite(mergedQuantity)) {
+            throw new DomainError(
+                "QUANTITY_OVERFLOW",
+                `Moving ${item.name} would exceed the supported quantity range`,
+            );
+        }
         patches.push(
-            patch("item", matching.id, "quantity", matching.quantity, matching.quantity + quantity),
+            patch("item", matching.id, "quantity", matching.quantity, mergedQuantity),
             patch("item", matching.id, "updatedAt", matching.updatedAt, envelope.timestamp),
-            patch("item", matching.id, "version", matching.version, matching.version + 1),
+            patch("item", matching.id, "version", matching.version, nextItemVersion(matching)),
         );
         if (remaining === 0) patches.push(patch("item", item.id, "", item, undefined));
         else {
             patches.push(
                 patch("item", item.id, "quantity", item.quantity, remaining),
                 patch("item", item.id, "updatedAt", item.updatedAt, envelope.timestamp),
-                patch("item", item.id, "version", item.version, item.version + 1),
+                patch("item", item.id, "version", item.version, nextItemVersion(item)),
             );
         }
         return patches;
@@ -255,15 +612,22 @@ function moveItemPatches(
             patch("item", item.id, "locationId", item.locationId, destinationId),
             patch("item", item.id, "order", item.order, destinationOrder),
             patch("item", item.id, "updatedAt", item.updatedAt, envelope.timestamp),
-            patch("item", item.id, "version", item.version, item.version + 1),
+            patch("item", item.id, "version", item.version, nextItemVersion(item)),
         );
         return patches;
     }
 
+    const splitId = `item_split_${envelope.id}`;
+    if (state.items.some((candidate) => candidate.id === splitId)) {
+        throw new DomainError(
+            "ITEM_EXISTS",
+            "The partial move would reuse an existing item record ID",
+        );
+    }
     const split: ItemRecord = {
         ...clone(item),
         createdAt: envelope.timestamp,
-        id: `item_split_${envelope.id}`,
+        id: splitId,
         locationId: destinationId,
         order: destinationOrder,
         quantity,
@@ -273,7 +637,7 @@ function moveItemPatches(
     patches.push(
         patch("item", item.id, "quantity", item.quantity, remaining),
         patch("item", item.id, "updatedAt", item.updatedAt, envelope.timestamp),
-        patch("item", item.id, "version", item.version, item.version + 1),
+        patch("item", item.id, "version", item.version, nextItemVersion(item)),
         patch("item", split.id, "", undefined, split),
     );
     return patches;
@@ -286,6 +650,9 @@ function normalPatches(
     const command = envelope.command;
 
     if (command.type === "workspace.rename") {
+        if (typeof command.name !== "string") {
+            throw new DomainError("NAME_REQUIRED", "Workspace name is required");
+        }
         const name = command.name.trim();
         if (!name) throw new DomainError("NAME_REQUIRED", "Workspace name is required");
         return {
@@ -299,30 +666,101 @@ function normalPatches(
         validateLocation(state, command.location);
         return {
             label: `Created ${command.location.name}`,
-            patches: [patch("location", command.location.id, "", undefined, command.location)],
+            patches: [
+                ...(command.location.parentId
+                    ? planInvalidationPatches(state, [], [command.location.parentId])
+                    : []),
+                patch("location", command.location.id, "", undefined, command.location),
+                ...(command.location.parentId
+                    ? captureProgressPatches(
+                          state,
+                          command.location.parentId,
+                          envelope.timestamp,
+                      )
+                    : []),
+            ],
             subjectIds: [command.location.id],
         };
     }
 
     if (command.type === "location.update") {
-        const location = requireLocation(state, command.id);
+        const location = requireActiveLocation(state, command.id);
+        assertAllowedChanges(command.changes, locationChangeKeys, "location");
+        const changesParent =
+            "parentId" in command.changes &&
+            command.changes.parentId !== location.parentId;
+        if (
+            "archivedAt" in command.changes ||
+            "captureStatus" in command.changes ||
+            ("order" in command.changes && !changesParent) ||
+            "updatedAt" in command.changes
+        ) {
+            throw new DomainError(
+                "STRUCTURAL_LOCATION_UPDATE",
+                "Use the dedicated archive or capture-status action for this change",
+            );
+        }
         const next = { ...clone(location), ...clone(command.changes), updatedAt: envelope.timestamp };
+        if (typeof next.code !== "string" || typeof next.name !== "string") {
+            throw new DomainError(
+                "INVALID_LOCATION",
+                "Location name and code must be strings",
+            );
+        }
         next.code = next.code.trim().toUpperCase();
+        next.name = next.name.trim();
         validateLocation(state, next, location.id);
-        const patches = Object.entries(command.changes).map(([path, value]) =>
+        const normalizedChanges = {
+            ...command.changes,
+            ...("code" in command.changes ? { code: next.code } : {}),
+            ...("name" in command.changes ? { name: next.name } : {}),
+        };
+        const patches = Object.entries(normalizedChanges).map(([path, value]) =>
             patch("location", location.id, path, readPath(location, path), value),
         );
         patches.push(patch("location", location.id, "updatedAt", location.updatedAt, envelope.timestamp));
+        if (
+            ["conditions", "dimensions", "kind", "parentId", "tags"].some(
+                (field) => field in command.changes,
+            )
+        ) {
+            patches.push(
+                ...planInvalidationPatches(
+                    state,
+                    [],
+                    [location.id, next.parentId].filter(
+                        (id): id is string => id !== null,
+                    ),
+                ),
+            );
+        }
+        if (next.parentId !== location.parentId) {
+            if (next.parentId) {
+                patches.push(...captureProgressPatches(state, next.parentId, envelope.timestamp));
+            }
+        }
         return { label: `Updated ${location.name}`, patches, subjectIds: [location.id] };
     }
 
     if (command.type === "location.move") {
-        const location = requireLocation(state, command.id);
+        const location = requireActiveLocation(state, command.id);
+        if (
+            command.parentId !== null &&
+            (typeof command.parentId !== "string" || !command.parentId.trim())
+        ) {
+            throw new DomainError(
+                "INVALID_PARENT",
+                "A moved location needs a parent ID or top-level placement",
+            );
+        }
+        if (command.order !== undefined && !Number.isFinite(command.order)) {
+            throw new DomainError("INVALID_ORDER", "Location order must be a number");
+        }
         if (command.parentId === location.id) {
             throw new DomainError("LOCATION_CYCLE", "A location cannot contain itself");
         }
         if (command.parentId) {
-            requireLocation(state, command.parentId);
+            requireActiveLocation(state, command.parentId);
             if (descendantsOf(state, location.id).some((candidate) => candidate.id === command.parentId)) {
                 throw new DomainError("LOCATION_CYCLE", "A location cannot move inside its descendant");
             }
@@ -330,15 +768,28 @@ function normalPatches(
         const patches = [
             patch("location", location.id, "parentId", location.parentId, command.parentId),
             patch("location", location.id, "updatedAt", location.updatedAt, envelope.timestamp),
+            ...planInvalidationPatches(
+                state,
+                [],
+                [location.id, command.parentId].filter(
+                    (id): id is string => id !== null,
+                ),
+            ),
         ];
         if (command.order !== undefined) {
             patches.push(patch("location", location.id, "order", location.order, command.order));
+        }
+        if (command.parentId) {
+            patches.push(...captureProgressPatches(state, command.parentId, envelope.timestamp));
         }
         return { label: `Moved ${location.name}`, patches, subjectIds: [location.id] };
     }
 
     if (command.type === "location.reorder") {
-        const location = requireLocation(state, command.id);
+        const location = requireActiveLocation(state, command.id);
+        if (!Number.isFinite(command.order)) {
+            throw new DomainError("INVALID_ORDER", "Location order must be a number");
+        }
         return {
             label: `Reordered ${location.name}`,
             patches: [
@@ -351,12 +802,52 @@ function normalPatches(
 
     if (command.type === "location.archive") {
         const location = requireLocation(state, command.id);
+        if (typeof command.archived !== "boolean") {
+            throw new DomainError("INVALID_ARCHIVE", "Archive state must be true or false");
+        }
         const archivedAt = command.archived ? envelope.timestamp : null;
+        if (command.archived) {
+            const liveDescendants = descendantsOf(state, location.id).filter(
+                (candidate) => !candidate.archivedAt,
+            );
+            if (liveDescendants.length) {
+                throw new DomainError(
+                    "ARCHIVE_HAS_DESCENDANTS",
+                    `${location.name} has live nested spaces; move or archive them first`,
+                );
+            }
+            if (
+                state.items.some(
+                    (item) => item.locationId === location.id && !item.archivedAt,
+                )
+            ) {
+                throw new DomainError(
+                    "ARCHIVE_HAS_CONTENTS",
+                    `${location.name} has item contents; move or delete them first`,
+                );
+            }
+        } else {
+            validateLocation(state, { ...location, archivedAt: null }, location.id);
+        }
         return {
             label: `${command.archived ? "Archived" : "Restored"} ${location.name}`,
             patches: [
                 patch("location", location.id, "archivedAt", location.archivedAt, archivedAt),
                 patch("location", location.id, "updatedAt", location.updatedAt, envelope.timestamp),
+                ...planInvalidationPatches(
+                    state,
+                    [],
+                    [location.id, location.parentId].filter(
+                        (id): id is string => id !== null,
+                    ),
+                ),
+                ...(!command.archived && location.parentId
+                    ? captureProgressPatches(
+                          state,
+                          location.parentId,
+                          envelope.timestamp,
+                      )
+                    : []),
             ],
             subjectIds: [location.id],
         };
@@ -364,6 +855,9 @@ function normalPatches(
 
     if (command.type === "location.delete") {
         const location = requireLocation(state, command.id);
+        if (!Array.isArray(command.descendantIds) || !Array.isArray(command.itemIds)) {
+            throw new DomainError("DELETE_REVIEW_STALE", "Deletion review is malformed");
+        }
         const descendants = descendantsOf(state, location.id);
         const locationIds = [location.id, ...descendants.map((candidate) => candidate.id)];
         const itemIds = state.items
@@ -378,6 +872,7 @@ function normalPatches(
             );
         }
         const patches: FieldPatch[] = [];
+        patches.push(...planInvalidationPatches(state, itemIds, locationIds));
         for (const itemId of itemIds) {
             const item = requireItem(state, itemId);
             patches.push(patch("item", item.id, "", item, undefined));
@@ -394,16 +889,32 @@ function normalPatches(
     }
 
     if (command.type === "capture.status") {
-        const location = requireLocation(state, command.id);
+        const location = requireActiveLocation(state, command.id);
+        if (!captureStatuses.has(String(command.status))) {
+            throw new DomainError("INVALID_CAPTURE_STATUS", "Capture status is invalid");
+        }
         if (
             command.status === "known_empty" &&
             state.items.some((item) => item.locationId === location.id && !item.archivedAt)
         ) {
             throw new DomainError("NOT_EMPTY", "A location with recorded items cannot be known empty");
         }
+        if (
+            command.status === "known_empty" &&
+            state.locations.some(
+                (candidate) =>
+                    candidate.parentId === location.id && !candidate.archivedAt,
+            )
+        ) {
+            throw new DomainError(
+                "NOT_EMPTY",
+                "A location with a live nested space cannot be known empty",
+            );
+        }
         return {
             label: `Marked ${location.name} ${command.status.replace("_", " ")}`,
             patches: [
+                ...planInvalidationPatches(state, [], [location.id]),
                 patch("location", location.id, "captureStatus", location.captureStatus, command.status),
                 patch("location", location.id, "updatedAt", location.updatedAt, envelope.timestamp),
             ],
@@ -413,28 +924,74 @@ function normalPatches(
 
     if (command.type === "item.create") {
         validateItem(state, command.item);
+        if (state.items.some((item) => item.id === command.item.id)) {
+            throw new DomainError("ITEM_EXISTS", "An item with this ID already exists");
+        }
         return {
             label: `Recorded ${command.item.quantity} ${command.item.unit} ${command.item.name}`,
-            patches: [patch("item", command.item.id, "", undefined, command.item)],
+            patches: [
+                ...planInvalidationPatches(state, [], [command.item.locationId]),
+                patch("item", command.item.id, "", undefined, command.item),
+                ...captureProgressPatches(
+                    state,
+                    command.item.locationId,
+                    envelope.timestamp,
+                ),
+            ],
             subjectIds: [command.item.id, command.item.locationId],
         };
     }
 
     if (command.type === "item.update") {
         const item = requireItem(state, command.id);
+        assertAllowedChanges(command.changes, itemChangeKeys, "item");
+        if (
+            "locationId" in command.changes ||
+            "archivedAt" in command.changes ||
+            "order" in command.changes ||
+            "updatedAt" in command.changes ||
+            "version" in command.changes
+        ) {
+            throw new DomainError(
+                "STRUCTURAL_ITEM_UPDATE",
+                "Use the dedicated move, reorder, or archive action for this change",
+            );
+        }
         const next = {
             ...clone(item),
             ...clone(command.changes),
             updatedAt: envelope.timestamp,
-            version: item.version + 1,
+            version: nextItemVersion(item),
         };
+        if (typeof next.name !== "string" || typeof next.unit !== "string") {
+            throw new DomainError(
+                "INVALID_ITEM",
+                "Item name and unit must be strings",
+            );
+        }
+        next.name = next.name.trim();
+        next.unit = next.unit.trim();
         validateItem(state, next);
-        const patches = Object.entries(command.changes).map(([path, value]) =>
+        const normalizedChanges = {
+            ...command.changes,
+            ...("name" in command.changes ? { name: next.name } : {}),
+            ...("unit" in command.changes ? { unit: next.unit } : {}),
+        };
+        const patches = Object.entries(normalizedChanges).map(([path, value]) =>
             patch("item", item.id, path, readPath(item, path), value),
         );
+        if (
+            ["category", "constraints", "dimensions", "frequency", "quantity", "tags", "unit"].some(
+                (field) => field in command.changes,
+            )
+        ) {
+            patches.unshift(
+                ...planInvalidationPatches(state, [item.id], [item.locationId]),
+            );
+        }
         patches.push(
             patch("item", item.id, "updatedAt", item.updatedAt, envelope.timestamp),
-            patch("item", item.id, "version", item.version, item.version + 1),
+            patch("item", item.id, "version", item.version, nextItemVersion(item)),
         );
         return { label: `Updated ${item.name}`, patches, subjectIds: [item.id] };
     }
@@ -449,7 +1006,7 @@ function normalPatches(
             patches: [
                 patch("item", item.id, "order", item.order, command.order),
                 patch("item", item.id, "updatedAt", item.updatedAt, envelope.timestamp),
-                patch("item", item.id, "version", item.version, item.version + 1),
+                patch("item", item.id, "version", item.version, nextItemVersion(item)),
             ],
             subjectIds: [item.id, item.locationId],
         };
@@ -459,34 +1016,58 @@ function normalPatches(
         const item = requireItem(state, command.id);
         return {
             label: `Deleted ${item.name}`,
-            patches: [patch("item", item.id, "", item, undefined)],
+            patches: [
+                ...planInvalidationPatches(state, [item.id], [item.locationId]),
+                patch("item", item.id, "", item, undefined),
+            ],
             subjectIds: [item.id, item.locationId],
         };
     }
 
     if (command.type === "item.move") {
-        const item = requireItem(state, command.id);
+        const item = requireActiveItem(state, command.id);
+        const patches = moveItemPatches(
+            state,
+            item,
+            command.destinationId,
+            command.quantity,
+            envelope,
+        );
         return {
             label: `Moved ${command.quantity} ${item.unit} ${item.name}`,
-            patches: moveItemPatches(state, item, command.destinationId, command.quantity, envelope),
+            patches: [
+                ...planInvalidationPatches(
+                    state,
+                    [item.id],
+                    [item.locationId, command.destinationId],
+                ),
+                ...patches,
+                ...captureProgressPatches(
+                    state,
+                    command.destinationId,
+                    envelope.timestamp,
+                ),
+            ],
             subjectIds: [item.id, item.locationId, command.destinationId],
         };
     }
 
     if (command.type === "item.bulkMove") {
-        if (!command.itemIds.length) throw new DomainError("EMPTY_SELECTION", "Select at least one item");
-        requireLocation(state, command.destinationId);
+        if (!Array.isArray(command.itemIds) || !command.itemIds.length) {
+            throw new DomainError("EMPTY_SELECTION", "Select at least one item");
+        }
+        requireActiveLocation(state, command.destinationId);
         const working = clone(state);
         const patches: FieldPatch[] = [];
         const itemIds = [...new Set(command.itemIds)];
         const movableIds = itemIds.filter(
-            (id) => requireItem(working, id).locationId !== command.destinationId,
+            (id) => requireActiveItem(working, id).locationId !== command.destinationId,
         );
         if (!movableIds.length) {
             throw new DomainError("ALREADY_THERE", "Selected items are already in that location");
         }
         for (const id of movableIds) {
-            const item = requireItem(working, id);
+            const item = requireActiveItem(working, id);
             const itemPatches = moveItemPatches(
                 working,
                 item,
@@ -501,22 +1082,173 @@ function normalPatches(
             label: movableIds.length === itemIds.length
                 ? `Moved ${movableIds.length} item record${movableIds.length === 1 ? "" : "s"}`
                 : `Moved ${movableIds.length} of ${itemIds.length} item records`,
-            patches,
+            patches: [
+                ...planInvalidationPatches(
+                    state,
+                    movableIds,
+                    [
+                        ...new Set(
+                            movableIds.flatMap((id) => [
+                                requireItem(state, id).locationId,
+                                command.destinationId,
+                            ]),
+                        ),
+                    ],
+                ),
+                ...patches,
+                ...captureProgressPatches(
+                    state,
+                    command.destinationId,
+                    envelope.timestamp,
+                ),
+            ],
             subjectIds: [...new Set([...movableIds, command.destinationId])],
         };
     }
 
     if (command.type === "plan.create") {
+        if (
+            !isRecord(command.plan) ||
+            typeof command.plan.id !== "string" ||
+            !command.plan.id.trim() ||
+            typeof command.plan.name !== "string" ||
+            !command.plan.name.trim() ||
+            typeof command.plan.createdAt !== "string" ||
+            !isRecord(command.plan.weights) ||
+            ["accessibility", "capacity", "grouping", "moveCost", "suitability"].some(
+                (key) =>
+                    !Number.isFinite(
+                        (command.plan.weights as unknown as Record<string, unknown>)[key],
+                    ),
+            ) ||
+            !Array.isArray(command.plan.steps)
+        ) {
+            throw new DomainError("INVALID_PLAN", "The new plan is malformed");
+        }
         if (!command.plan.steps.length) throw new DomainError("EMPTY_PLAN", "The plan has no moves");
+        if (command.plan.status !== "active") {
+            throw new DomainError("INVALID_PLAN", "A new plan must start active");
+        }
+        if (state.plans.some((plan) => plan.id === command.plan.id)) {
+            throw new DomainError("PLAN_EXISTS", "A plan with this ID already exists");
+        }
+        const stepIds = new Set<string>();
+        for (const step of command.plan.steps) {
+            if (
+                !isRecord(step) ||
+                typeof step.id !== "string" ||
+                !step.id.trim() ||
+                typeof step.sourceId !== "string" ||
+                typeof step.destinationId !== "string" ||
+                !Array.isArray(step.explanation) ||
+                step.explanation.some((reason) => typeof reason !== "string") ||
+                !Number.isFinite(step.score) ||
+                (step.completedAt !== null && typeof step.completedAt !== "string")
+            ) {
+                throw new DomainError("INVALID_PLAN_STEP", "A plan step is malformed");
+            }
+            if (stepIds.has(step.id)) {
+                throw new DomainError("DUPLICATE_PLAN_STEP", "Plan step IDs must be unique");
+            }
+            stepIds.add(step.id);
+            if (step.completedAt) {
+                throw new DomainError("INVALID_PLAN_STEP", "A new plan cannot contain completed steps");
+            }
+            const source = requireActiveLocation(state, step.sourceId);
+            const destination = requireActiveLocation(state, step.destinationId);
+            if (source.id === destination.id) {
+                throw new DomainError("INVALID_PLAN_STEP", "A plan move needs a different destination");
+            }
+            if (step.type === "item" && step.itemId) {
+                const item = requireItem(state, step.itemId);
+                if (item.archivedAt) {
+                    throw new DomainError(
+                        "PLAN_STEP_STALE",
+                        `${item.name} was archived after this plan was generated`,
+                    );
+                }
+                if (
+                    step.locationId !== null ||
+                    item.locationId !== step.sourceId ||
+                    step.quantity !== item.quantity
+                ) {
+                    throw new DomainError(
+                        "PLAN_STEP_STALE",
+                        `${item.name} no longer matches the planned move`,
+                    );
+                }
+            } else if (step.type === "location" && step.locationId) {
+                const location = requireActiveLocation(state, step.locationId);
+                if (
+                    step.itemId !== null ||
+                    step.quantity !== null ||
+                    location.parentId !== step.sourceId
+                ) {
+                    throw new DomainError(
+                        "PLAN_STEP_STALE",
+                        `${location.name} no longer matches the planned move`,
+                    );
+                }
+                if (
+                    location.id === step.destinationId ||
+                    descendantsOf(state, location.id).some(
+                        (candidate) => candidate.id === step.destinationId,
+                    )
+                ) {
+                    throw new DomainError(
+                        "LOCATION_CYCLE",
+                        "The planned container move would create a cycle",
+                    );
+                }
+            } else {
+                throw new DomainError("INVALID_PLAN_STEP", "Plan step has no movable subject");
+            }
+        }
         return {
             label: `Created plan ${command.plan.name}`,
-            patches: [patch("plan", command.plan.id, "", undefined, command.plan)],
+            patches: [
+                ...state.plans
+                    .filter((plan) => plan.status === "active")
+                    .map((plan) => patch("plan", plan.id, "status", plan.status, "discarded")),
+                patch("plan", command.plan.id, "", undefined, command.plan),
+            ],
             subjectIds: [command.plan.id],
         };
     }
 
     if (command.type === "plan.status") {
         const plan = requirePlan(state, command.planId);
+        if (!planStatuses.has(String(command.status))) {
+            throw new DomainError("INVALID_PLAN_STATUS", "Plan status is invalid");
+        }
+        if (
+            command.status === "active" &&
+            state.plans.some(
+                (candidate) => candidate.id !== plan.id && candidate.status === "active",
+            )
+        ) {
+            throw new DomainError("ACTIVE_PLAN_EXISTS", "Discard the current active plan first");
+        }
+        if (command.status === "active") assertPlanCanActivate(state, plan);
+        if (
+            command.status === "completed" &&
+            plan.steps.some((step) => !step.completedAt)
+        ) {
+            throw new DomainError(
+                "PLAN_INCOMPLETE",
+                "Complete every move before marking the plan completed",
+            );
+        }
+        if (
+            command.status === "active" &&
+            plan.steps.length > 0 &&
+            plan.steps.every((step) => step.completedAt)
+        ) {
+            throw new DomainError(
+                "PLAN_COMPLETE",
+                "A fully completed plan cannot be made active again",
+            );
+        }
         return {
             label: `Marked ${plan.name} ${command.status}`,
             patches: [patch("plan", plan.id, "status", plan.status, command.status)],
@@ -526,13 +1258,38 @@ function normalPatches(
 
     if (command.type === "plan.step.complete") {
         const plan = requirePlan(state, command.planId);
+        if (plan.status !== "active") {
+            throw new DomainError(
+                "PLAN_NOT_ACTIVE",
+                "Only an active plan can execute a move",
+            );
+        }
+        if (state.plans.filter((candidate) => candidate.status === "active").length > 1) {
+            throw new DomainError(
+                "MULTIPLE_ACTIVE_PLANS",
+                "Replace or discard plans until only one active plan remains",
+            );
+        }
         const step = plan.steps.find((candidate) => candidate.id === command.stepId);
         if (!step) throw new DomainError("PLAN_STEP_NOT_FOUND", "Plan step was not found");
         if (step.completedAt) throw new DomainError("PLAN_STEP_COMPLETE", "Plan step is already complete");
+        const stepIndex = plan.steps.findIndex((candidate) => candidate.id === step.id);
+        if (plan.steps.slice(0, stepIndex).some((candidate) => !candidate.completedAt)) {
+            throw new DomainError(
+                "PLAN_OUT_OF_ORDER",
+                "Complete earlier plan moves before this one",
+            );
+        }
         const physicalPatches: FieldPatch[] = [];
         if (step.type === "item" && step.itemId) {
             const item = requireItem(state, step.itemId);
-            if (item.locationId !== step.sourceId) {
+            requireActiveLocation(state, step.sourceId);
+            requireActiveLocation(state, step.destinationId);
+            if (
+                item.archivedAt ||
+                item.locationId !== step.sourceId ||
+                step.quantity !== item.quantity
+            ) {
                 throw new DomainError("PLAN_STEP_STALE", `${item.name} is no longer at the planned source`);
             }
             physicalPatches.push(
@@ -543,22 +1300,37 @@ function normalPatches(
                     step.quantity ?? item.quantity,
                     envelope,
                 ),
+                ...captureProgressPatches(
+                    state,
+                    step.destinationId,
+                    envelope.timestamp,
+                ),
             );
         } else if (step.type === "location" && step.locationId) {
-            const location = requireLocation(state, step.locationId);
+            const location = requireActiveLocation(state, step.locationId);
             if (location.parentId !== step.sourceId) {
                 throw new DomainError(
                     "PLAN_STEP_STALE",
                     `${location.name} is no longer at the planned source`,
                 );
             }
-            if (descendantsOf(state, location.id).some((child) => child.id === step.destinationId)) {
+            if (
+                location.id === step.destinationId ||
+                descendantsOf(state, location.id).some(
+                    (child) => child.id === step.destinationId,
+                )
+            ) {
                 throw new DomainError("LOCATION_CYCLE", "The planned container move would create a cycle");
             }
-            requireLocation(state, step.destinationId);
+            requireActiveLocation(state, step.destinationId);
             physicalPatches.push(
                 patch("location", location.id, "parentId", location.parentId, step.destinationId),
                 patch("location", location.id, "updatedAt", location.updatedAt, envelope.timestamp),
+                ...captureProgressPatches(
+                    state,
+                    step.destinationId,
+                    envelope.timestamp,
+                ),
             );
         } else {
             throw new DomainError("INVALID_PLAN_STEP", "Plan step has no movable subject");
@@ -591,7 +1363,20 @@ function expectationConflicts(
     const conflicts: SyncConflict[] = [];
     for (const expectation of expectations) {
         const current = readPatchValue(state, expectation.target, expectation.id, expectation.path);
-        if (!equal(current, expectation.value)) {
+        let matches = equal(current, expectation.value);
+        if (
+            !matches &&
+            expectation.target === "item" &&
+            expectation.path === "" &&
+            isRecord(current) &&
+            isRecord(expectation.value) &&
+            !Object.hasOwn(expectation.value, "order")
+        ) {
+            const currentWithoutOrder = clone(current);
+            delete currentWithoutOrder.order;
+            matches = equal(currentWithoutOrder, expectation.value);
+        }
+        if (!matches) {
             conflicts.push({
                 commandId,
                 current,
@@ -613,14 +1398,18 @@ function historyConflicts(
     commandId: string,
 ): SyncConflict[] {
     const conflicts: SyncConflict[] = [];
-    for (const fieldPatch of activity.patches) {
+    const working = clone(state);
+    const patches = direction === "undo"
+        ? reversePatches(activity.patches)
+        : activity.patches;
+    for (const fieldPatch of patches) {
         const current = readPatchValue(
-            state,
+            working,
             fieldPatch.target,
             fieldPatch.id,
             fieldPatch.path,
         );
-        const expected = direction === "undo" ? fieldPatch.after : fieldPatch.before;
+        const expected = fieldPatch.before;
         if (!equal(current, expected)) {
             conflicts.push({
                 commandId,
@@ -631,7 +1420,9 @@ function historyConflicts(
                 message: `Cannot ${direction}; the affected value changed later`,
                 target: fieldPatch.target,
             });
+            continue;
         }
+        applyFieldPatch(working, fieldPatch);
     }
     return conflicts;
 }
@@ -651,6 +1442,12 @@ function applyHistoryAction(
     activities: ActivityRecord[],
 ): CommandResult {
     const direction = type === "undo" || type === "batch_undo" ? "undo" : "reapply";
+    const compatibleBaseline = new Map<string, number>();
+    for (const candidate of validateSnapshot(state)) {
+        if (candidate.severity !== "error" || !isLegacyCompatibleIssue(candidate)) continue;
+        const key = `${candidate.code}:${candidate.message}`;
+        compatibleBaseline.set(key, (compatibleBaseline.get(key) ?? 0) + 1);
+    }
     const working = clone(state);
     for (const activity of activities) {
         const expectedStatus = direction === "undo" ? "applied" : "undone";
@@ -669,6 +1466,21 @@ function applyHistoryAction(
         const stored = working.activities.find((candidate) => candidate.id === activity.id) as ActivityRecord;
         stored.status = direction === "undo" ? "undone" : "applied";
         stored.undoneAt = direction === "undo" ? envelope.timestamp : null;
+    }
+    const invalid = validateSnapshot(working).find((candidate) => {
+        if (candidate.severity !== "error") return false;
+        if (!isLegacyCompatibleIssue(candidate)) return true;
+        const key = `${candidate.code}:${candidate.message}`;
+        const remaining = compatibleBaseline.get(key) ?? 0;
+        if (remaining < 1) return true;
+        compatibleBaseline.set(key, remaining - 1);
+        return false;
+    });
+    if (invalid) {
+        throw new DomainError(
+            "HISTORY_INVALID",
+            `Cannot ${direction}; it would make the workspace invalid (${invalid.message})`,
+        );
     }
 
     const audit: AuditEvent = {
@@ -706,27 +1518,55 @@ function applyHistoryCommand(
             throw new DomainError("INVALID_COUNT", "Undo count must be a positive integer");
         }
         const activities = state.activities
-            .filter((activity) => activity.status === "applied")
-            .sort((left, right) => right.timestamp.localeCompare(left.timestamp))
+            .map((activity, index) => ({ activity, index }))
+            .filter(({ activity }) => activity.status === "applied")
+            .sort((left, right) => right.index - left.index)
             .slice(0, command.count);
         if (activities.length !== command.count) {
             throw new DomainError("HISTORY_RANGE", "There are not that many applied changes");
         }
-        return applyHistoryAction(state, envelope, "batch_undo", activities);
+        return applyHistoryAction(
+            state,
+            envelope,
+            "batch_undo",
+            activities.map(({ activity }) => activity),
+        );
     }
 
     if (command.type === "history.batchRedo") {
         if (!Number.isInteger(command.count) || command.count < 1) {
             throw new DomainError("INVALID_COUNT", "Redo count must be a positive integer");
         }
-        const activities = state.activities
-            .filter((activity) => activity.status === "undone")
-            .sort((left, right) => (right.undoneAt ?? "").localeCompare(left.undoneAt ?? ""))
-            .slice(0, command.count);
+        const undone = new Map(
+            state.activities
+                .filter((activity) => activity.status === "undone")
+                .map((activity) => [activity.id, activity]),
+        );
+        const activities: ActivityRecord[] = [];
+        const selected = new Set<string>();
+        for (const audit of [...state.audit].reverse()) {
+            if (audit.type !== "undo" && audit.type !== "batch_undo") continue;
+            for (const activityId of [...audit.targetActivityIds].reverse()) {
+                const activity = undone.get(activityId);
+                if (!activity || selected.has(activityId)) continue;
+                selected.add(activityId);
+                activities.push(activity);
+            }
+        }
+        for (const activity of state.activities) {
+            if (activity.status !== "undone" || selected.has(activity.id)) continue;
+            activities.push(activity);
+        }
+        activities.splice(command.count);
         if (activities.length !== command.count) {
             throw new DomainError("HISTORY_RANGE", "There are not that many undone changes");
         }
-        return applyHistoryAction(state, envelope, "batch_redo", activities);
+        return applyHistoryAction(
+            state,
+            envelope,
+            "batch_redo",
+            activities,
+        );
     }
 
     throw new DomainError("UNSUPPORTED_HISTORY", "Unsupported history command");
@@ -736,17 +1576,28 @@ export function applyCommand(
     current: WorkspaceState,
     envelope: CommandEnvelope,
 ): CommandResult {
+    validateEnvelopeRuntime(envelope);
     if (envelope.workspaceId !== current.workspace.id) {
         throw new DomainError("WRONG_WORKSPACE", "Command belongs to another workspace");
     }
-    if (envelope.baseRevision > current.workspace.revision) {
-        throw new DomainError("REVISION_AHEAD", "Command revision is newer than the server");
+    if (
+        !Number.isSafeInteger(current.workspace.revision) ||
+        current.workspace.revision >= Number.MAX_SAFE_INTEGER
+    ) {
+        throw new DomainError(
+            "REVISION_EXHAUSTED",
+            "The workspace revision counter is invalid or exhausted",
+        );
     }
-    if (envelope.baseRevision < current.workspace.revision) {
-        const conflicts = expectationConflicts(current, envelope.expectations, envelope.id);
-        if (conflicts.length) {
-            throw new ConflictError("The command conflicts with a newer change", conflicts);
-        }
+    if (envelope.baseRevision > current.workspace.revision) {
+        throw new DomainError(
+            "REVISION_AHEAD",
+            "Command was created from a future workspace revision",
+        );
+    }
+    const conflicts = expectationConflicts(current, envelope.expectations, envelope.id);
+    if (conflicts.length) {
+        throw new ConflictError("The command conflicts with a newer change", conflicts);
     }
 
     if (envelope.command.type.startsWith("history.")) {

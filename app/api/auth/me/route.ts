@@ -9,7 +9,12 @@ export async function GET(request: Request) {
     env.AUTH_GITHUB_CLIENT_ID && env.AUTH_GITHUB_CLIENT_SECRET ? "github" : null,
     env.AUTH_CLOUDFLARE_ACCESS_TEAM_DOMAIN && env.AUTH_CLOUDFLARE_ACCESS_AUD ? "cloudflare-access" : null,
   ].filter((provider): provider is string => provider !== null);
-  if (!env.DB) return Response.json({ user: null, configured: false, providers: [] });
+  if (!env.DB) {
+    return Response.json(
+      { user: null, configured: false, providers: [] },
+      { headers: { "cache-control": "no-store" } },
+    );
+  }
   const user = await authenticate(env.DB, request);
   return Response.json(
     { user, configured: true, providers },

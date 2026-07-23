@@ -20,7 +20,14 @@ export async function synchronize(
     commands: CommandEnvelope[],
     maxRetries = 8,
 ): Promise<SyncResponse> {
-    if (commands.some((envelope) => envelope.workspaceId !== workspaceId)) {
+    if (
+        commands.some(
+            (envelope) =>
+                !envelope ||
+                typeof envelope !== "object" ||
+                envelope.workspaceId !== workspaceId,
+        )
+    ) {
         throw new DomainError("WRONG_WORKSPACE", "Sync batch contains a command for another workspace");
     }
 
@@ -32,27 +39,37 @@ export async function synchronize(
         let applied = false;
 
         for (const envelope of commands) {
-            if (wasApplied(state, envelope.id)) {
+            const commandId = typeof envelope.id === "string" && envelope.id
+                ? envelope.id
+                : `invalid-command-${receipts.length + 1}`;
+            if (wasApplied(state, commandId)) {
                 receipts.push({
-                    commandId: envelope.id,
+                    commandId,
                     revision: state.workspace.revision,
                     status: "duplicate",
                 });
                 continue;
             }
             try {
-                const result = applyCommand(state, envelope);
+                const optimisticUpperBound =
+                    initial.workspace.revision + receipts.length;
+                const command =
+                    envelope.baseRevision > state.workspace.revision &&
+                    envelope.baseRevision <= optimisticUpperBound
+                        ? { ...envelope, baseRevision: state.workspace.revision }
+                        : envelope;
+                const result = applyCommand(state, command);
                 state = result.state;
                 applied = true;
                 receipts.push({
-                    commandId: envelope.id,
+                    commandId,
                     revision: state.workspace.revision,
                     status: "applied",
                 });
             } catch (error) {
                 if (error instanceof ConflictError) {
                     receipts.push({
-                        commandId: envelope.id,
+                        commandId,
                         conflicts: error.conflicts,
                         message: error.message,
                         revision: state.workspace.revision,
@@ -62,7 +79,7 @@ export async function synchronize(
                 }
                 if (error instanceof DomainError) {
                     receipts.push({
-                        commandId: envelope.id,
+                        commandId,
                         message: `${error.code}: ${error.message}`,
                         revision: state.workspace.revision,
                         status: "rejected",

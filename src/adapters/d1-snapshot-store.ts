@@ -88,4 +88,22 @@ export class D1SnapshotStore implements SnapshotStore {
     ): Promise<boolean> {
         return this.compareAndSwap(workspaceId, expectedRevision, state);
     }
+
+    async deleteIfUnclaimed(
+        workspaceId: string,
+        expectedRevision: number,
+    ): Promise<boolean> {
+        const result = await this.database
+            .prepare(
+                `DELETE FROM workspace_snapshots
+                 WHERE workspace_id = ? AND revision = ?
+                   AND NOT EXISTS (
+                     SELECT 1 FROM workspace_members
+                     WHERE workspace_id = ?
+                   )`,
+            )
+            .bind(workspaceId, expectedRevision, workspaceId)
+            .run();
+        return result.success && result.meta?.changes === 1;
+    }
 }
