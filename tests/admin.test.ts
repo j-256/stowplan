@@ -49,4 +49,33 @@ describe("admin control plane", () => {
     await expect(adminMutation(db, owner.userId, { action: "member.role", targetId: target, value: "viewer" })).rejects.toThrow(/at least one owner/);
     await expect(adminMutation(db, owner.userId, { action: "member.remove", targetId: target })).rejects.toThrow(/at least one owner/);
   });
+
+  it("cleans up only unclaimed initial snapshots after membership failure", async () => {
+    const db = database();
+    const store = new D1SnapshotStore(db);
+    const unclaimed = createEmptyState("Unclaimed");
+    await store.initialize(unclaimed);
+    await expect(
+      store.deleteIfUnclaimed(unclaimed.workspace.id, unclaimed.workspace.revision),
+    ).resolves.toBe(true);
+    await expect(store.load(unclaimed.workspace.id)).resolves.toBeNull();
+
+    const claimed = createEmptyState("Claimed");
+    await store.initialize(claimed);
+    const owner = await createOrLinkUser(
+      db,
+      {},
+      {
+        provider: "test",
+        subject: "cleanup-owner",
+        email: "cleanup@example.com",
+        displayName: "Cleanup owner",
+      },
+    );
+    await claimWorkspace(db, owner.userId, claimed.workspace.id);
+    await expect(
+      store.deleteIfUnclaimed(claimed.workspace.id, claimed.workspace.revision),
+    ).resolves.toBe(false);
+    await expect(store.load(claimed.workspace.id)).resolves.not.toBeNull();
+  });
 });
