@@ -1,4 +1,98 @@
-const CACHE="stowplan-shell-v4",SHELL=["/","/docs","/labels","/recovery","/offline","/manifest.webmanifest","/favicon.svg","/icon-192.png","/icon-512.png"];
-self.addEventListener("install",event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(SHELL)).then(()=>self.skipWaiting())));
-self.addEventListener("activate",event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE).map(key=>caches.delete(key)))).then(()=>self.clients.claim())));
-self.addEventListener("fetch",event=>{const url=new URL(event.request.url);if(event.request.method!=="GET"||url.origin!==location.origin||url.pathname.startsWith("/api/"))return;const cacheable=SHELL.includes(url.pathname)||url.pathname.startsWith("/_next/static/");event.respondWith(fetch(event.request).then(response=>{if(response.ok&&cacheable)caches.open(CACHE).then(cache=>cache.put(url.pathname,response.clone()));return response}).catch(()=>caches.match(url.pathname).then(response=>response||(event.request.mode==="navigate"?caches.match("/offline"):undefined))))});
+const CACHE = "stowplan-shell-v7";
+const CACHE_PREFIX = "stowplan-shell-";
+const SHELL = [
+  "/",
+  "/docs",
+  "/docs/",
+  "/labels",
+  "/recovery",
+  "/offline",
+  "/manifest.webmanifest",
+  "/favicon.svg",
+  "/icon-192.png",
+  "/icon-512.png",
+];
+const STATIC_SHELL = new Set([
+  "/manifest.webmanifest",
+  "/favicon.svg",
+  "/icon-192.png",
+  "/icon-512.png",
+]);
+
+async function installShell() {
+  const cache = await caches.open(CACHE);
+  await cache.addAll(SHELL);
+  const referencedAssets = new Set();
+  for (const path of SHELL.filter((candidate) => !STATIC_SHELL.has(candidate))) {
+    const response = await cache.match(path);
+    if (!response || !response.headers.get("content-type")?.includes("text/html")) continue;
+    const html = await response.text();
+    for (const match of html.matchAll(/(?:src|href)=["']([^"'#]+)["']/g)) {
+      const asset = new URL(match[1], location.origin);
+      if (
+        asset.origin === location.origin &&
+        (
+          asset.pathname.startsWith("/assets/") ||
+          asset.pathname.startsWith("/_next/static/")
+        )
+      ) {
+        referencedAssets.add(asset.href);
+      }
+    }
+  }
+  if (referencedAssets.size) await cache.addAll([...referencedAssets]);
+}
+
+self.addEventListener("install", (event) => {
+  event.waitUntil(installShell().then(() => self.skipWaiting()));
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    caches.keys()
+      .then((keys) => Promise.all(
+        keys
+          .filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE)
+          .map((key) => caches.delete(key)),
+      ))
+      .then(() => self.clients.claim()),
+  );
+});
+
+self.addEventListener("fetch", (event) => {
+  const request = event.request;
+  const url = new URL(request.url);
+  if (
+    request.method !== "GET" ||
+    url.origin !== location.origin ||
+    url.pathname.startsWith("/api/")
+  ) return;
+
+  const navigation = request.mode === "navigate";
+  const staticAsset =
+    STATIC_SHELL.has(url.pathname) ||
+    url.pathname.startsWith("/assets/") ||
+    url.pathname.startsWith("/_next/static/");
+  if (!navigation && !staticAsset) return;
+
+  const cacheKey = navigation ? url.pathname : request;
+  const cacheable = navigation ? SHELL.includes(url.pathname) : true;
+  event.respondWith(
+    fetch(request)
+      .then((response) => {
+        if (response.ok && cacheable) {
+          const cacheWrite = caches.open(CACHE)
+            .then((cache) => cache.put(cacheKey, response.clone()))
+            .catch(() => undefined);
+          event.waitUntil(cacheWrite);
+        }
+        return response;
+      })
+      .catch(async () => {
+        const cached = await caches.match(cacheKey);
+        if (cached) return cached;
+        if (navigation) return caches.match("/offline");
+        return Response.error();
+      }),
+  );
+});

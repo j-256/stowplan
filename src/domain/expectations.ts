@@ -74,6 +74,17 @@ export function expectationsForCommand(
         if (command.type === "location.reorder") return [locationExpectation(location, "order")];
         if (command.type === "location.archive") return [locationExpectation(location, "archivedAt")];
         if (command.type === "capture.status") return [locationExpectation(location, "captureStatus")];
+        if (command.type === "location.delete") {
+            const locationIds = new Set([command.id, ...command.descendantIds]);
+            return [
+                ...state.locations
+                    .filter((candidate) => locationIds.has(candidate.id))
+                    .map((candidate) => locationExpectation(candidate, "")),
+                ...state.items
+                    .filter((candidate) => command.itemIds.includes(candidate.id))
+                    .map((candidate) => itemExpectation(candidate, "")),
+            ];
+        }
         return [locationExpectation(location, "")];
     }
 
@@ -112,12 +123,24 @@ export function expectationsForCommand(
         });
     }
 
+    if (command.type === "plan.create") {
+        return [{
+            id: state.workspace.id,
+            path: "revision",
+            target: "workspace",
+            value: state.workspace.revision,
+        }];
+    }
+
     if (command.type === "plan.step.complete" || command.type === "plan.status") {
         const plan = state.plans.find((candidate) => candidate.id === command.planId);
         if (!plan) return [];
         return command.type === "plan.status"
             ? [planExpectation(plan, "status")]
-            : [planExpectation(plan, "steps")];
+            : [
+                  planExpectation(plan, "status"),
+                  planExpectation(plan, "steps"),
+              ];
     }
 
     return [];
