@@ -19,13 +19,18 @@ UI / PWA → local replica + outbox → authenticated sync API → SnapshotStore
 - Applying a command is deterministic. Side effects happen outside the domain.
 - History stores field-level patches; undo/reapply verifies current values before changing them.
 - Server compare-and-swap serializes concurrent sync batches. Command IDs make retries safe.
+- A sync request that loses the first-write initialization race is re-authorized against the resulting membership; read access never authorizes a nonempty command batch.
 - Every server query is scoped through an authenticated user and workspace membership.
 
 ## Boundaries
 
 `src/domain` has no Cloudflare, React, SQL, or browser imports. `SnapshotStore` is the persistence port. D1 and Node SQLite are adapters. Route handlers use standard `Request`/`Response`; `runtimeEnv` is the small composition seam.
 
-IndexedDB is the interaction database, not a cache. It preserves the active replica plus inactive workspaces and each durable outbox. The server is a durable backup and multi-device reconciliation authority. A rejected command remains inspectable; never silently drop it.
+IndexedDB is the interaction database, not a cache. It preserves the active replica plus inactive workspaces and each durable outbox. Workspace opening, guarded removal, reset, and restore use single-transaction selection or compare-and-swap so stale renders and concurrent tabs cannot overwrite a newer local replica. Reconnect and foreground reconciliation include inactive workspaces with pending commands.
+
+The server is a durable backup and multi-device reconciliation authority. A rejected command remains inspectable; never silently drop it. Recovery-bundle uploads must prove that every retained outbox command is already represented in the bundled snapshot before recovery discards the queue.
+
+The service worker caches document navigations and static application assets only. It never caches API responses or mixes React Server Component payloads with HTML, and it deletes only Stowplan-owned cache versions.
 
 ## Adding an adapter
 

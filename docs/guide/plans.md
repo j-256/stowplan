@@ -11,7 +11,9 @@ The planner weighs:
 - physical move distance;
 - the reduction in work from moving one nested container instead of every record inside it.
 
-Completing an item step validates the expected source and quantity. Completing a container step validates the expected parent and prevents cycles. A stale step stops for review rather than moving something from an unexpected place.
+Steps execute in their displayed numbered order. A later step remains disabled until every earlier step is complete, so capacity freed by one move is available to the moves that follow. Completing an item step validates the expected source and quantity. Completing a container step validates the expected parent and prevents cycles. A stale step stops for review rather than moving something from an unexpected place.
+
+Measured capacity is enforced only when the item and destination both have complete, compatible dimensions. When measurements are missing, the recommendation explicitly marks capacity as unverified rather than treating unknown volume as zero or claiming that the item fits.
 
 Plans are suggestions. Adjust weights, discard a plan, or make manual changes at any time; generate a fresh plan after substantial edits.
 
