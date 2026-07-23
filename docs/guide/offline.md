@@ -2,7 +2,7 @@
 
 Stowplan is local-first. IndexedDB contains the active workspace, preserved inactive workspaces, each workspace’s ordered outbox, and the timestamps and outcome of server-backup attempts. A command changes the local snapshot and enters the outbox in one transaction. Opening a shared workspace never erases the one you were using; switch from the workspace home screen.
 
-Network backup waits 1.8 seconds after the most recent command and flushes no later than 8 seconds during continuous work. Returning online, returning to the foreground, or a five-minute reconciliation interval can retry sooner. Reconciliation also pulls changes made by other devices when the current device has nothing to send. Retries are idempotent by command ID.
+Network backup waits 1.8 seconds after the most recent command and flushes no later than 8 seconds during continuous work. Returning online, returning to the foreground, or a five-minute reconciliation interval retries every preserved workspace that has pending changes, even if a different workspace is open. The active workspace also performs an empty reconciliation so it can pull changes made by other devices. Retries are idempotent by command ID.
 
 Status meanings:
 
