@@ -164,6 +164,9 @@ test("keeps hierarchy and touch drag affordances in the shipped organizer", () =
   assert.match(styles, /\.tree-select \.tree-name\{[^}]*overflow:visible[^}]*white-space:normal/);
   assert.match(styles, /\.drag-handle,[^{]*\{[^}]*min-height:44px/);
   assert.match(styles, /\.finish\{bottom:calc\(82px \+ env\(safe-area-inset-bottom\)\)/);
+  assert.match(styles, /@media\(max-width:1100px\) and \(min-width:761px\)\{\.capture\{grid-template-columns:minmax\(0,1fr\)\}/);
+  assert.match(styles, /\.capture-location-row \.queue-name b\{[^}]*white-space:nowrap/);
+  assert.match(styles, /\.capture-location-row \.queue-name span\{[^}]*overflow:visible[^}]*white-space:normal/);
 });
 
 test("ships task-oriented item, plan, and workspace controls", () => {

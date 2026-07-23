@@ -180,6 +180,43 @@ test("preserves a failed creation draft and avoids narrow-screen overflow", asyn
   });
 });
 
+test("keeps the Capture hierarchy readable at compact desktop widths", async ({ page }) => {
+  await page.setViewportSize({ width: 1132, height: 900 });
+  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+
+  const metrics = await page.evaluate(() => {
+    const capture = document.querySelector<HTMLElement>(".capture");
+    const queue = document.querySelector<HTMLElement>(".capture > .queue");
+    const card = document.querySelector<HTMLElement>(".capture > .capture-card");
+    const codes = [...document.querySelectorAll<HTMLElement>(".capture-location-row .queue-name b")];
+    const names = [...document.querySelectorAll<HTMLElement>(".capture-location-row .queue-name span")];
+    const visibleActions = [...document.querySelectorAll<HTMLElement>(".capture-location-row > .row-actions")]
+      .filter((actions) => Number.parseFloat(getComputedStyle(actions).opacity) > 0.1);
+
+    if (!capture || !queue || !card) throw new Error("Capture layout is missing");
+    const queueBounds = queue.getBoundingClientRect();
+    const cardBounds = card.getBoundingClientRect();
+    return {
+      clippedCodes: codes.filter((code) => code.scrollWidth > code.clientWidth).map((code) => code.innerText),
+      clippedNames: names.filter((name) => name.scrollWidth > name.clientWidth).map((name) => name.innerText),
+      cardWidth: Math.round(cardBounds.width),
+      documentOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      queueWidth: Math.round(queueBounds.width),
+      sideBySide: Math.abs(cardBounds.top - queueBounds.top) < 2 && cardBounds.left > queueBounds.right,
+      usesFinePointer: matchMedia("(hover: hover) and (pointer: fine)").matches,
+      visibleActions: visibleActions.length,
+    };
+  });
+
+  expect(metrics.clippedCodes).toEqual([]);
+  expect(metrics.clippedNames).toEqual([]);
+  expect(metrics.documentOverflow).toBe(false);
+  expect(metrics.sideBySide).toBe(true);
+  expect(metrics.queueWidth).toBeGreaterThanOrEqual(360);
+  expect(metrics.cardWidth).toBeGreaterThan(360);
+  if (metrics.usesFinePointer) expect(metrics.visibleActions).toBe(1);
+});
+
 test("executes a planned move and rolls it back from Activity", async ({ page }) => {
   await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
   await page.locator("button.nav:visible", { hasText: "Plan" }).click();
