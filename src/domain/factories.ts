@@ -11,6 +11,8 @@ import {
 } from "./types";
 import { expectationsForCommand } from "./expectations";
 
+export const DEFAULT_ITEM_CATEGORY = "Uncategorized";
+
 const defaultConditions: LocationConditions = {
     dark: false,
     dry: true,
@@ -115,7 +117,7 @@ export function createItem(
 ): ItemRecord {
     return {
         archivedAt: null,
-        category: input.category?.trim() ?? "Uncategorized",
+        category: input.category?.trim() ?? DEFAULT_ITEM_CATEGORY,
         constraints: { ...defaultConstraints },
         createdAt: timestamp,
         dimensions: null,

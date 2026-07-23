@@ -18,6 +18,6 @@ export async function GET(request: Request) {
   const user = await authenticate(env.DB, request);
   return Response.json(
     { user, configured: true, providers },
-    { status: user ? 200 : 401, headers: { "cache-control": "no-store" } },
+    { headers: { "cache-control": "no-store" } },
   );
 }

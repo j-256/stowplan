@@ -6,6 +6,44 @@ import { createEnvelope } from "../domain/factories";
 import type { Command, SyncReceipt, WorkspaceState } from "../domain/types";
 import { activateOrInsertWorkspaceReplica, activateWorkspaceReplica, canRebaseQueuedCommand, deleteWorkspaceReplica, listWorkspaceReplicas, mutateReplica, mutateWorkspaceReplica, readReplica, readWorkspaceReplica, reconcileReplica, reconciliationTargets, replaceReplicaIfUnchanged, writeReplica, type LocalReplica } from "./local-replica";
 
+export const DEVICE_ONLY_BACKUP_ERROR = "Server backup is not configured for this deployment.";
+
+const BACKUP_UNAVAILABLE_API_ERROR = "Durable storage is not configured";
+const BACKUP_UNAVAILABLE_SESSION_KEY = "stowplan-backup-unavailable-at";
+const BACKUP_RETRY_INTERVAL_MS = 5 * 60 * 1_000;
+const SIGN_IN_BACKUP_ERROR = "Sign in to back up this workspace.";
+
+type BackupAccess = "available" | "checking" | "idle" | "signed-out" | "unavailable";
+
+function backupRetryDelay(now = Date.now()): number {
+  try {
+    const unavailableAt = Number(sessionStorage.getItem(BACKUP_UNAVAILABLE_SESSION_KEY));
+    if (!Number.isFinite(unavailableAt) || unavailableAt <= 0) return 0;
+    return Math.min(
+      BACKUP_RETRY_INTERVAL_MS,
+      Math.max(0, unavailableAt + BACKUP_RETRY_INTERVAL_MS - now),
+    );
+  } catch {
+    return 0;
+  }
+}
+
+function rememberBackupUnavailable(): void {
+  try {
+    sessionStorage.setItem(BACKUP_UNAVAILABLE_SESSION_KEY, String(Date.now()));
+  } catch {
+    // Capability caching is optional
+  }
+}
+
+function forgetBackupUnavailable(): void {
+  try {
+    sessionStorage.removeItem(BACKUP_UNAVAILABLE_SESSION_KEY);
+  } catch {
+    // Capability caching is optional
+  }
+}
+
 interface StoreValue {
   backupConfigured: boolean | null;
   blocked: number;
@@ -33,6 +71,7 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
   const [online, setOnline] = useState(() => typeof navigator === "undefined" ? true : navigator.onLine);
   const [syncing, setSyncing] = useState(false);
   const [backupConfigured, setBackupConfigured] = useState<boolean | null>(null);
+  const [backupAccess, setBackupAccess] = useState<BackupAccess>("idle");
   const mutationQueue = useRef<Promise<void>>(Promise.resolve());
   const queuedCommandIds = useRef(new Set<string>());
   const flushPromises = useRef(new Map<string, Promise<void>>());
@@ -48,6 +87,12 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     void mutateReplica((current) => current).then(value => {
+      if (backupRetryDelay() > 0) {
+        setBackupConfigured(false);
+        setBackupAccess("unavailable");
+      } else {
+        setBackupAccess("checking");
+      }
       setReplica(value);
       setLoaded(true);
     }).catch((error) => {
@@ -55,6 +100,43 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
       setLoaded(true);
     });
   }, []);
+  useEffect(() => {
+    if (backupAccess !== "checking") return;
+    let active = true;
+    void fetch("/api/auth/me", { cache: "no-store" }).then(async (response) => {
+      const body = await response.json() as {
+        configured?: boolean;
+        user?: unknown;
+      };
+      if (!response.ok) throw new Error("Could not check server backup access");
+      if (!active) return;
+      if (!body.configured) {
+        rememberBackupUnavailable();
+        setBackupConfigured(false);
+        setBackupAccess("unavailable");
+        return;
+      }
+      forgetBackupUnavailable();
+      setBackupConfigured(true);
+      setBackupAccess(body.user ? "available" : "signed-out");
+    }).catch(() => {
+      if (!active) return;
+      setBackupConfigured(null);
+      setBackupAccess("available");
+    });
+    return () => { active = false; };
+  }, [backupAccess]);
+  useEffect(() => {
+    if (backupAccess !== "unavailable") return;
+    const retry = setTimeout(
+      () => {
+        setBackupConfigured(null);
+        setBackupAccess("checking");
+      },
+      backupRetryDelay() || BACKUP_RETRY_INTERVAL_MS,
+    );
+    return () => clearTimeout(retry);
+  }, [backupAccess]);
   useEffect(() => {
     const update = () => setOnline(navigator.onLine);
     addEventListener("online", update);
@@ -102,7 +184,16 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
       let attemptedWorkspaceId: string | null = null;
       let countedAsSyncing = false;
       try {
-        if (backupConfigured === false) return;
+        if (
+          backupAccess === "checking" ||
+          backupAccess === "idle" ||
+          backupAccess === "unavailable" ||
+          backupConfigured === false
+        ) return;
+        if (backupAccess === "signed-out") {
+          await recordSyncAttempt(workspaceId, SIGN_IN_BACKUP_ERROR);
+          return;
+        }
         const value = await readWorkspaceReplica(workspaceId);
         if (!value || !navigator.onLine) return;
         attemptedWorkspaceId = value.state.workspace.id;
@@ -118,16 +209,20 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
         });
         if (response.status === 503) {
           const body = await response.json().catch(() => null) as { error?: string } | null;
-          if (body?.error === "Durable storage is not configured") {
+          if (body?.error === BACKUP_UNAVAILABLE_API_ERROR) {
+            rememberBackupUnavailable();
             setBackupConfigured(false);
-            await recordSyncAttempt(value.state.workspace.id, "Server backup is not configured for this deployment.");
+            setBackupAccess("unavailable");
+            await recordSyncAttempt(value.state.workspace.id, DEVICE_ONLY_BACKUP_ERROR);
             return;
           }
           throw new Error(body?.error ?? "Server backup is temporarily unavailable.");
         }
+        forgetBackupUnavailable();
         if (response.status === 401) {
           setBackupConfigured(true);
-          await recordSyncAttempt(value.state.workspace.id, "Sign in to back up this workspace.");
+          setBackupAccess("signed-out");
+          await recordSyncAttempt(value.state.workspace.id, SIGN_IN_BACKUP_ERROR);
           return;
         }
         if (response.status === 404) {
@@ -156,6 +251,7 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
         }
         if (!response.ok) throw new Error(`Sync failed (${response.status})`);
         setBackupConfigured(true);
+        setBackupAccess("available");
         const body = await response.json() as { receipts: SyncReceipt[]; state: WorkspaceState };
         const syncedAt = new Date().toISOString();
         const next = await mutateWorkspaceReplica(value.state.workspace.id, (latest) => ({
@@ -168,7 +264,7 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
           setReplica((current) => current?.state.workspace.id === value.state.workspace.id ? next : current);
         }
       } catch (error) {
-        // Local state stays authoritative; visibility/manual/online events retry.
+        // Local state stays authoritative; visibility/manual/online events retry
         if (attemptedWorkspaceId) await recordSyncAttempt(attemptedWorkspaceId, error instanceof Error ? error.message : "Server backup is temporarily unavailable.");
       } finally {
         if (countedAsSyncing) {
@@ -189,7 +285,7 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
       }
     });
     return operation;
-  }, [backupConfigured, recordSyncAttempt]);
+  }, [backupAccess, backupConfigured, recordSyncAttempt]);
   useEffect(() => {
     flushWorkspaceRef.current = flushWorkspace;
   }, [flushWorkspace]);

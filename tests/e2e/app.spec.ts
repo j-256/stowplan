@@ -33,7 +33,11 @@ test("names a new workspace during first run", async ({ page }) => {
 
 test("onboards, captures, edits, searches, plans, rolls back, and persists locally", async ({ page }) => {
   const consoleErrors: string[] = [];
+  const syncRequests: string[] = [];
   page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/sync") syncRequests.push(request.url());
+  });
 
   await expect(page.getByRole("heading", { name: /Label it/ })).toBeVisible();
   await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
@@ -50,13 +54,15 @@ test("onboards, captures, edits, searches, plans, rolls back, and persists local
   await expect(page.getByText("Test tea towels", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Edit Test tea towels" }).click();
-  await expect(page.getByRole("heading", { name: "Edit item" })).toBeVisible();
-  await expect(page.getByText("What is it?", { exact: true })).toBeVisible();
-  await expect(page.getByText("Organize and find it", { exact: true })).toBeVisible();
+  const itemEditor = page.getByRole("dialog", { name: "Edit item" });
+  await expect(itemEditor).toBeVisible();
+  await expect(itemEditor.getByText("What is it?", { exact: true })).toBeVisible();
+  await expect(itemEditor.getByText("Organize and find it", { exact: true })).toBeVisible();
   await page.getByLabel("Category").fill("Linens");
   await page.getByLabel("Search tags").fill("washable, prep");
   await page.getByRole("button", { name: "Save item" }).click();
   await expect(page.getByText("Saved on this device.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Save item" })).toBeFocused();
   await page.getByRole("button", { name: "Close item editor" }).click();
 
   await page.reload();
@@ -79,6 +85,7 @@ test("onboards, captures, edits, searches, plans, rolls back, and persists local
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   expect(consoleErrors).toEqual([]);
+  expect(syncRequests).toEqual([]);
 });
 
 test("prevents repeated form submission from creating duplicate records", async ({ page }) => {
@@ -164,6 +171,23 @@ test("preserves a failed creation draft and avoids narrow-screen overflow", asyn
   await page.getByLabel("What is it?").fill("Long unit test item");
   await page.getByRole("button", { name: "Save & add next" }).click();
   const metrics = await page.evaluate(() => ({
+    bottomNavigation: (() => {
+      const navigation = document.querySelector<HTMLElement>(".bottom");
+      const main = document.querySelector<HTMLElement>(".app-shell > main");
+      if (!navigation || !main) return null;
+      const navigationBounds = navigation.getBoundingClientRect();
+      const mainBounds = main.getBoundingClientRect();
+      return {
+        mainBottom: Math.round(mainBounds.bottom),
+        navigationTop: Math.round(navigationBounds.top),
+        width: Math.round(navigationBounds.width),
+      };
+    })(),
+    captureStacked: (() => {
+      const queue = document.querySelector<HTMLElement>(".capture > .queue");
+      const card = document.querySelector<HTMLElement>(".capture > .capture-card");
+      return Boolean(queue && card && card.getBoundingClientRect().top >= queue.getBoundingClientRect().bottom);
+    })(),
     documentOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
     finishOverflow: (() => {
       const finish = document.querySelector<HTMLElement>(".finish");
@@ -173,16 +197,73 @@ test("preserves a failed creation draft and avoids narrow-screen overflow", asyn
       .filter((target) => target.getBoundingClientRect().height < 44)
       .map((target) => target.textContent),
   }));
-  expect(metrics).toEqual({
+  expect(metrics.bottomNavigation?.width).toBe(412);
+  expect(metrics.bottomNavigation?.mainBottom).toBe(
+    metrics.bottomNavigation?.navigationTop,
+  );
+  expect({
+    captureStacked: metrics.captureStacked,
+    documentOverflow: metrics.documentOverflow,
+    finishOverflow: metrics.finishOverflow,
+    narrowTargets: metrics.narrowTargets,
+  }).toEqual({
+    captureStacked: true,
     documentOverflow: false,
     finishOverflow: false,
     narrowTargets: [],
   });
+
+  await page.locator("button.nav:visible", { hasText: "Plan" }).click();
+  await page.getByText("Plan priorities", { exact: true }).click();
+  const suitabilityHelp = page.getByRole("button", { name: "How suitability affects a plan" });
+  await suitabilityHelp.evaluate((button) => button.scrollIntoView({ block: "end" }));
+  const occlusion = await suitabilityHelp.evaluate((button) => {
+    const navigation = document.querySelector<HTMLElement>(".bottom");
+    if (!navigation) throw new Error("Bottom navigation is missing");
+    const buttonBounds = button.getBoundingClientRect();
+    const navigationBounds = navigation.getBoundingClientRect();
+    const hit = document.elementFromPoint(
+      buttonBounds.left + buttonBounds.width / 2,
+      buttonBounds.top + buttonBounds.height / 2,
+    );
+    return {
+      buttonBottom: Math.round(buttonBounds.bottom),
+      centerHitsButton: Boolean(hit && button.contains(hit)),
+      navigationTop: Math.round(navigationBounds.top),
+    };
+  });
+  expect(occlusion.buttonBottom).toBeLessThanOrEqual(occlusion.navigationTop);
+  expect(occlusion.centerHitsButton).toBe(true);
+});
+
+test("distinguishes duplicate inventory actions by quantity and unit", async ({ page }) => {
+  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+
+  await page.getByLabel("Qty").fill("2");
+  await page.getByLabel("Unit", { exact: true }).fill("AA");
+  await page.getByLabel("What is it?").fill("Batteries");
+  await page.getByRole("button", { name: "Save & add next" }).click();
+  await expect(page.getByText("Batteries", { exact: true })).toHaveCount(1);
+  await page.getByLabel("Qty").fill("3");
+  await page.getByLabel("Unit", { exact: true }).fill("AAA");
+  await page.getByLabel("What is it?").fill("Batteries");
+  await page.getByRole("button", { name: "Save & add next" }).click();
+  await expect(page.getByText("Batteries", { exact: true })).toHaveCount(2);
+
+  await page.locator("button.nav:visible", { hasText: "Inventory" }).click();
+  await page.getByLabel("Search inventory").fill("Batteries");
+
+  for (const amount of ["2 AA", "3 AAA"]) {
+    await expect(page.getByRole("checkbox", { name: `Select Batteries, ${amount} in Kitchen` })).toBeVisible();
+    await expect(page.getByRole("button", { name: `Open Batteries, ${amount} in Kitchen` })).toBeVisible();
+    await expect(page.getByRole("button", { name: `Edit or move Batteries, ${amount} in Kitchen` })).toBeVisible();
+  }
 });
 
 test("keeps the Capture hierarchy readable at compact desktop widths", async ({ page }) => {
   await page.setViewportSize({ width: 1132, height: 900 });
   await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+  await expect(page.getByRole("heading", { name: "Capture" })).toBeVisible();
 
   const metrics = await page.evaluate(() => {
     const capture = document.querySelector<HTMLElement>(".capture");
@@ -248,7 +329,7 @@ test("executes a planned move and rolls it back from Activity", async ({ page })
   }).toBe(step.destinationId);
 
   await page.locator("button.nav:visible", { hasText: "Activity" }).click();
-  await page.locator(".history>div").first().getByRole("button", { name: "Undo this" }).click();
+  await page.locator(".history>div").first().getByRole("button", { name: /^Undo Completed plan step:/ }).click();
   await expect.poll(async () => {
     const rolledBack = await localReplica(page) as typeof before;
     return step.type === "item"
@@ -265,7 +346,12 @@ test("supports drag organization and the partial-move fallback", async ({ page }
   await page.getByRole("button", { name: "Collapse Kitchen" }).click();
   await expect(page.locator('[data-location-id="loc_bin"]')).toHaveCount(0);
   await page.getByRole("button", { name: "Expand Kitchen" }).click();
-  await page.locator('[data-location-id="loc_bin"]').dragTo(page.locator('[data-location-id="loc_food"]'));
+  const bakingBin = page.locator('[data-location-id="loc_bin"]');
+  const foodCabinet = page.locator('[data-location-id="loc_food"]');
+  await expect(bakingBin).toBeVisible();
+  await expect(foodCabinet).toBeVisible();
+  await foodCabinet.evaluate((element) => element.scrollIntoView({ block: "start" }));
+  await bakingBin.dragTo(foodCabinet);
   await expect.poll(async () => {
     const replica = await localReplica(page) as { state: { locations: { id: string; parentId: string | null }[] } };
     return replica.state.locations.find((location) => location.id === "loc_bin")?.parentId;
@@ -275,9 +361,9 @@ test("supports drag organization and the partial-move fallback", async ({ page }
   await expect(page.locator('.inventory-row[data-item-id="item_sugar"] .drag-handle[title="Drag Brown sugar to reorder"]')).toHaveCount(0);
   await page.getByLabel("Filter by location").selectOption("loc_bin");
   await expect(page.locator('.inventory-row[data-item-id="item_sugar"] .drag-handle[title="Drag Brown sugar to reorder"]')).toBeVisible();
-  await expect(page.getByRole("button", { name: "Move Brown sugar up" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Move Brown sugar down" })).toBeVisible();
-  await page.getByRole("checkbox", { name: "Select Brown sugar in Kitchen › Right side › Lower cabinet › Baking bin" }).check();
+  await expect(page.getByRole("button", { name: "Move Brown sugar, 2 bags up" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Move Brown sugar, 2 bags down" })).toBeVisible();
+  await page.getByRole("checkbox", { name: "Select Brown sugar, 2 bags in Kitchen › Left side › Food cabinet › Baking bin" }).check();
   await expect(page.getByRole("combobox", { name: "Move selected items" }).locator('option[value="loc_bin"]')).toBeDisabled();
   await page.getByRole("button", { name: "Clear" }).click();
   await page.locator('[data-item-id="item_sugar"]').dragTo(page.locator('[data-item-id="item_flour"]'));
@@ -299,8 +385,8 @@ test("supports drag organization and the partial-move fallback", async ({ page }
     const replica = await localReplica(page) as { state: { items: { id: string; locationId: string; name: string; quantity: number }[] } };
     return replica.state.items.filter((item) => item.name === "Pasta").map((item) => [item.locationId, item.quantity]).sort();
   }).toEqual([["loc_food", 2], ["loc_warm", 4]]);
-  await expect(page.getByRole("checkbox", { name: "Select Pasta in Kitchen › Left side › Food cabinet" })).toBeVisible();
-  await expect(page.getByRole("checkbox", { name: "Select Pasta in Kitchen › Left side › Cabinet above oven" })).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: "Select Pasta, 2 boxes in Kitchen › Left side › Food cabinet" })).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: "Select Pasta, 4 boxes in Kitchen › Left side › Cabinet above oven" })).toBeVisible();
 });
 
 test("shows workspace backup state and removes only the device copy", async ({ page }) => {
@@ -312,7 +398,7 @@ test("shows workspace backup state and removes only the device copy", async ({ p
   const card = page.locator(".workspace-card", { hasText: "Kitchen reset" });
   await expect(card.getByText(/pending upload/)).toBeVisible();
   await card.getByText(/Queued changes/).click();
-  await expect(card.getByText(/Recorded 1 item Waiting to sync/)).toBeVisible();
+  await expect(card.getByText(/Recorded 1 each Waiting to sync/)).toBeVisible();
   page.once("dialog", (dialog) => {
     expect(dialog.message()).toContain("This does not delete any server copy");
     dialog.accept();

@@ -160,10 +160,15 @@ test("keeps hierarchy and touch drag affordances in the shipped organizer", () =
   assert.match(application, /"before" \| "inside" \| "after"/);
   assert.match(application, /const canReorder = Boolean\(locationFilter\) && !query\.trim\(\)/);
   assert.match(application, /scrollContainer\.current = event\.currentTarget\.closest<HTMLElement>\("\.capture-tree"\)/);
+  assert.match(application, /activeSubmitControl\.focus\(\)/);
+  assert.match(application, /Select \$\{actionIdentity\} in/);
+  assert.match(application, /"Undo" : "Reapply"\} \$\{entry\.label\}/);
   assert.match(application, /key=\{current\.id\} className="quick"/);
   assert.match(styles, /\.tree-select \.tree-name\{[^}]*overflow:visible[^}]*white-space:normal/);
   assert.match(styles, /\.drag-handle,[^{]*\{[^}]*min-height:44px/);
-  assert.match(styles, /\.finish\{bottom:calc\(82px \+ env\(safe-area-inset-bottom\)\)/);
+  assert.match(styles, /\.app-shell\{display:grid;grid-template-columns:minmax\(0,1fr\);grid-template-rows:minmax\(0,1fr\) auto;height:100dvh/);
+  assert.match(styles, /\.bottom\{position:static;grid-row:2;grid-column:1\}/);
+  assert.match(styles, /\.capture\{grid-template-columns:minmax\(0,1fr\)\}\.finish\{bottom:12px\}\.info-tip>button\{scroll-margin-bottom:8px\}/);
   assert.match(styles, /@media\(max-width:1100px\) and \(min-width:761px\)\{\.capture\{grid-template-columns:minmax\(0,1fr\)\}/);
   assert.match(styles, /\.capture-location-row \.queue-name b\{[^}]*white-space:nowrap/);
   assert.match(styles, /\.capture-location-row \.queue-name span\{[^}]*overflow:visible[^}]*white-space:normal/);
@@ -181,10 +186,13 @@ test("ships task-oriented item, plan, and workspace controls", () => {
   assert.match(application, /Queued changes/);
   assert.match(application, /This does not delete any server copy/);
   const replica = readFileSync(new URL("../src/client/local-replica.ts", import.meta.url), "utf8");
+  const store = readFileSync(new URL("../src/client/store.tsx", import.meta.url), "utf8");
   assert.match(replica, /lastSyncedAt/);
   assert.match(replica, /deleteWorkspaceReplica/);
   assert.match(replica, /export async function mutateReplica/);
   assert.match(replica, /The server did not acknowledge this change/);
+  assert.match(store, /BACKUP_UNAVAILABLE_SESSION_KEY/);
+  assert.match(store, /BACKUP_RETRY_INTERVAL_MS/);
 });
 
 test("guards restore commit boundaries and label deep links", () => {
