@@ -22,6 +22,15 @@ test.beforeEach(async ({ page }) => {
   await page.reload();
 });
 
+test("names a new workspace during first run", async ({ page }) => {
+  await page.getByLabel("Workspace name").fill("Jamie’s apartment");
+  await page.getByRole("button", { name: "Start my workspace" }).click();
+
+  await expect(page.getByText("Jamie’s apartment", { exact: true })).toBeVisible();
+  const replica = await localReplica(page) as { state: { workspace: { name: string } } };
+  expect(replica.state.workspace.name).toBe("Jamie’s apartment");
+});
+
 test("onboards, captures, edits, searches, plans, rolls back, and persists locally", async ({ page }) => {
   const consoleErrors: string[] = [];
   page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
@@ -55,7 +64,7 @@ test("onboards, captures, edits, searches, plans, rolls back, and persists local
   await page.locator("button.nav:visible", { hasText: "Inventory" }).click();
   await expect(page.getByRole("heading", { name: "All item records" })).toBeVisible();
   await expect(page.getByText("Showing the containerless inventory.")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Drag Test tea towels to reorder" })).toHaveCount(0);
+  await expect(page.locator('.inventory-row .drag-handle[title="Drag Test tea towels to reorder"]')).toHaveCount(0);
   await page.getByPlaceholder("Search names, categories, tags, constraints, and notes").fill("washable");
   await expect(page.getByText("Test tea towels", { exact: true })).toBeVisible();
   await page.locator("button.nav:visible", { hasText: "Plan" }).click();
@@ -67,7 +76,28 @@ test("onboards, captures, edits, searches, plans, rolls back, and persists local
   await expect(page.getByText(/recorded changes/)).toBeVisible();
   await page.getByLabel("Change theme").click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   expect(consoleErrors).toEqual([]);
+});
+
+test("prevents repeated form submission from creating duplicate records", async ({ page }) => {
+  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+  await page.getByLabel("Qty").fill("2");
+  await page.getByLabel("What is it?").fill("One deliberate record");
+  await page.locator("form.quick").evaluate((form: HTMLFormElement) => {
+    form.requestSubmit();
+    form.requestSubmit();
+  });
+
+  await expect.poll(async () => {
+    const replica = await localReplica(page) as {
+      state: { items: { name: string }[] };
+    };
+    return replica.state.items.filter(
+      (item) => item.name === "One deliberate record",
+    ).length;
+  }).toBe(1);
 });
 
 test("resets the active demo from the main menu", async ({ page }) => {
@@ -88,15 +118,17 @@ test("resets the active demo from the main menu", async ({ page }) => {
 test("reorders sibling spaces in Capture and advances in visible hierarchy order", async ({ page }) => {
   await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
 
-  await expect(page.getByRole("button", { name: "Drag Right side to reorder within Kitchen" })).toBeVisible();
+  await expect(page.locator('.capture-location-row[data-location-id="loc_right"] .drag-handle[title="Drag Right side to reorder within Kitchen"]')).toBeVisible();
+  await page.getByLabel("What is it?").fill("Draft for the wrong space");
   await page.locator('.capture-location-row[data-location-id="loc_right"] .queue-row').click();
-  await page.getByPlaceholder("Label code").fill("NEW");
-  await page.getByPlaceholder("Nested box or bin").fill("Priority bin");
+  await expect(page.getByLabel("What is it?")).toHaveValue("");
+  await page.getByLabel("Short ID").fill("NEW");
+  await page.getByLabel("Friendly name").fill("Priority bin");
   await page.getByRole("button", { name: "Add inside Right side" }).click();
 
   const priority = page.locator(".capture-location-row", { hasText: "Priority bin" });
   const corner = page.locator('.capture-location-row[data-location-id="loc_unknown"]');
-  await expect(page.getByRole("button", { name: "Drag Priority bin to reorder within Right side" })).toBeVisible();
+  await expect(priority.locator('.drag-handle[title="Drag Priority bin to reorder within Right side"]')).toBeVisible();
   await priority.dragTo(corner);
   await expect.poll(async () => {
     const replica = await localReplica(page) as { state: { locations: { code: string; order: number }[] } };
@@ -117,11 +149,82 @@ test("reorders sibling spaces in Capture and advances in visible hierarchy order
   expect(overflow).toEqual({ labels: [], panel: false });
 });
 
+test("preserves a failed creation draft and avoids narrow-screen overflow", async ({ page }) => {
+  await page.setViewportSize({ width: 412, height: 860 });
+  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+
+  await page.getByLabel("Short ID").fill("C-01");
+  await page.getByLabel("Friendly name").fill("Keep this draft");
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Add inside Kitchen" }).click();
+  await expect(page.getByLabel("Short ID")).toHaveValue("C-01");
+  await expect(page.getByLabel("Friendly name")).toHaveValue("Keep this draft");
+
+  await page.getByLabel("Unit", { exact: true }).fill("extraordinarily-long-custom-unit-name");
+  await page.getByLabel("What is it?").fill("Long unit test item");
+  await page.getByRole("button", { name: "Save & add next" }).click();
+  const metrics = await page.evaluate(() => ({
+    documentOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    finishOverflow: (() => {
+      const finish = document.querySelector<HTMLElement>(".finish");
+      return Boolean(finish && finish.scrollWidth > finish.clientWidth);
+    })(),
+    narrowTargets: [...document.querySelectorAll<HTMLElement>(".finish button, .breadcrumbs button")]
+      .filter((target) => target.getBoundingClientRect().height < 44)
+      .map((target) => target.textContent),
+  }));
+  expect(metrics).toEqual({
+    documentOverflow: false,
+    finishOverflow: false,
+    narrowTargets: [],
+  });
+});
+
+test("executes a planned move and rolls it back from Activity", async ({ page }) => {
+  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+  await page.locator("button.nav:visible", { hasText: "Plan" }).click();
+  await page.getByRole("button", { name: "Generate move plan" }).click();
+  const before = await localReplica(page) as {
+    state: {
+      items: { id: string; locationId: string }[];
+      locations: { id: string; parentId: string | null }[];
+      plans: {
+        status: string;
+        steps: {
+          destinationId: string;
+          itemId: string | null;
+          locationId: string | null;
+          sourceId: string;
+          type: "item" | "location";
+        }[];
+      }[];
+    };
+  };
+  const step = before.state.plans.find((plan) => plan.status === "active")!.steps[0]!;
+
+  await page.getByRole("button", { name: "Mark moved" }).first().click();
+  await expect.poll(async () => {
+    const moved = await localReplica(page) as typeof before;
+    return step.type === "item"
+      ? moved.state.items.find((item) => item.id === step.itemId)?.locationId
+      : moved.state.locations.find((location) => location.id === step.locationId)?.parentId;
+  }).toBe(step.destinationId);
+
+  await page.locator("button.nav:visible", { hasText: "Activity" }).click();
+  await page.locator(".history>div").first().getByRole("button", { name: "Undo this" }).click();
+  await expect.poll(async () => {
+    const rolledBack = await localReplica(page) as typeof before;
+    return step.type === "item"
+      ? rolledBack.state.items.find((item) => item.id === step.itemId)?.locationId
+      : rolledBack.state.locations.find((location) => location.id === step.locationId)?.parentId;
+  }).toBe(step.sourceId);
+});
+
 test("supports drag organization and the partial-move fallback", async ({ page }) => {
   await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
   await page.locator("button.nav:visible", { hasText: "Spaces" }).click();
-  await expect(page.getByRole("tree", { name: "Space hierarchy" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Drag Baking bin to move or nest it" })).toBeVisible();
+  await expect(page.getByRole("list", { name: "Space hierarchy" })).toBeVisible();
+  await expect(page.locator('[data-location-id="loc_bin"] .drag-handle[title="Drag Baking bin to move or nest it"]')).toBeVisible();
   await page.getByRole("button", { name: "Collapse Kitchen" }).click();
   await expect(page.locator('[data-location-id="loc_bin"]')).toHaveCount(0);
   await page.getByRole("button", { name: "Expand Kitchen" }).click();
@@ -132,9 +235,11 @@ test("supports drag organization and the partial-move fallback", async ({ page }
   }).toBe("loc_food");
 
   await page.locator("button.nav:visible", { hasText: "Inventory" }).click();
-  await expect(page.getByRole("button", { name: "Drag Brown sugar to reorder" })).toHaveCount(0);
+  await expect(page.locator('.inventory-row[data-item-id="item_sugar"] .drag-handle[title="Drag Brown sugar to reorder"]')).toHaveCount(0);
   await page.getByLabel("Filter by location").selectOption("loc_bin");
-  await expect(page.getByRole("button", { name: "Drag Brown sugar to reorder" })).toBeVisible();
+  await expect(page.locator('.inventory-row[data-item-id="item_sugar"] .drag-handle[title="Drag Brown sugar to reorder"]')).toBeVisible();
+  await expect(page.getByRole("button", { name: "Move Brown sugar up" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Move Brown sugar down" })).toBeVisible();
   await page.getByRole("checkbox", { name: "Select Brown sugar in Kitchen › Right side › Lower cabinet › Baking bin" }).check();
   await expect(page.getByRole("combobox", { name: "Move selected items" }).locator('option[value="loc_bin"]')).toBeDisabled();
   await page.getByRole("button", { name: "Clear" }).click();
@@ -169,7 +274,7 @@ test("shows workspace backup state and removes only the device copy", async ({ p
   await page.getByLabel("Open main menu").click();
   const card = page.locator(".workspace-card", { hasText: "Kitchen reset" });
   await expect(card.getByText(/pending upload/)).toBeVisible();
-  await card.getByText(/What is waiting/).click();
+  await card.getByText(/Queued changes/).click();
   await expect(card.getByText(/Recorded 1 item Waiting to sync/)).toBeVisible();
   page.once("dialog", (dialog) => {
     expect(dialog.message()).toContain("This does not delete any server copy");
@@ -179,10 +284,14 @@ test("shows workspace backup state and removes only the device copy", async ({ p
   await expect(page.getByRole("heading", { name: /Label it/ })).toBeVisible();
 });
 
-test("has no critical accessibility violations and reloads offline", async ({ page, context }) => {
+test("has no serious accessibility violations and reloads offline", async ({ page, context }) => {
   await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
   const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa"]).analyze();
-  expect(results.violations.filter((violation) => violation.impact === "critical")).toEqual([]);
+  expect(
+    results.violations.filter(
+      (violation) => violation.impact === "critical" || violation.impact === "serious",
+    ),
+  ).toEqual([]);
   await page.evaluate(() => navigator.serviceWorker.ready);
   await page.reload();
   await context.setOffline(true);

@@ -3,11 +3,13 @@ import {
     applyCommand,
     ConflictError,
     createDemoState,
+    createEmptyState,
     createEnvelope,
     createItem,
     createLocation,
     generatePlan,
     previewImport,
+    validateSnapshot,
 } from "../src/domain";
 
 describe("organizer command engine", () => {
@@ -51,6 +53,21 @@ describe("organizer command engine", () => {
         ).toThrow(/descendant/);
     });
 
+    it("rejects a runtime location move with no parent placement", () => {
+        const state = createDemoState();
+        const envelope = createEnvelope(state, {
+            type: "location.move",
+            id: "loc_box",
+            parentId: null,
+        });
+        const malformedCommand = envelope.command as { parentId?: string | null };
+        delete malformedCommand.parentId;
+
+        expect(() => applyCommand(state, envelope)).toThrow(/parent ID or top-level/);
+        malformedCommand.parentId = "";
+        expect(() => applyCommand(state, envelope)).toThrow(/parent ID or top-level/);
+    });
+
     it("splits a partial quantity and merges equivalent destination records", () => {
         let state = createDemoState();
         const destinationPasta = {
@@ -77,6 +94,85 @@ describe("organizer command engine", () => {
         expect(state.items.find((item) => item.id === "item_pasta")?.quantity).toBe(3);
         expect(state.items.find((item) => item.id === "item_pasta_food")?.quantity).toBe(5);
         expect(state.items.filter((item) => item.name === "Pasta")).toHaveLength(2);
+    });
+
+    it("refuses a partial move whose deterministic split ID already exists", () => {
+        const state = createDemoState();
+        const collision = createItem({
+            locationId: "loc_food",
+            name: "Collision marker",
+        });
+        collision.id = "item_split_cmd_collision";
+        state.items.push(collision);
+
+        expect(() =>
+            applyCommand(
+                state,
+                createEnvelope(
+                    state,
+                    {
+                        type: "item.move",
+                        destinationId: "loc_food",
+                        id: "item_pasta",
+                        quantity: 1,
+                    },
+                    { id: "cmd_collision" },
+                ),
+            ),
+        ).toThrow(/reuse an existing item record ID/);
+    });
+
+    it("rejects direct and bulk moves of archived legacy item records", () => {
+        const state = createDemoState();
+        state.items.find((item) => item.id === "item_pasta")!.archivedAt =
+            "2026-07-22T13:00:00.000Z";
+
+        expect(() =>
+            applyCommand(
+                state,
+                createEnvelope(state, {
+                    type: "item.move",
+                    destinationId: "loc_food",
+                    id: "item_pasta",
+                    quantity: 1,
+                }),
+            ),
+        ).toThrow(/archived/);
+        expect(() =>
+            applyCommand(
+                state,
+                createEnvelope(state, {
+                    type: "item.bulkMove",
+                    destinationId: "loc_food",
+                    itemIds: ["item_pasta"],
+                }),
+            ),
+        ).toThrow(/archived/);
+    });
+
+    it("prevents equivalent-item merges from overflowing quantity", () => {
+        const state = createDemoState();
+        const source = state.items.find((item) => item.id === "item_pasta")!;
+        source.quantity = 1e308;
+        const destination = {
+            ...structuredClone(source),
+            id: "item_pasta_overflow_destination",
+            locationId: "loc_food",
+            quantity: 1e308,
+        };
+        state.items.push(destination);
+
+        expect(() =>
+            applyCommand(
+                state,
+                createEnvelope(state, {
+                    type: "item.move",
+                    destinationId: destination.locationId,
+                    id: source.id,
+                    quantity: source.quantity,
+                }),
+            ),
+        ).toThrow(/supported quantity range/);
     });
 
     it("moves several records atomically", () => {
@@ -145,6 +241,212 @@ describe("organizer command engine", () => {
             ),
         ).toThrow(/review/);
     });
+
+    it("rejects structural cycles sent through location updates", () => {
+        const state = createDemoState();
+        expect(() =>
+            applyCommand(
+                state,
+                createEnvelope(state, {
+                    type: "location.update",
+                    id: "loc_right",
+                    changes: { parentId: "loc_box" },
+                }),
+            ),
+        ).toThrow(/descendant/);
+    });
+
+    it("normalizes a short ID and saves a parent change atomically", () => {
+        const state = createDemoState();
+        const result = applyCommand(
+            state,
+            createEnvelope(state, {
+                type: "location.update",
+                id: "loc_box",
+                changes: {
+                    code: " bx-10 ",
+                    name: "  Spare parts  ",
+                    parentId: "loc_lower",
+                },
+            }),
+        ).state;
+        const updated = result.locations.find((location) => location.id === "loc_box");
+
+        expect(updated).toMatchObject({
+            code: "BX-10",
+            name: "Spare parts",
+            parentId: "loc_lower",
+        });
+        expect(result.activities).toHaveLength(1);
+    });
+
+    it("rejects runtime-only structural and unsafe update keys", () => {
+        const state = createDemoState();
+        const locationCommand = {
+            type: "location.update",
+            id: "loc_box",
+            changes: { id: "loc_replaced" },
+        } as const;
+        const itemCommand = {
+            type: "item.update",
+            id: "item_pasta",
+            changes: Object.fromEntries([["constructor", { polluted: true }]]),
+        } as const;
+        const unsafeEnvelope = {
+            ...createEnvelope(
+                state,
+                { type: "item.update", id: "item_pasta", changes: { notes: "safe" } },
+            ),
+            command: itemCommand,
+            expectations: [],
+        };
+
+        expect(() =>
+            applyCommand(
+                state,
+                createEnvelope(state, locationCommand as never),
+            ),
+        ).toThrow(/cannot be changed/);
+        expect(() =>
+            applyCommand(
+                state,
+                unsafeEnvelope as never,
+            ),
+        ).toThrow(/cannot be changed/);
+        expect(() =>
+            applyCommand(
+                state,
+                createEnvelope(state, {
+                    type: "location.update",
+                    id: "loc_box",
+                    changes: { name: null },
+                } as never),
+            ),
+        ).toThrow(/must be strings/);
+        expect(() =>
+            applyCommand(
+                state,
+                createEnvelope(state, {
+                    type: "item.update",
+                    id: "item_pasta",
+                    changes: { unit: null },
+                } as never),
+            ),
+        ).toThrow(/must be strings/);
+    });
+
+    it("validates active-code uniqueness when restoring an archived space", () => {
+        let state = createEmptyState("Restore test");
+        const archived = createLocation({
+            code: "BIN-01",
+            kind: "bin",
+            name: "Original bin",
+        });
+        state = applyCommand(
+            state,
+            createEnvelope(state, { type: "location.create", location: archived }),
+        ).state;
+        state = applyCommand(
+            state,
+            createEnvelope(state, {
+                type: "location.archive",
+                id: archived.id,
+                archived: true,
+            }),
+        ).state;
+        const replacement = createLocation({
+            code: "BIN-01",
+            kind: "bin",
+            name: "Replacement bin",
+        });
+        state = applyCommand(
+            state,
+            createEnvelope(state, { type: "location.create", location: replacement }),
+        ).state;
+
+        expect(() =>
+            applyCommand(
+                state,
+                createEnvelope(state, {
+                    type: "location.archive",
+                    id: archived.id,
+                    archived: false,
+                }),
+            ),
+        ).toThrow(/already in use/);
+    });
+
+    it("does not restore a space beneath an archived parent", () => {
+        const state = createDemoState();
+        const parent = state.locations.find((location) => location.id === "loc_right")!;
+        const child = state.locations.find((location) => location.id === "loc_unknown")!;
+        parent.archivedAt = "2026-07-22T12:00:00.000Z";
+        child.archivedAt = "2026-07-22T12:00:00.000Z";
+
+        expect(() =>
+            applyCommand(
+                state,
+                createEnvelope(state, {
+                    type: "location.archive",
+                    id: child.id,
+                    archived: false,
+                }),
+            ),
+        ).toThrow(/Restore Right side/);
+    });
+
+    it("does not archive a space while live contents would be stranded", () => {
+        const state = createDemoState();
+        expect(() =>
+            applyCommand(
+                state,
+                createEnvelope(state, {
+                    type: "location.archive",
+                    id: "loc_bin",
+                    archived: true,
+                }),
+            ),
+        ).toThrow(/contents/);
+        expect(() =>
+            applyCommand(
+                state,
+                createEnvelope(state, {
+                    type: "location.archive",
+                    id: "loc_unknown",
+                    archived: true,
+                }),
+            ),
+        ).toThrow(/nested/);
+    });
+
+    it("marks a space in progress when its first item is recorded", () => {
+        let state = createDemoState();
+        const newItem = createItem({
+            locationId: "loc_box",
+            name: "Power adapter",
+        });
+        state = applyCommand(
+            state,
+            createEnvelope(state, { type: "item.create", item: newItem }),
+        ).state;
+        expect(state.locations.find((location) => location.id === "loc_box")?.captureStatus).toBe(
+            "in_progress",
+        );
+    });
+
+    it("does not mark a space with a live nested container as known empty", () => {
+        const state = createDemoState();
+        expect(() =>
+            applyCommand(
+                state,
+                createEnvelope(state, {
+                    type: "capture.status",
+                    id: "loc_unknown",
+                    status: "known_empty",
+                }),
+            ),
+        ).toThrow(/nested/);
+    });
 });
 
 describe("field-aware history", () => {
@@ -197,6 +499,60 @@ describe("field-aware history", () => {
         expect(state.items.find((item) => item.id === "item_pasta")?.quantity).toBe(9);
     });
 
+    it("undoes and reapplies a bulk move that repeatedly merges one destination", () => {
+        const state = createDemoState();
+        const first = state.items.find((item) => item.id === "item_pasta")!;
+        const second = {
+            ...structuredClone(first),
+            id: "item_pasta_second_source",
+            locationId: "loc_unknown",
+            quantity: 2,
+        };
+        const destination = {
+            ...structuredClone(first),
+            id: "item_pasta_destination",
+            locationId: "loc_food",
+            quantity: 1,
+        };
+        state.items.push(second, destination);
+        const moved = applyCommand(
+            state,
+            createEnvelope(
+                state,
+                {
+                    type: "item.bulkMove",
+                    destinationId: destination.locationId,
+                    itemIds: [first.id, second.id],
+                },
+                { id: "cmd_bulk_merge_history" },
+            ),
+        ).state;
+
+        const undone = applyCommand(
+            moved,
+            createEnvelope(moved, {
+                type: "history.undo",
+                activityId: moved.activities.at(-1)!.id,
+            }),
+        ).state;
+        expect(undone.items.find((item) => item.id === destination.id)?.quantity).toBe(1);
+        expect(undone.items.find((item) => item.id === first.id)?.quantity).toBe(6);
+        expect(undone.items.find((item) => item.id === second.id)?.quantity).toBe(2);
+
+        const reapplied = applyCommand(
+            undone,
+            createEnvelope(undone, {
+                type: "history.reapply",
+                activityId: undone.activities.find(
+                    (activity) => activity.commandId === "cmd_bulk_merge_history",
+                )!.id,
+            }),
+        ).state;
+        expect(reapplied.items.find((item) => item.id === destination.id)?.quantity).toBe(9);
+        expect(reapplied.items.some((item) => item.id === first.id)).toBe(false);
+        expect(reapplied.items.some((item) => item.id === second.id)).toBe(false);
+    });
+
     it("refuses an undo that would overwrite a later same-field edit", () => {
         let state = createDemoState();
         state = applyCommand(
@@ -223,6 +579,121 @@ describe("field-aware history", () => {
             ),
         ).toThrow(ConflictError);
     });
+
+    it("refuses an undo that would violate a cross-record invariant", () => {
+        let state = createEmptyState("History invariants");
+        const original = createLocation({
+            code: "BOX-1",
+            kind: "box",
+            name: "Original box",
+        });
+        state = applyCommand(
+            state,
+            createEnvelope(state, { type: "location.create", location: original }),
+        ).state;
+        state = applyCommand(
+            state,
+            createEnvelope(state, {
+                type: "location.delete",
+                descendantIds: [],
+                id: original.id,
+                itemIds: [],
+            }),
+        ).state;
+        const deletion = state.activities.at(-1)!.id;
+        const replacement = createLocation({
+            code: "BOX-1",
+            kind: "box",
+            name: "Replacement box",
+        });
+        state = applyCommand(
+            state,
+            createEnvelope(state, { type: "location.create", location: replacement }),
+        ).state;
+
+        expect(() =>
+            applyCommand(
+                state,
+                createEnvelope(state, {
+                    type: "history.undo",
+                    activityId: deletion,
+                }),
+            ),
+        ).toThrow(/make the workspace invalid/);
+    });
+
+    it("undoes and reapplies same-millisecond changes in dependency order", () => {
+        let state = createDemoState();
+        const timestamp = "2026-07-22T12:10:00.000Z";
+        state = applyCommand(
+            state,
+            createEnvelope(
+                state,
+                { type: "item.update", id: "item_pasta", changes: { quantity: 7 } },
+                { id: "cmd_tied_first", timestamp },
+            ),
+        ).state;
+        state = applyCommand(
+            state,
+            createEnvelope(
+                state,
+                { type: "item.update", id: "item_pasta", changes: { quantity: 8 } },
+                { id: "cmd_tied_second", timestamp },
+            ),
+        ).state;
+
+        state = applyCommand(
+            state,
+            createEnvelope(
+                state,
+                { type: "history.batchUndo", count: 2 },
+                { id: "cmd_tied_undo" },
+            ),
+        ).state;
+        expect(state.items.find((item) => item.id === "item_pasta")?.quantity).toBe(6);
+
+        state = applyCommand(
+            state,
+            createEnvelope(
+                state,
+                { type: "history.batchRedo", count: 2 },
+                { id: "cmd_tied_redo" },
+            ),
+        ).state;
+        expect(state.items.find((item) => item.id === "item_pasta")?.quantity).toBe(8);
+    });
+
+    it("uses applied order when client clocks are skewed", () => {
+        let state = createDemoState();
+        state = applyCommand(
+            state,
+            createEnvelope(
+                state,
+                { type: "item.update", id: "item_pasta", changes: { quantity: 7 } },
+                { id: "cmd_clock_first", timestamp: "2026-07-22T13:00:00.000Z" },
+            ),
+        ).state;
+        state = applyCommand(
+            state,
+            createEnvelope(
+                state,
+                { type: "item.update", id: "item_pasta", changes: { quantity: 8 } },
+                { id: "cmd_clock_second", timestamp: "2026-07-22T11:00:00.000Z" },
+            ),
+        ).state;
+
+        state = applyCommand(
+            state,
+            createEnvelope(state, { type: "history.batchUndo", count: 2 }),
+        ).state;
+        expect(state.items.find((item) => item.id === "item_pasta")?.quantity).toBe(6);
+
+        state = applyCommand(
+            state,
+            createEnvelope(state, { type: "history.batchRedo", count: 2 }),
+        ).state;
+        expect(state.items.find((item) => item.id === "item_pasta")?.quantity).toBe(8);
+    });
 });
 
 describe("planner and backup validation", () => {
@@ -233,6 +704,49 @@ describe("planner and backup validation", () => {
         );
         expect(containerMove).toBeDefined();
         expect(containerMove?.explanation.join(" ")).toContain("one physical container");
+    });
+
+    it("requires numbered plan moves to execute in order", () => {
+        const initial = createDemoState();
+        const plan = generatePlan(initial, { name: "Ordered execution" });
+        expect(plan.steps.length).toBeGreaterThan(1);
+        const created = applyCommand(
+            initial,
+            createEnvelope(initial, { type: "plan.create", plan }),
+        ).state;
+
+        expect(() =>
+            applyCommand(
+                created,
+                createEnvelope(created, {
+                    type: "plan.step.complete",
+                    planId: plan.id,
+                    stepId: plan.steps[1]!.id,
+                }),
+            ),
+        ).toThrow(/earlier plan moves/);
+    });
+
+    it("blocks execution until compatible legacy active plans are resolved", () => {
+        const state = createDemoState();
+        const first = generatePlan(state, { name: "Legacy first" });
+        const second = {
+            ...structuredClone(first),
+            id: "plan_legacy_second",
+            name: "Legacy second",
+        };
+        state.plans.push(first, second);
+
+        expect(() =>
+            applyCommand(
+                state,
+                createEnvelope(state, {
+                    type: "plan.step.complete",
+                    planId: first.id,
+                    stepId: first.steps[0]!.id,
+                }),
+            ),
+        ).toThrow(/only one active plan/);
     });
 
     it("detects cycles and dangling references before replacement", () => {
@@ -255,6 +769,165 @@ describe("planner and backup validation", () => {
         expect(preview.issues.map((candidate) => candidate.code)).toEqual(expect.arrayContaining(["ITEM_CONSTRAINTS", "STRING_REQUIRED"]));
     });
 
+    it("rejects unsafe revision and item version counters", () => {
+        const incoming = createDemoState();
+        incoming.workspace.revision = Number.MAX_SAFE_INTEGER + 1;
+        incoming.items[0]!.version = Number.MAX_SAFE_INTEGER + 1;
+        expect(validateSnapshot(incoming).map((issue) => issue.code)).toEqual(
+            expect.arrayContaining(["WORKSPACE_REVISION", "ITEM_VERSION"]),
+        );
+
+        const current = createDemoState();
+        const envelope = createEnvelope(current, {
+            type: "workspace.rename",
+            name: "Unsafe counter",
+        });
+        envelope.baseRevision = Number.MAX_SAFE_INTEGER + 1;
+        expect(() => applyCommand(current, envelope)).toThrow(/malformed/);
+        const future = createEnvelope(current, {
+            type: "workspace.rename",
+            name: "Future counter",
+        });
+        future.baseRevision = current.workspace.revision + 1;
+        expect(() => applyCommand(current, future)).toThrow(/future workspace revision/);
+        current.workspace.revision = Number.MAX_SAFE_INTEGER;
+        expect(() =>
+            applyCommand(
+                current,
+                createEnvelope(current, {
+                    type: "workspace.rename",
+                    name: "Exhausted counter",
+                }),
+            ),
+        ).toThrow(/revision counter/);
+    });
+
+    it("rejects blank entity and history identities in backups", () => {
+        const initial = createDemoState();
+        const current = applyCommand(
+            initial,
+            createEnvelope(initial, { type: "workspace.rename", name: "Identity fixture" }),
+        ).state;
+        const incoming = structuredClone(current);
+        incoming.locations[0]!.id = "";
+        incoming.items[0]!.id = "";
+        const plan = generatePlan(current);
+        plan.id = "";
+        const planWithBlankStep = generatePlan(current);
+        planWithBlankStep.id = "plan_with_blank_step";
+        planWithBlankStep.steps[0]!.id = "";
+        incoming.plans.push(plan, planWithBlankStep);
+        incoming.activities[0]!.id = "";
+        incoming.audit.push({
+            actorId: "",
+            id: "",
+            label: "Invalid audit identity",
+            targetActivityIds: [],
+            timestamp: "2026-07-22T12:00:00.000Z",
+            type: "undo",
+        });
+
+        const issues = validateSnapshot(incoming);
+        expect(issues.map((candidate) => candidate.code)).toEqual(
+            expect.arrayContaining([
+                "LOCATION_ID",
+                "ITEM_ID",
+                "PLAN_ID",
+                "PLAN_STEP",
+                "ACTIVITY",
+                "AUDIT",
+            ]),
+        );
+    });
+
+    it("rejects backup history that could undo into an invalid state", () => {
+        const current = createEmptyState("Safe workspace");
+        const incoming = structuredClone(current);
+        incoming.activities.push({
+            actorId: "imported-user",
+            commandId: "cmd_malicious",
+            id: "activity_malicious",
+            label: "Unsafe rename",
+            patches: [{
+                after: "Safe workspace",
+                before: "",
+                id: incoming.workspace.id,
+                path: "name",
+                target: "workspace",
+            }],
+            status: "applied",
+            subjectIds: [incoming.workspace.id],
+            timestamp: "2026-07-22T12:00:00.000Z",
+            undoneAt: null,
+        });
+
+        const preview = previewImport(current, incoming);
+        expect(preview.valid).toBe(false);
+        expect(preview.issues.some((candidate) => candidate.code === "PATCH_VALUE")).toBe(true);
+    });
+
+    it("rejects stale or archived executable plan steps in backups", () => {
+        const state = createDemoState();
+        const plan = generatePlan(state, { name: "Imported active plan" });
+        const step = plan.steps[0]!;
+        state.plans.push(plan);
+        state.locations.find((location) => location.id === step.destinationId)!.archivedAt =
+            "2026-07-22T12:00:00.000Z";
+
+        const issues = validateSnapshot(state);
+        expect(issues.some((candidate) => candidate.code === "PLAN_DESTINATION")).toBe(true);
+    });
+
+    it("rejects a new plan whose item was archived after generation", () => {
+        const state = createDemoState();
+        const plan = generatePlan(state, { name: "Now stale" });
+        const itemId = plan.steps.find((step) => step.itemId)?.itemId;
+        expect(itemId).toBeTruthy();
+        state.items.find((item) => item.id === itemId)!.archivedAt =
+            "2026-07-22T12:00:00.000Z";
+
+        expect(() =>
+            applyCommand(state, createEnvelope(state, { type: "plan.create", plan })),
+        ).toThrow(/archived/);
+    });
+
+    it("rejects multiple active plans in a backup", () => {
+        const state = createDemoState();
+        const first = generatePlan(state, { name: "First plan" });
+        const second = structuredClone(first);
+        second.id = "plan_second";
+        second.name = "Second plan";
+        second.steps = second.steps.map((step, index) => ({
+            ...step,
+            id: `second_step_${index}`,
+        }));
+        state.plans.push(first, second);
+
+        expect(
+            validateSnapshot(state).some(
+                (candidate) => candidate.code === "MULTIPLE_ACTIVE_PLANS",
+            ),
+        ).toBe(true);
+    });
+
+    it("keeps its own export valid after deleting a planned subject", () => {
+        let state = createDemoState();
+        const plan = generatePlan(state);
+        const plannedItemId = plan.steps.find((step) => step.itemId)?.itemId;
+        expect(plannedItemId).toBeTruthy();
+        state = applyCommand(
+            state,
+            createEnvelope(state, { type: "plan.create", plan }),
+        ).state;
+        state = applyCommand(
+            state,
+            createEnvelope(state, { type: "item.delete", id: plannedItemId as string }),
+        ).state;
+
+        expect(state.plans.find((candidate) => candidate.id === plan.id)?.status).toBe("discarded");
+        expect(validateSnapshot(state).filter((issue) => issue.severity === "error")).toEqual([]);
+    });
+
     it("creates cycle-safe new locations", () => {
         const state = createDemoState();
         const next = createLocation({ code: "B-18", name: "Cleaning bin", parentId: "loc_lower" });
@@ -263,5 +936,333 @@ describe("planner and backup validation", () => {
             createEnvelope(state, { type: "location.create", location: next }),
         ).state;
         expect(result.locations.find((location) => location.id === next.id)?.parentId).toBe("loc_lower");
+    });
+
+    it("does not recommend unchecked storage as a destination", () => {
+        const state = createDemoState();
+        const unchecked = createLocation({
+            code: "NEW-01",
+            kind: "cabinet",
+            name: "Unchecked cabinet",
+            parentId: "loc_kitchen",
+        });
+        unchecked.tags = ["special"];
+        unchecked.conditions.foodSafe = true;
+        state.locations.push(unchecked);
+        state.items.find((item) => item.id === "item_pasta")!.constraints.requiredTags = ["special"];
+
+        const beforeCount = generatePlan(state).steps.filter(
+            (step) => step.destinationId === unchecked.id,
+        ).length;
+        unchecked.captureStatus = "known_empty";
+        const afterCount = generatePlan(state).steps.filter(
+            (step) => step.destinationId === unchecked.id,
+        ).length;
+
+        expect(beforeCount).toBe(0);
+        expect(afterCount).toBeGreaterThan(0);
+    });
+
+    it("does not plan a whole-container move before that container is counted", () => {
+        const state = createDemoState();
+        state.locations.find((location) => location.id === "loc_bin")!.captureStatus =
+            "in_progress";
+
+        expect(
+            generatePlan(state).steps.some(
+                (step) => step.type === "location" && step.locationId === "loc_bin",
+            ),
+        ).toBe(false);
+    });
+
+    it("converts inches and centimeters before comparing measured capacity", () => {
+        const state = createEmptyState("Mixed units");
+        const root = createLocation({ code: "ROOM", kind: "room", name: "Room" });
+        root.captureStatus = "counted";
+        const source = createLocation({
+            code: "SOURCE",
+            kind: "shelf",
+            name: "Source",
+            parentId: root.id,
+        });
+        source.captureStatus = "counted";
+        const destination = createLocation({
+            code: "DEST",
+            kind: "cabinet",
+            name: "Tiny metric destination",
+            parentId: root.id,
+        });
+        destination.captureStatus = "known_empty";
+        destination.dimensions = { depth: 1, height: 1, unit: "cm", width: 10 };
+        destination.tags = ["required"];
+        const item = createItem({ locationId: source.id, name: "One-inch cube" });
+        item.dimensions = { depth: 1, height: 1, unit: "in", width: 1 };
+        item.constraints.requiredTags = ["required"];
+        state.locations.push(root, source, destination);
+        state.items.push(item);
+
+        expect(
+            generatePlan(state).steps.some((step) => step.destinationId === destination.id),
+        ).toBe(false);
+    });
+
+    it("does not claim measured fit when item sizes are unknown", () => {
+        const state = createEmptyState("Unknown item size");
+        const root = createLocation({ code: "ROOM", kind: "room", name: "Room" });
+        root.captureStatus = "counted";
+        const source = createLocation({
+            code: "SOURCE",
+            kind: "shelf",
+            name: "Source",
+            parentId: root.id,
+        });
+        source.captureStatus = "counted";
+        const destination = createLocation({
+            code: "DEST",
+            kind: "cabinet",
+            name: "Tiny measured destination",
+            parentId: root.id,
+        });
+        destination.captureStatus = "known_empty";
+        destination.dimensions = { depth: 1, height: 1, unit: "cm", width: 1 };
+        destination.tags = ["required"];
+        const item = createItem({ locationId: source.id, name: "Unmeasured item" });
+        item.constraints.requiredTags = ["required"];
+        state.locations.push(root, source, destination);
+        state.items.push(item);
+
+        const step = generatePlan(state).steps.find(
+            (candidate) => candidate.itemId === item.id,
+        );
+        expect(step?.explanation.join(" ")).toContain("capacity cannot be verified");
+        expect(step?.explanation.join(" ")).not.toContain("fits measured capacity");
+    });
+
+    it("keeps capacity-freeing moves ahead of dependent inbound moves", () => {
+        const state = createEmptyState("Sequenced capacity");
+        const root = createLocation({ code: "ROOM", kind: "room", name: "Room" });
+        root.captureStatus = "counted";
+        const measured = createLocation({
+            code: "D",
+            kind: "cabinet",
+            name: "Measured destination",
+            parentId: root.id,
+        });
+        measured.captureStatus = "counted";
+        measured.dimensions = { depth: 1, height: 1, unit: "cm", width: 10 };
+        measured.tags = ["destination-d"];
+        const alternate = createLocation({
+            code: "E",
+            kind: "cabinet",
+            name: "Alternate destination",
+            parentId: root.id,
+        });
+        alternate.captureStatus = "known_empty";
+        alternate.dimensions = { depth: 1, height: 1, unit: "cm", width: 20 };
+        alternate.tags = ["destination-e"];
+        const source = createLocation({
+            code: "SOURCE",
+            kind: "shelf",
+            name: "Source",
+            parentId: root.id,
+        });
+        source.captureStatus = "counted";
+        const outbound = createItem({ locationId: measured.id, name: "Move out first" });
+        outbound.dimensions = { depth: 1, height: 1, unit: "cm", width: 6 };
+        outbound.frequency = "rarely";
+        outbound.constraints.requiredTags = ["destination-e"];
+        const inbound = createItem({ locationId: source.id, name: "Move in second" });
+        inbound.dimensions = { depth: 1, height: 1, unit: "cm", width: 6 };
+        inbound.frequency = "daily";
+        inbound.constraints.requiredTags = ["destination-d"];
+        state.locations.push(root, measured, alternate, source);
+        state.items.push(inbound, outbound);
+
+        const steps = generatePlan(state).steps;
+        expect(steps.findIndex((step) => step.itemId === outbound.id)).toBeLessThan(
+            steps.findIndex((step) => step.itemId === inbound.id),
+        );
+    });
+
+    it("never emits non-finite scores when finite dimensions overflow derived volume", () => {
+        const state = createEmptyState("Numeric planner");
+        const root = createLocation({ code: "ROOM", kind: "room", name: "Room" });
+        root.captureStatus = "counted";
+        const source = createLocation({
+            code: "SOURCE",
+            kind: "shelf",
+            name: "Source",
+            parentId: root.id,
+        });
+        source.captureStatus = "counted";
+        const destination = createLocation({
+            code: "DEST",
+            kind: "cabinet",
+            name: "Destination",
+            parentId: root.id,
+        });
+        destination.captureStatus = "known_empty";
+        destination.tags = ["preferred"];
+        destination.dimensions = { depth: 1e200, height: 1e200, unit: "cm", width: 1e200 };
+        const item = createItem({ locationId: source.id, name: "Large numeric item" });
+        item.constraints.requiredTags = ["preferred"];
+        item.dimensions = { depth: 1e200, height: 1e200, unit: "cm", width: 1e200 };
+        state.locations.push(root, source, destination);
+        state.items.push(item);
+
+        const plan = generatePlan(state);
+        expect(plan.steps.length).toBeGreaterThan(0);
+        expect(plan.steps.every((step) => Number.isFinite(step.score))).toBe(true);
+    });
+
+    it("reserves measured capacity across generated plan steps", () => {
+        const state = createEmptyState("Capacity plan");
+        const root = createLocation({
+            code: "ROOM",
+            kind: "room",
+            name: "Room",
+        });
+        root.captureStatus = "counted";
+        const sourceA = createLocation({
+            code: "SRC-A",
+            kind: "shelf",
+            name: "Source A",
+            parentId: root.id,
+        });
+        sourceA.captureStatus = "counted";
+        const sourceB = createLocation({
+            code: "SRC-B",
+            kind: "shelf",
+            name: "Source B",
+            parentId: root.id,
+        });
+        sourceB.captureStatus = "counted";
+        const destination = createLocation({
+            code: "DEST",
+            kind: "cabinet",
+            name: "Measured destination",
+            parentId: root.id,
+        });
+        destination.captureStatus = "known_empty";
+        destination.dimensions = { depth: 1, height: 1, unit: "in", width: 10 };
+        destination.tags = ["required"];
+        const first = createItem({
+            locationId: sourceA.id,
+            name: "First measured item",
+        });
+        first.dimensions = { depth: 1, height: 1, unit: "in", width: 6 };
+        first.constraints.requiredTags = ["required"];
+        const second = createItem({
+            locationId: sourceB.id,
+            name: "Second measured item",
+        });
+        second.dimensions = { depth: 1, height: 1, unit: "in", width: 6 };
+        second.constraints.requiredTags = ["required"];
+        state.locations.push(root, sourceA, sourceB, destination);
+        state.items.push(first, second);
+
+        const movesIntoDestination = generatePlan(state).steps.filter(
+            (step) => step.destinationId === destination.id,
+        );
+
+        expect(movesIntoDestination).toHaveLength(1);
+    });
+
+    it("does not overfill a measured destination with a whole container", () => {
+        const state = createEmptyState("Container capacity plan");
+        const root = createLocation({ code: "ROOM", kind: "room", name: "Room" });
+        root.captureStatus = "counted";
+        const source = createLocation({
+            code: "SOURCE",
+            kind: "cabinet",
+            name: "Source",
+            parentId: root.id,
+        });
+        source.captureStatus = "counted";
+        const box = createLocation({
+            code: "BOX",
+            kind: "box",
+            name: "Filled box",
+            parentId: source.id,
+        });
+        box.captureStatus = "counted";
+        const destination = createLocation({
+            code: "DEST",
+            kind: "cabinet",
+            name: "Measured destination",
+            parentId: root.id,
+        });
+        destination.captureStatus = "known_empty";
+        destination.dimensions = { depth: 1, height: 1, unit: "in", width: 10 };
+        destination.tags = ["required"];
+        const first = createItem({ locationId: box.id, name: "First box item" });
+        first.dimensions = { depth: 1, height: 1, unit: "in", width: 6 };
+        first.constraints.requiredTags = ["required"];
+        const second = createItem({ locationId: box.id, name: "Second box item" });
+        second.dimensions = { depth: 1, height: 1, unit: "in", width: 6 };
+        second.constraints.requiredTags = ["required"];
+        state.locations.push(root, source, box, destination);
+        state.items.push(first, second);
+
+        const movesIntoDestination = generatePlan(state).steps.filter(
+            (step) => step.destinationId === destination.id,
+        );
+
+        expect(movesIntoDestination.filter((step) => step.type === "location")).toHaveLength(0);
+        expect(movesIntoDestination).toHaveLength(1);
+    });
+
+    it("reserves measured capacity after planning a whole-container move", () => {
+        const state = createEmptyState("Multiple container capacity plan");
+        const root = createLocation({ code: "ROOM", kind: "room", name: "Room" });
+        root.captureStatus = "counted";
+        const source = createLocation({
+            code: "SOURCE",
+            kind: "cabinet",
+            name: "Source",
+            parentId: root.id,
+        });
+        source.captureStatus = "counted";
+        const destination = createLocation({
+            code: "DEST",
+            kind: "cabinet",
+            name: "Measured destination",
+            parentId: root.id,
+        });
+        destination.captureStatus = "known_empty";
+        destination.dimensions = { depth: 1, height: 1, unit: "in", width: 10 };
+        destination.tags = ["required"];
+        const firstBox = createLocation({
+            code: "BOX-A",
+            kind: "box",
+            name: "First filled box",
+            parentId: source.id,
+        });
+        firstBox.captureStatus = "counted";
+        const secondBox = createLocation({
+            code: "BOX-B",
+            kind: "box",
+            name: "Second filled box",
+            parentId: source.id,
+        });
+        secondBox.captureStatus = "counted";
+        const items = [
+            createItem({ locationId: firstBox.id, name: "A one" }),
+            createItem({ locationId: firstBox.id, name: "A two" }),
+            createItem({ locationId: secondBox.id, name: "B one" }),
+            createItem({ locationId: secondBox.id, name: "B two" }),
+        ];
+        for (const item of items) {
+            item.dimensions = { depth: 1, height: 1, unit: "in", width: 3 };
+            item.constraints.requiredTags = ["required"];
+        }
+        state.locations.push(root, source, destination, firstBox, secondBox);
+        state.items.push(...items);
+
+        const containerMoves = generatePlan(state).steps.filter(
+            (step) => step.type === "location" && step.destinationId === destination.id,
+        );
+
+        expect(containerMoves).toHaveLength(1);
     });
 });
