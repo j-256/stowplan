@@ -706,6 +706,111 @@ describe("planner and backup validation", () => {
         expect(containerMove?.explanation.join(" ")).toContain("one physical container");
     });
 
+    it("does not use the placeholder category as grouping evidence", () => {
+        const state = createEmptyState("Explicit grouping");
+        const root = createLocation({ code: "ROOM", kind: "room", name: "Room" });
+        root.captureStatus = "counted";
+        const source = createLocation({
+            code: "SOURCE",
+            kind: "shelf",
+            name: "Source",
+            parentId: root.id,
+        });
+        source.captureStatus = "counted";
+        const destination = createLocation({
+            code: "DEST",
+            kind: "shelf",
+            name: "Destination",
+            parentId: root.id,
+        });
+        destination.captureStatus = "known_empty";
+        destination.tags = ["preferred"];
+        const moving = createItem({ locationId: source.id, name: "Moving record" });
+        moving.constraints.requiredTags = ["preferred"];
+        const firstPeer = createItem({ locationId: destination.id, name: "First peer" });
+        const secondPeer = createItem({ locationId: destination.id, name: "Second peer" });
+        state.locations.push(root, source, destination);
+        state.items.push(moving, firstPeer, secondPeer);
+
+        const step = generatePlan(state).steps.find(
+            (candidate) => candidate.itemId === moving.id,
+        );
+
+        expect(step).toBeDefined();
+        expect(step?.explanation.join(" ")).not.toContain("groups with");
+    });
+
+    it("does not let saved handling effort justify a worse whole-container destination", () => {
+        const state = createEmptyState("Container purpose");
+        const root = createLocation({ code: "APT", kind: "room", name: "Apartment" });
+        root.captureStatus = "counted";
+        const hall = createLocation({
+            code: "HALL",
+            kind: "area",
+            name: "Hall",
+            parentId: root.id,
+        });
+        hall.captureStatus = "counted";
+        const upper = createLocation({
+            code: "UPPER",
+            kind: "shelf",
+            name: "Upper shelf",
+            parentId: hall.id,
+        });
+        upper.captureStatus = "counted";
+        const backstock = createLocation({
+            code: "BACK",
+            kind: "bin",
+            name: "Household backstock",
+            parentId: upper.id,
+        });
+        backstock.captureStatus = "counted";
+        const kitchen = createLocation({
+            code: "KIT",
+            kind: "area",
+            name: "Kitchen",
+            parentId: root.id,
+        });
+        kitchen.captureStatus = "counted";
+        const cabinet = createLocation({
+            code: "CAB",
+            kind: "area",
+            name: "Prep cabinet",
+            parentId: kitchen.id,
+        });
+        cabinet.captureStatus = "counted";
+        const dailyFood = createLocation({
+            code: "FOOD",
+            kind: "shelf",
+            name: "Daily food",
+            parentId: cabinet.id,
+        });
+        dailyFood.captureStatus = "counted";
+        state.locations.push(root, hall, upper, backstock, kitchen, cabinet, dailyFood);
+        for (let index = 0; index < 6; index += 1) {
+            state.items.push(createItem({
+                locationId: backstock.id,
+                name: `Household record ${index + 1}`,
+            }));
+        }
+
+        const plan = generatePlan(state, {
+            weights: {
+                accessibility: 2,
+                capacity: 1,
+                grouping: 2,
+                moveCost: 1,
+                suitability: 5,
+            },
+        });
+
+        expect(
+            plan.steps.some(
+                (step) => step.type === "location" && step.locationId === backstock.id,
+            ),
+        ).toBe(false);
+    });
+
     it("requires numbered plan moves to execute in order", () => {
         const initial = createDemoState();
         const plan = generatePlan(initial, { name: "Ordered execution" });

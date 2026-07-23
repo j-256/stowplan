@@ -37,6 +37,7 @@ vi.mock("../src/server/sync-service", () => ({
 }));
 
 import { POST } from "../app/api/sync/route";
+import { GET as GET_AUTH_STATUS } from "../app/api/auth/me/route";
 
 describe("sync route authorization", () => {
   beforeEach(() => {
@@ -85,5 +86,22 @@ describe("sync route authorization", () => {
     );
     expect(mocks.canReadWorkspace).not.toHaveBeenCalled();
     expect(mocks.synchronize).not.toHaveBeenCalled();
+  });
+});
+
+describe("authentication status", () => {
+  it("reports a configured signed-out server without an error response", async () => {
+    mocks.authenticate.mockResolvedValue(null);
+
+    const response = await GET_AUTH_STATUS(
+      new Request("https://stowplan.test/api/auth/me"),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      configured: true,
+      providers: [],
+      user: null,
+    });
   });
 });

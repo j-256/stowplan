@@ -10,7 +10,7 @@ interface GuestResponse { url?:string; expiresAt?:string; error?:string }
 async function fetchAccount(): Promise<MeResponse> {
   let response = await fetch("/api/auth/me", { cache: "no-store" });
   let body = await response.json() as MeResponse;
-  if (!response.ok && body.providers?.includes("cloudflare-access")) {
+  if (!body.user && body.providers?.includes("cloudflare-access")) {
     const access = await fetch("/api/auth/access", { method: "POST" });
     if (access.ok) {
       response = await fetch("/api/auth/me", { cache: "no-store" });

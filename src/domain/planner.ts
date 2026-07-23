@@ -1,4 +1,4 @@
-import { newId, nowIso } from "./factories";
+import { DEFAULT_ITEM_CATEGORY, newId, nowIso } from "./factories";
 import type {
     ItemRecord,
     Location,
@@ -27,6 +27,28 @@ interface CandidateScore {
     hardFailure: string | null;
     reasons: string[];
     score: number;
+}
+
+function normalizedGroupingValue(value: string | null): string | null {
+    const normalized = value?.trim().toLowerCase() ?? "";
+    return normalized ? normalized : null;
+}
+
+function explicitCategory(item: ItemRecord): string | null {
+    const category = normalizedGroupingValue(item.category);
+    return category === DEFAULT_ITEM_CATEGORY.toLowerCase() ? null : category;
+}
+
+function recordsAreRelated(item: ItemRecord, candidate: ItemRecord): boolean {
+    const category = explicitCategory(item);
+    const keepTogether = normalizedGroupingValue(item.constraints.keepTogether);
+    return Boolean(
+        (category && explicitCategory(candidate) === category) ||
+        (
+            keepTogether &&
+            normalizedGroupingValue(candidate.constraints.keepTogether) === keepTogether
+        ),
+    );
 }
 
 function volume(dimensions: ItemRecord["dimensions"] | Location["dimensions"]): number | null {
@@ -154,9 +176,7 @@ function scoreCandidate(
             candidate.id !== item.id &&
             !candidate.archivedAt &&
             candidate.locationId === location.id &&
-            (candidate.category === item.category ||
-                (item.constraints.keepTogether &&
-                    candidate.constraints.keepTogether === item.constraints.keepTogether)),
+            recordsAreRelated(item, candidate),
     ).length;
     if (nearbyPeers) {
         score += Math.min(nearbyPeers, 4) * weights.grouping;
@@ -278,11 +298,20 @@ function containerStep(
         }
         const scores = items.map((item) => scoreCandidate(state, item, destination, weights));
         if (scores.some((candidate) => candidate.hardFailure)) continue;
+        if (
+            scores.some(
+                (candidate, index) => candidate.score < (currentScores[index] ?? -Infinity),
+            )
+        ) {
+            continue;
+        }
         const average = scores.reduce((sum, candidate) => sum + candidate.score, 0) / scores.length;
+        if (!Number.isFinite(average) || average <= currentAverage) continue;
         const savedMoves = (items.length - 1) * weights.moveCost * 2;
         const combined = average + savedMoves;
         if (!Number.isFinite(combined)) continue;
         if (!best || combined > best.score) {
+            const reasons = [...new Set(scores.flatMap((candidate) => candidate.reasons))];
             best = {
                 destination,
                 reasons: [
@@ -290,7 +319,11 @@ function containerStep(
                     ...(capacityIsUncertain
                         ? ["capacity cannot be verified because some item sizes are unmeasured"]
                         : []),
-                    ...scores.flatMap((candidate) => candidate.reasons).slice(0, 2),
+                    ...reasons.filter(
+                        (reason) =>
+                            !capacityIsUncertain ||
+                            reason !== "capacity cannot be verified because some item sizes are unmeasured",
+                    ).slice(0, 2),
                 ],
                 score: combined,
             };
