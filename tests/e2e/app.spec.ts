@@ -1,5 +1,5 @@
 import AxeBuilder from "@axe-core/playwright";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 async function localReplica(page: Page) {
   return page.evaluate(() => new Promise<Record<string, unknown>>((resolve, reject) => {
@@ -11,6 +11,32 @@ async function localReplica(page: Page) {
       request.onsuccess = () => resolve(request.result as Record<string, unknown>);
     };
   }));
+}
+
+async function holdNativeDrag(
+  page: Page,
+  source: Locator,
+  target: Locator,
+  targetPosition = 0.5,
+): Promise<void> {
+  await source.scrollIntoViewIfNeeded();
+  await target.scrollIntoViewIfNeeded();
+  const sourceBox = await source.boundingBox();
+  const targetBox = await target.boundingBox();
+  if (!sourceBox || !targetBox) throw new Error("Drag endpoints are not visible");
+  const start = {
+    x: sourceBox.x + sourceBox.width / 2,
+    y: sourceBox.y + sourceBox.height / 2,
+  };
+  const end = {
+    x: targetBox.x + targetBox.width / 2,
+    y: targetBox.y + targetBox.height * targetPosition,
+  };
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(start.x + 8, start.y, { steps: 4 });
+  await page.mouse.move(end.x, end.y, { steps: 16 });
+  await page.mouse.move(end.x + 1, end.y, { steps: 2 });
 }
 
 test.beforeEach(async ({ page }) => {
@@ -154,6 +180,142 @@ test("reorders sibling spaces in Capture and advances in visible hierarchy order
     panel: panel.scrollWidth > panel.clientWidth,
   }));
   expect(overflow).toEqual({ labels: [], panel: false });
+});
+
+test("previews desktop reorder destinations before committing them", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "Native mouse feedback is a desktop contract");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+
+  const left = page.locator('.capture-location-row[data-location-id="loc_left"]');
+  const right = page.locator('.capture-location-row[data-location-id="loc_right"]');
+  const differentParent = page.locator('.capture-location-row[data-location-id="loc_warm"]');
+  const idleDropStyles = await right.evaluate((row) => ({
+    background: getComputedStyle(row).backgroundColor,
+    boxShadow: getComputedStyle(row).boxShadow,
+  }));
+  await holdNativeDrag(page, left.locator(".drag-handle"), right, 0.8);
+  await expect(left).toHaveAttribute("data-dragging", "true");
+  await expect(right).toHaveAttribute("data-drop-valid", "true");
+  await expect(right).toHaveAttribute("data-drop-intent", "after");
+  await expect(differentParent).toHaveAttribute("data-drop-valid", "false");
+  await expect(right.locator(".reorder-drop-copy")).toHaveText("Place after");
+  const dropStyles = await right.evaluate((row) => ({
+    background: getComputedStyle(row).backgroundColor,
+    boxShadow: getComputedStyle(row).boxShadow,
+  }));
+  expect(dropStyles.background).not.toBe(idleDropStyles.background);
+  expect(dropStyles.boxShadow).not.toBe(idleDropStyles.boxShadow);
+  expect(dropStyles.boxShadow).toContain("inset");
+  await page.mouse.up();
+  await expect.poll(async () => {
+    const replica = await localReplica(page) as {
+      state: { locations: { id: string; order: number }[] };
+    };
+    const locations = replica.state.locations;
+    return (locations.find((location) => location.id === "loc_left")?.order ?? 0) >
+      (locations.find((location) => location.id === "loc_right")?.order ?? 0);
+  }).toBe(true);
+
+  await page.locator('.capture-location-row[data-location-id="loc_bin"] .queue-row').click();
+  const flour = page.locator('.captured-row[data-item-id="item_flour"]');
+  const sugar = page.locator('.captured-row[data-item-id="item_sugar"]');
+  await holdNativeDrag(page, sugar.locator(".drag-handle"), flour, 0.2);
+  await expect(sugar).toHaveAttribute("data-dragging", "true");
+  await expect(flour).toHaveAttribute("data-drop-intent", "before");
+  await expect(flour.locator(".reorder-drop-copy")).toHaveText("Place before");
+  await page.mouse.up();
+  await expect.poll(async () => {
+    const replica = await localReplica(page) as {
+      state: { items: { id: string; order: number }[] };
+    };
+    const items = replica.state.items;
+    return (items.find((item) => item.id === "item_sugar")?.order ?? 0) <
+      (items.find((item) => item.id === "item_flour")?.order ?? 0);
+  }).toBe(true);
+
+  await page.locator("button.nav:visible", { hasText: "Inventory" }).click();
+  await page.getByLabel("Filter by location").selectOption("loc_bin");
+  const inventoryFlour = page.locator('.inventory-row[data-item-id="item_flour"]');
+  const inventorySugar = page.locator('.inventory-row[data-item-id="item_sugar"]');
+  await holdNativeDrag(page, inventoryFlour.locator(".drag-handle"), inventorySugar, 0.2);
+  await expect(inventoryFlour).toHaveAttribute("data-dragging", "true");
+  await expect(inventorySugar).toHaveAttribute("data-drop-intent", "before");
+  await expect(inventorySugar.locator(".reorder-drop-copy")).toHaveText("Place before");
+  await page.mouse.up();
+  await expect.poll(async () => {
+    const replica = await localReplica(page) as {
+      state: { items: { id: string; order: number }[] };
+    };
+    const items = replica.state.items;
+    return (items.find((item) => item.id === "item_flour")?.order ?? 0) <
+      (items.find((item) => item.id === "item_sugar")?.order ?? 0);
+  }).toBe(true);
+});
+
+test("keeps touch reordering available on draggable handles", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "mobile-chromium", "Touch input is a mobile contract");
+  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+
+  const source = page.locator('.capture-location-row[data-location-id="loc_food"]');
+  const target = page.locator('.capture-location-row[data-location-id="loc_warm"]');
+  await target.evaluate((element) => element.scrollIntoView({ block: "center" }));
+  const sourceBox = await source.locator(".drag-handle").boundingBox();
+  const targetBox = await target.boundingBox();
+  if (!sourceBox || !targetBox) throw new Error("Touch reorder endpoints are not visible");
+
+  const start = {
+    x: sourceBox.x + sourceBox.width / 2,
+    y: sourceBox.y + sourceBox.height / 2,
+  };
+  const end = {
+    x: targetBox.x + targetBox.width / 2,
+    y: targetBox.y + targetBox.height * 0.8,
+  };
+  const session = await page.context().newCDPSession(page);
+  await session.send("Input.dispatchTouchEvent", {
+    type: "touchStart",
+    touchPoints: [{ id: 1, radiusX: 3, radiusY: 3, x: start.x, y: start.y }],
+  });
+  for (let step = 1; step <= 12; step += 1) {
+    await session.send("Input.dispatchTouchEvent", {
+      type: "touchMove",
+      touchPoints: [{
+        id: 1,
+        radiusX: 3,
+        radiusY: 3,
+        x: start.x + (end.x - start.x) * step / 12,
+        y: start.y + (end.y - start.y) * step / 12,
+      }],
+    });
+  }
+
+  await expect.poll(() => page.evaluate(
+    () => document.documentElement.dataset.touchDragging,
+  )).toBe("true");
+  await expect(target).toHaveAttribute("data-touch-drop-active", "true");
+  await expect(target).toHaveAttribute("data-touch-drop-intent", "after");
+  const touchCopyStyles = await target.locator(".reorder-drop-copy").evaluate((copy) => ({
+    content: getComputedStyle(copy, "::after").content,
+    display: getComputedStyle(copy).display,
+  }));
+  expect(touchCopyStyles).toEqual({
+    content: '"Place after"',
+    display: "block",
+  });
+  await session.send("Input.dispatchTouchEvent", {
+    type: "touchEnd",
+    touchPoints: [],
+  });
+  await expect(target).not.toHaveAttribute("data-touch-drop-active");
+  await expect.poll(async () => {
+    const replica = await localReplica(page) as {
+      state: { locations: { id: string; order: number }[] };
+    };
+    const locations = replica.state.locations;
+    return (locations.find((location) => location.id === "loc_food")?.order ?? 0) >
+      (locations.find((location) => location.id === "loc_warm")?.order ?? 0);
+  }).toBe(true);
 });
 
 test("guides incomplete evidence into a reviewable plan", async ({ page }) => {
@@ -463,6 +625,18 @@ test("keeps the Capture hierarchy readable at compact desktop widths", async ({ 
   expect(metrics.queueWidth).toBeGreaterThanOrEqual(360);
   expect(metrics.cardWidth).toBeGreaterThan(360);
   if (metrics.usesFinePointer) expect(metrics.visibleActions).toBe(1);
+
+  await page.locator('.capture-location-row[data-location-id="loc_bin"] .queue-row').click();
+  const populatedMetrics = await page.locator(".captured").evaluate((captured) => ({
+    itemNameWidths: [...captured.querySelectorAll<HTMLElement>(".captured-row > .item-name")]
+      .map((name) => Math.round(name.getBoundingClientRect().width)),
+    rowOverflow: [...captured.querySelectorAll<HTMLElement>(".captured-row")]
+      .filter((row) => row.scrollWidth > row.clientWidth)
+      .map((row) => row.innerText),
+  }));
+  expect(populatedMetrics.itemNameWidths).toHaveLength(2);
+  expect(Math.min(...populatedMetrics.itemNameWidths)).toBeGreaterThanOrEqual(120);
+  expect(populatedMetrics.rowOverflow).toEqual([]);
 });
 
 test("executes a planned move and rolls it back from Activity", async ({ page }) => {
