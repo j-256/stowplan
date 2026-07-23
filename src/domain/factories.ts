@@ -13,7 +13,7 @@ import { expectationsForCommand } from "./expectations";
 
 export const DEFAULT_ITEM_CATEGORY = "Uncategorized";
 
-const defaultConditions: LocationConditions = {
+export const DEFAULT_LOCATION_CONDITIONS: Readonly<LocationConditions> = {
     dark: false,
     dry: true,
     foodSafe: false,
@@ -21,7 +21,7 @@ const defaultConditions: LocationConditions = {
     temperature: "normal",
 };
 
-const defaultConstraints: ItemConstraints = {
+export const DEFAULT_ITEM_CONSTRAINTS: Readonly<ItemConstraints> = {
     avoidHumidity: false,
     avoidWarmth: false,
     foodOnly: false,
@@ -90,7 +90,7 @@ export function createLocation(
         archivedAt: null,
         captureStatus: "uncounted",
         code: input.code.trim().toUpperCase(),
-        conditions: { ...defaultConditions },
+        conditions: { ...DEFAULT_LOCATION_CONDITIONS },
         createdAt: timestamp,
         description: "",
         dimensions: null,
@@ -118,7 +118,10 @@ export function createItem(
     return {
         archivedAt: null,
         category: input.category?.trim() ?? DEFAULT_ITEM_CATEGORY,
-        constraints: { ...defaultConstraints },
+        constraints: {
+            ...DEFAULT_ITEM_CONSTRAINTS,
+            requiredTags: [],
+        },
         createdAt: timestamp,
         dimensions: null,
         frequency: "monthly",

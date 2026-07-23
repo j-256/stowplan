@@ -1,6 +1,8 @@
 # Move plans
 
-Generate a plan after most relevant spaces are counted. Each recommendation includes reasons; there is no opaque “AI says so” score.
+Generate a plan after most relevant spaces are counted. Each recommendation includes reasons; there is no opaque "AI says so" score.
+
+The planning readiness panel separates minimum evidence from confidence improvements. It identifies unfinished spaces, quick-capture item defaults, basic destination suitability, and unmeasured capacity, then opens the exact Capture, Inventory, or Spaces editor that needs review. Capacity measurements remain optional unless physical fit is uncertain.
 
 The planner weighs:
 
@@ -13,7 +15,7 @@ The planner weighs:
 
 Steps execute in their displayed numbered order. A later step remains disabled until every earlier step is complete, so capacity freed by one move is available to the moves that follow. Completing an item step validates the expected source and quantity. Completing a container step validates the expected parent and prevents cycles. A stale step stops for review rather than moving something from an unexpected place.
 
-Measured capacity is enforced only when the item and destination both have complete, compatible dimensions. When measurements are missing, the recommendation explicitly marks capacity as unverified rather than treating unknown volume as zero or claiming that the item fits.
+Measured capacity is enforced only when the item and destination both have complete, compatible dimensions. When measurements are missing, the recommendation explicitly marks capacity as unverified rather than treating unknown volume as zero or claiming that the item fits. Each plan step can open its item or container and destination for review without moving anything. Saving corrected evidence discards the stale plan so a replacement can be generated from the new state.
 
 Plans are suggestions. Adjust weights, discard a plan, or make manual changes at any time; generate a fresh plan after substantial edits.
 

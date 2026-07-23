@@ -156,6 +156,173 @@ test("reorders sibling spaces in Capture and advances in visible hierarchy order
   expect(overflow).toEqual({ labels: [], panel: false });
 });
 
+test("guides incomplete evidence into a reviewable plan", async ({ page }) => {
+  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+  await page.locator("button.nav:visible", { hasText: "Plan" }).click();
+
+  const readiness = page.getByRole("region", { name: "Planning readiness" });
+  await expect(readiness.getByRole("heading", { name: "Enough to try, with gaps to review" })).toBeVisible();
+  await expect(readiness.getByText("7 counted destinations")).toBeVisible();
+  await expect(readiness.getByText("2 spaces still need a first-pass decision")).toBeVisible();
+  await readiness.getByRole("button", { name: "Continue count" }).click();
+
+  const cornerEditor = page.getByRole("region", { name: "Capture inside Corner cabinet" });
+  await expect(cornerEditor).toBeFocused();
+  await expect(page.getByRole("heading", { name: "C-04 · Corner cabinet" })).toBeVisible();
+  const beforeAdvance = await localReplica(page) as {
+    state: { locations: { captureStatus: string; id: string }[] };
+  };
+  await page.getByRole("button", {
+    name: "Open next unfinished location without changing Corner cabinet: BX-09, Appliance parts",
+  }).click();
+  await expect(page.getByRole("heading", { name: "BX-09 · Appliance parts" })).toBeVisible();
+  const afterAdvance = await localReplica(page) as typeof beforeAdvance;
+  expect(afterAdvance.state.locations.find((location) => location.id === "loc_unknown")?.captureStatus)
+    .toBe(beforeAdvance.state.locations.find((location) => location.id === "loc_unknown")?.captureStatus);
+  expect(afterAdvance.state.locations.find((location) => location.id === "loc_box")?.captureStatus)
+    .toBe(beforeAdvance.state.locations.find((location) => location.id === "loc_box")?.captureStatus);
+
+  await page.locator("button.nav:visible", { hasText: "Plan" }).click();
+  const refreshedReadiness = page.getByRole("region", { name: "Planning readiness" });
+  await refreshedReadiness.getByText("2 more ways to improve confidence").click();
+  await refreshedReadiness.getByRole("button", { name: "Review a space" }).click();
+  await expect(page.getByRole("group", { name: "Suitability" })).toBeFocused();
+
+  await page.locator("button.nav:visible", { hasText: "Plan" }).click();
+  const capacityReadiness = page.getByRole("region", { name: "Planning readiness" });
+  await capacityReadiness.getByText("2 more ways to improve confidence").click();
+  await capacityReadiness.getByRole("button", { name: "Review capacity" }).click();
+  await expect(page.getByRole("group", { name: "Interior dimensions (optional)" })).toBeFocused();
+
+  await page.locator("button.nav:visible", { hasText: "Plan" }).click();
+  await page.getByRole("button", { name: "Generate move plan" }).click();
+  await expect(page.getByText(/explainable moves added to the new plan/)).toBeVisible();
+  const planCards = page.locator(".plan-list > div");
+  await expect(planCards.first().getByText("Capacity unverified")).toBeVisible();
+  await expect(planCards.first().getByRole("button", { name: "Review destination" })).toBeVisible();
+  const readyMove = planCards.first().getByRole("button", { name: "Mark moved" });
+  const blockedMove = planCards.nth(1).getByRole("button", { name: "Step 1 first" });
+  await expect(readyMove).toBeEnabled();
+  await expect(blockedMove).toBeDisabled();
+  await expect(blockedMove).toHaveAttribute("data-step-state", "blocked");
+  const moveStyles = await Promise.all([readyMove, blockedMove].map(
+    (button) => button.evaluate((element) => {
+      const styles = getComputedStyle(element);
+      return {
+        background: styles.backgroundColor,
+        color: styles.color,
+        cursor: styles.cursor,
+      };
+    }),
+  ));
+  expect(moveStyles[1]?.background).not.toBe(moveStyles[0]?.background);
+  expect(moveStyles[1]?.cursor).toBe("not-allowed");
+  const planLayout = await planCards.first().evaluate((card) => {
+    const buttons = [...card.querySelectorAll<HTMLButtonElement>(".plan-step-actions button")];
+    const reviewBounds = buttons.slice(0, 2).map((button) => button.getBoundingClientRect());
+    const moveBounds = buttons.at(-1)?.getBoundingClientRect();
+    return {
+      documentOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      narrowTargets: buttons
+        .filter((button) => button.getBoundingClientRect().height < 44)
+        .map((button) => button.textContent),
+      reviewsShareRow: reviewBounds.length === 2
+        ? Math.abs(reviewBounds[0]!.top - reviewBounds[1]!.top) < 2
+        : false,
+      moveFollowsReviews: reviewBounds.length === 2 && moveBounds
+        ? moveBounds.top >= Math.max(reviewBounds[0]!.bottom, reviewBounds[1]!.bottom)
+        : false,
+    };
+  });
+  expect(planLayout.documentOverflow).toBe(false);
+  expect(planLayout.narrowTargets).toEqual([]);
+  if ((page.viewportSize()?.width ?? 0) <= 760) {
+    expect(planLayout.reviewsShareRow).toBe(true);
+    expect(planLayout.moveFollowsReviews).toBe(true);
+  }
+  const planAccessibility = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa"])
+    .analyze();
+  expect(
+    planAccessibility.violations.filter(
+      (violation) => violation.impact === "critical" || violation.impact === "serious",
+    ),
+  ).toEqual([]);
+
+  const generated = await localReplica(page) as {
+    state: {
+      activities: unknown[];
+      items: { id: string; name: string }[];
+      locations: { id: string; name: string }[];
+      plans: {
+        status: string;
+        steps: {
+          destinationId: string;
+          itemId: string | null;
+        }[];
+      }[];
+    };
+  };
+  const activePlan = generated.state.plans.find((plan) => plan.status === "active");
+  const itemStep = activePlan?.steps.find((step) => step.itemId);
+  const reviewedItem = generated.state.items.find((item) => item.id === itemStep?.itemId);
+  expect(reviewedItem).toBeTruthy();
+
+  await page.getByRole("button", { name: "Review item" }).first().click();
+  const itemEditor = page.getByRole("dialog", { name: "Edit item" });
+  await expect(itemEditor.getByText(reviewedItem?.name ?? "", { exact: true })).toBeVisible();
+  const afterItemReview = await localReplica(page) as typeof generated;
+  expect(afterItemReview.state.activities).toEqual(generated.state.activities);
+  expect(afterItemReview.state.plans).toEqual(generated.state.plans);
+  await itemEditor.getByRole("button", { name: "Close item editor" }).click();
+
+  const firstDestination = generated.state.locations.find(
+    (location) => location.id === activePlan?.steps[0]?.destinationId,
+  );
+  expect(firstDestination).toBeTruthy();
+  await page.locator("button.nav:visible", { hasText: "Plan" }).click();
+  await page.getByRole("button", { name: "Review destination" }).first().click();
+  await expect(page.getByRole("region", { name: `Edit ${firstDestination?.name ?? ""}` })).toBeFocused();
+  const afterDestinationReview = await localReplica(page) as typeof generated;
+  expect(afterDestinationReview.state.activities).toEqual(generated.state.activities);
+  expect(afterDestinationReview.state.plans).toEqual(generated.state.plans);
+});
+
+test("suggests unique location codes without replacing a manual code", async ({ page }) => {
+  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+
+  const code = page.getByLabel("Short ID");
+  const name = page.getByLabel("Friendly name");
+  await name.fill("Priority bin");
+  await expect(code).toHaveValue("PB");
+  await page.getByRole("button", { name: "Add inside Kitchen" }).click();
+  await expect(page.locator(".capture-location-row", { hasText: "Priority bin" })).toBeVisible();
+
+  await name.fill("Priority bin");
+  await expect(code).toHaveValue("PB-2");
+  await code.fill("MANUAL");
+  await name.fill("Overflow bin");
+  await expect(code).toHaveValue("MANUAL");
+});
+
+test("opens the exact item section needed for planning evidence", async ({ page }) => {
+  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+  await page.getByLabel("What is it?").fill("Unclassified charger");
+  await page.getByRole("button", { name: "Save & add next" }).click();
+  await page.locator("button.nav:visible", { hasText: "Plan" }).click();
+
+  const readiness = page.getByRole("region", { name: "Planning readiness" });
+  await readiness.getByText(/more ways to improve confidence/).click();
+  await readiness.getByRole("button", { name: "Review an item" }).click();
+
+  const itemEditor = page.getByRole("dialog", { name: "Edit item" });
+  await expect(itemEditor.getByText("Unclassified charger", { exact: true })).toBeVisible();
+  const organizeSection = itemEditor.locator('[data-guidance-section="item_details"]');
+  const coarsePointer = await page.evaluate(() => matchMedia("(pointer: coarse)").matches);
+  if (coarsePointer) await expect(organizeSection).toBeFocused();
+  else await expect(itemEditor.getByLabel("Category")).toBeFocused();
+});
+
 test("preserves a failed creation draft and avoids narrow-screen overflow", async ({ page }) => {
   await page.setViewportSize({ width: 412, height: 860 });
   await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();

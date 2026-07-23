@@ -29,7 +29,12 @@ import {
 } from "lucide-react";
 import { createDemoState } from "../domain/demo";
 import { createEmptyState, createItem, createLocation, newId } from "../domain/factories";
+import { suggestLocationCode } from "../domain/location-code";
 import { DEFAULT_PLAN_WEIGHTS, generatePlan as buildMovePlan } from "../domain/planner";
+import {
+  assessPlanReadiness,
+  type PlanReadiness,
+} from "../domain/planning-readiness";
 import type {
   CaptureStatus,
   Command,
@@ -51,6 +56,17 @@ type Commit = (command: Command) => Promise<void>;
 type DragPayload = { id: string; type: "item" | "location" };
 type DropIntent = "before" | "inside" | "after";
 type DropTarget = { id: string | null; intent: DropIntent; kind: "item" | "location" | "root" };
+type GuidanceFocus =
+  | "item_capacity"
+  | "item_details"
+  | "space_capacity"
+  | "space_suitability";
+type GuidanceTarget = {
+  focus?: GuidanceFocus;
+  id: string;
+  token: number;
+  view: "capture" | "inventory" | "spaces";
+};
 type TreeEntry = { childCount: number; depth: number; location: Location };
 
 const nav: { id: View; label: string; icon: typeof Boxes }[] = [
@@ -315,6 +331,74 @@ function descendantIds(state: WorkspaceState, locationId: string): string[] {
   return found;
 }
 
+function updateSuggestedLocationCode(
+  form: HTMLFormElement | null,
+  existingCodes: readonly string[],
+): void {
+  if (!form) return;
+  const code = form.elements.namedItem("code");
+  const kind = form.elements.namedItem("kind");
+  const name = form.elements.namedItem("name");
+  if (
+    !(code instanceof HTMLInputElement) ||
+    !(kind instanceof HTMLSelectElement) ||
+    !(name instanceof HTMLInputElement)
+  ) {
+    return;
+  }
+  if (code.dataset.userEdited === "true" && code.value.trim()) return;
+  code.value = suggestLocationCode(
+    name.value,
+    kind.value as LocationKind,
+    existingCodes,
+  );
+}
+
+function LocationCreateFields({
+  defaultKind,
+  existingCodes,
+  kindLabel,
+  namePlaceholder,
+}: {
+  defaultKind: LocationKind;
+  existingCodes: readonly string[];
+  kindLabel: string;
+  namePlaceholder: string;
+}) {
+  const update = (
+    event: React.FormEvent<HTMLInputElement | HTMLSelectElement>,
+  ) => updateSuggestedLocationCode(event.currentTarget.form, existingCodes);
+  return <>
+    <div className="form-pair">
+      <input
+        required
+        name="code"
+        aria-label="Short ID"
+        placeholder="Suggested Short ID"
+        autoCapitalize="characters"
+        onInput={(event) => {
+          event.currentTarget.dataset.userEdited = "true";
+        }}
+      />
+      <select
+        name="kind"
+        aria-label={kindLabel}
+        defaultValue={defaultKind}
+        onChange={update}
+      >
+        {kinds.map((kind) => <option key={kind}>{kind}</option>)}
+      </select>
+    </div>
+    <input
+      required
+      name="name"
+      aria-label="Friendly name"
+      placeholder={namePlaceholder}
+      onInput={update}
+    />
+  </>;
+}
+
 export function StowplanApp() {
   return <StowplanProvider><Application /></StowplanProvider>;
 }
@@ -327,6 +411,7 @@ function Application() {
   const [theme, setTheme] = useState<ThemePreference>("system");
   const [themeReady, setThemeReady] = useState(false);
   const [workspaceNotice, setWorkspaceNotice] = useState("");
+  const [guidanceTarget, setGuidanceTarget] = useState<GuidanceTarget | null>(null);
 
   useEffect(() => {
     /* eslint-disable react-hooks/set-state-in-effect -- hydrate device-only preferences and deep-link state after the server-consistent first render */
@@ -413,23 +498,46 @@ function Application() {
     return <Onboarding currentId={state.workspace.id} currentName={state.workspace.name} isDemo={state.workspace.id.startsWith("ws_demo")} online={online} statusRevision={statusRevision} onContinue={() => setShowWelcome(false)} onOpenDemo={openDemo} onOpenWorkspace={chooseWorkspace} onRemoveWorkspace={removeLocalWorkspace} onResetDemo={resetDemo} onStart={start} />;
   }
   const current = state.locations.find((location) => location.id === selected && !location.archivedAt) ?? state.locations.find((location) => !location.archivedAt) ?? null;
+  const selectView = (nextView: View) => {
+    setGuidanceTarget(null);
+    setView(nextView);
+  };
+  const openGuidanceTarget = (
+    nextView: GuidanceTarget["view"],
+    id: string,
+    focus?: GuidanceFocus,
+  ) => {
+    if (nextView === "inventory") {
+      const item = state.items.find((candidate) => candidate.id === id);
+      if (item) setSelected(item.locationId);
+    } else {
+      setSelected(id);
+    }
+    setGuidanceTarget((previous) => ({
+      focus,
+      id,
+      token: (previous?.token ?? 0) + 1,
+      view: nextView,
+    }));
+    setView(nextView);
+  };
   return <div className="app-shell">
     <aside>
       <Brand />
-      <nav>{nav.map((entry) => <Nav key={entry.id} {...entry} active={entry.id === view} select={() => setView(entry.id)} />)}</nav>
+      <nav>{nav.map((entry) => <Nav key={entry.id} {...entry} active={entry.id === view} select={() => selectView(entry.id)} />)}</nav>
       <div className="sync" title={lastSyncError ?? (lastSyncedAt ? `Last successful backup: ${formatTimestamp(lastSyncedAt)}` : "This workspace has not been backed up online yet.")}>{online ? <Wifi /> : <WifiOff />}<span>{blocked ? `${blocked} need review` : backupConfigured === false ? pending ? `${pending} saved on device` : "Device only" : syncing ? "Backing up…" : pending ? `${pending} pending upload` : !online ? "Working offline" : lastSyncedAt ? `Backed up ${formatTimestamp(lastSyncedAt)}` : "Device only"}</span></div>
     </aside>
     <main>
-      <header><div><p className="eyebrow">{state.workspace.name}</p><h1>{nav.find((entry) => entry.id === view)?.label}</h1></div><div className="header-actions"><button className="icon" aria-label="Open main menu" onClick={() => setShowWelcome(true)}><Home /></button><button className="icon mobile-settings" data-active={view === "settings"} aria-label="Open settings" onClick={() => setView("settings")}><Settings /></button><button className="icon" aria-label="Change theme" onClick={() => setTheme(theme === "system" ? "dark" : theme === "dark" ? "light" : "system")}>{theme === "dark" ? <Moon /> : <Sun />}</button></div></header>
-      {view === "capture" && <Capture state={state} current={current} select={setSelected} commit={dispatch} />}
-      {view === "spaces" && <Spaces state={state} current={current} select={setSelected} commit={dispatch} />}
-      {view === "inventory" && <Inventory state={state} commit={dispatch} />}
-      {view === "plan" && <Planner state={state} commit={dispatch} />}
+      <header><div><p className="eyebrow">{state.workspace.name}</p><h1>{nav.find((entry) => entry.id === view)?.label}</h1></div><div className="header-actions"><button className="icon" aria-label="Open main menu" onClick={() => setShowWelcome(true)}><Home /></button><button className="icon mobile-settings" data-active={view === "settings"} aria-label="Open settings" onClick={() => selectView("settings")}><Settings /></button><button className="icon" aria-label="Change theme" onClick={() => setTheme(theme === "system" ? "dark" : theme === "dark" ? "light" : "system")}>{theme === "dark" ? <Moon /> : <Sun />}</button></div></header>
+      {view === "capture" && <Capture state={state} current={current} select={setSelected} commit={dispatch} focusEditorKey={guidanceTarget?.view === "capture" ? guidanceTarget.token : null} />}
+      {view === "spaces" && <Spaces state={state} current={current} select={setSelected} commit={dispatch} focusEditorKey={guidanceTarget?.view === "spaces" ? guidanceTarget.token : null} focusEditorSection={guidanceTarget?.view === "spaces" ? guidanceTarget.focus : undefined} />}
+      {view === "inventory" && <Inventory state={state} commit={dispatch} editOnOpen={guidanceTarget?.view === "inventory" ? guidanceTarget.id : null} editFocus={guidanceTarget?.view === "inventory" ? guidanceTarget.focus : undefined} />}
+      {view === "plan" && <Planner state={state} commit={dispatch} openGuidanceTarget={openGuidanceTarget} />}
       {view === "activity" && <History state={state} commit={dispatch} />}
       {workspaceNotice && <output className="workspace-notice">{workspaceNotice}</output>}
       {view === "settings" && <Preferences state={state} commit={dispatch} theme={theme} setTheme={setTheme} openMenu={() => setShowWelcome(true)} />}
     </main>
-    <nav className="bottom">{nav.filter((entry) => entry.id !== "settings").map((entry) => <Nav key={entry.id} {...entry} active={entry.id === view} select={() => setView(entry.id)} />)}</nav>
+    <nav className="bottom">{nav.filter((entry) => entry.id !== "settings").map((entry) => <Nav key={entry.id} {...entry} active={entry.id === view} select={() => selectView(entry.id)} />)}</nav>
   </div>;
 }
 
@@ -532,9 +640,11 @@ function Onboarding({ currentId, currentName, isDemo = false, online, statusRevi
   })}</div><div className="workspace-home-actions"><details className="workspace-create"><summary>Start a new workspace</summary><form onSubmit={(event) => submitForm(event, (data) => begin(false, String(data.get("workspaceName"))), false)}><label>Workspace name<input required maxLength={80} name="workspaceName" placeholder="e.g. Jamie’s apartment" /></label><button className="primary" disabled={busy}>{busy ? "Starting…" : "Create workspace"}</button></form></details>{isDemo ? <button disabled={busy} className="danger menu-action" onClick={() => void run(() => onResetDemo?.() ?? Promise.resolve(), "Could not reset the demo")}><RotateCcw /> Reset kitchen demo</button> : <button disabled={busy} className="linkish" onClick={() => void run(() => onOpenDemo?.() ?? Promise.resolve(), "Could not open the demo")}>Open kitchen demo</button>}</div><small className="workspace-home-note">Removing a workspace here affects this device only. Online deletion is never implied.</small>{message && <output className="form-message">{message}</output>}</section></main>;
 }
 
-function Capture({ state, current, select, commit }: { state: WorkspaceState; current: Location | null; select: (id: string) => void; commit: Commit }) {
+function Capture({ state, current, select, commit, focusEditorKey }: { state: WorkspaceState; current: Location | null; select: (id: string) => void; commit: Commit; focusEditorKey: number | null }) {
   const [editing, setEditing] = useState<string | null>(null);
+  const [editorNavigationKey, setEditorNavigationKey] = useState(0);
   const [queueQuery, setQueueQuery] = useState("");
+  const editor = useRef<HTMLElement | null>(null);
   const live = state.locations.filter((location) => !location.archivedAt);
   const tree = flattenLocationTree(live);
   const normalizedQuery = queueQuery.trim().toLocaleLowerCase();
@@ -550,6 +660,20 @@ function Capture({ state, current, select, commit }: { state: WorkspaceState; cu
   const nested = current ? sortLocations(live.filter((location) => location.parentId === current.id)) : [];
   const breadcrumbs = current ? locationPath(live, current.id) : [];
   const canMarkKnownEmpty = items.length === 0 && nested.length === 0;
+  const nextUncounted = current
+    ? nextCaptureLocation(tree, current.id)
+    : undefined;
+  useEffect(() => {
+    if (focusEditorKey === null && editorNavigationKey === 0) return;
+    const frame = requestAnimationFrame(() => {
+      const behavior = matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "auto"
+        : "smooth";
+      editor.current?.scrollIntoView({ behavior, block: "start" });
+      editor.current?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [editorNavigationKey, focusEditorKey]);
   const addContainer = async (data: FormData) => {
     const parentId = data.get("topLevel") === "on" ? null : current?.id ?? null;
     const siblings = live.filter((location) => location.parentId === parentId);
@@ -606,20 +730,36 @@ function Capture({ state, current, select, commit }: { state: WorkspaceState; cu
       const index = siblings.findIndex((candidate) => candidate.id === location.id);
       const parent = location.parentId ? live.find((candidate) => candidate.id === location.parentId)?.name ?? "its parent" : "top level";
       return <div className="capture-location-row" role="listitem" key={location.id} data-active={current?.id === location.id} data-depth={depth} data-location-id={location.id} data-drop-target="location" data-drop-id={location.id} draggable onDragStart={(event) => writeDrag(event, { type: "location", id: location.id })} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }} onDrop={(event) => dropOnLocation(event, location.id)}><TouchDragHandle label={`Drag ${location.name} to reorder within ${parent}`} onDrop={(target) => reorderLocationByDrop({ type: "location", id: location.id }, target)} /><button type="button" className="queue-row" aria-current={current?.id === location.id} data-active={current?.id === location.id} data-depth={depth} style={{ paddingLeft: 8 + depth * 12 }} onClick={() => select(location.id)}><span className="hierarchy-marker" aria-hidden>{depth ? "↳" : "●"}</span><span className="queue-name"><b>{location.code}</b><span>{location.name}</span></span><small>{childCount ? `${childCount} inside · ` : ""}{location.captureStatus.replace("_", " ")}</small></button><div className="row-actions"><button type="button" className="icon small" aria-label={`Move ${location.name} up`} disabled={index === 0} onClick={() => reorderLocation(location, -1)}><ArrowUp /></button><button type="button" className="icon small" aria-label={`Move ${location.name} down`} disabled={index === siblings.length - 1} onClick={() => reorderLocation(location, 1)}><ArrowDown /></button></div></div>;
-    })}</div>{queueShown.length === 0 && <p className="muted queue-empty">No matching container.</p>}<form key={current?.id ?? "root"} onSubmit={(event) => submitForm(event, addContainer)} className="nested"><div className="form-pair"><input required name="code" aria-label="Short ID" placeholder="Short ID" autoCapitalize="characters" /><select name="kind" aria-label="Container type" defaultValue={current ? "box" : "room"}>{kinds.map((kind) => <option key={kind}>{kind}</option>)}</select></div><input required name="name" aria-label="Friendly name" placeholder={current ? "Friendly name (e.g. winter gear bin)" : "Friendly name (e.g. apartment)"} />{current && <label className="top-level"><input type="checkbox" name="topLevel" /> Add as another top-level space</label>}<button>{current ? `Add inside ${current.name}` : "Add first space"}</button></form></section>
-    <section className="panel capture-card">{current ? <><nav className="breadcrumbs" aria-label="Current container path">{breadcrumbs.map((location, index) => <span key={location.id}>{index > 0 && <i aria-hidden>›</i>}<button onClick={() => select(location.id)}>{location.code}</button></span>)}</nav><div className="title"><div><p className="eyebrow">Inside this container</p><h2>{current.code} · {current.name}</h2></div><span className="tag">{current.captureStatus.replace("_", " ")}</span></div><form key={current.id} className="quick" onSubmit={(event) => submitForm(event, addItem)}><label>Qty<input required type="number" min="0.01" step="any" name="quantity" defaultValue="1" /></label><label>Unit<input required name="unit" defaultValue="each" list="capture-units" /><datalist id="capture-units"><option value="each" /><option value="boxes" /><option value="bags" /><option value="cans" /><option value="pairs" /></datalist></label><label className="grow">What is it?<input required name="name" placeholder="e.g. winter gloves" /></label><button className="primary">Save & add next</button></form>
+    })}</div>{queueShown.length === 0 && <p className="muted queue-empty">No matching container.</p>}<form key={current?.id ?? "root"} onSubmit={(event) => submitForm(event, addContainer)} className="nested"><LocationCreateFields defaultKind={current ? "box" : "room"} existingCodes={live.map((location) => location.code)} kindLabel="Container type" namePlaceholder={current ? "Friendly name (e.g. winter gear bin)" : "Friendly name (e.g. apartment)"} />{current && <label className="top-level"><input type="checkbox" name="topLevel" /> Add as another top-level space</label>}<button>{current ? `Add inside ${current.name}` : "Add first space"}</button></form></section>
+    <section className="panel capture-card" ref={editor} tabIndex={-1} aria-label={current ? `Capture inside ${current.name}` : "Capture editor"}>{current ? <><nav className="breadcrumbs" aria-label="Current container path">{breadcrumbs.map((location, index) => <span key={location.id}>{index > 0 && <i aria-hidden>›</i>}<button onClick={() => select(location.id)}>{location.code}</button></span>)}</nav><div className="title"><div><p className="eyebrow">Inside this container</p><h2>{current.code} · {current.name}</h2></div><span className="tag">{current.captureStatus.replace("_", " ")}</span></div>{nextUncounted && <button className="capture-next-location" type="button" aria-label={`Open next unfinished location without changing ${current.name}: ${nextUncounted.code}, ${nextUncounted.name}`} onClick={() => { select(nextUncounted.id); setEditorNavigationKey((value) => value + 1); }}><span>Next unfinished</span><strong>{nextUncounted.code} · {nextUncounted.name}</strong></button>}<form key={current.id} className="quick" onSubmit={(event) => submitForm(event, addItem)}><label>Qty<input required type="number" min="0.01" step="any" name="quantity" defaultValue="1" /></label><label>Unit<input required name="unit" defaultValue="each" list="capture-units" /><datalist id="capture-units"><option value="each" /><option value="boxes" /><option value="bags" /><option value="cans" /><option value="pairs" /></datalist></label><label className="grow">What is it?<input required name="name" placeholder="e.g. winter gloves" /></label><button className="primary">Save & add next</button></form>
       {nested.length > 0 && <div className="nested-list"><small>Nested containers</small>{nested.map((location) => <button key={location.id} onClick={() => select(location.id)}><b>{location.code}</b><span>{location.name}</span><small>{location.captureStatus.replace("_", " ")}</small></button>)}</div>}
       <div className="captured">{items.map((item, index) => <div className="captured-row" data-item-id={item.id} data-drop-target="item" data-drop-id={item.id} key={item.id} draggable onDragStart={(event) => writeDrag(event, { type: "item", id: item.id })} onDragOver={(event) => event.preventDefault()} onDrop={(event) => dropOnItem(event, item.id)}><TouchDragHandle label={`Drag ${item.name} to reorder`} onDrop={(target) => reorderByDrop({ type: "item", id: item.id }, target)} /><b>{item.quantity} {item.unit}</b><button className="item-name" onClick={() => setEditing(item.id)}><strong>{item.name}</strong><small>{item.category} · {item.frequency}</small></button><div className="row-actions"><button className="icon small" aria-label={`Move ${item.name} up`} disabled={index === 0} onClick={() => reorder(item.id, -1)}><ArrowUp /></button><button className="icon small" aria-label={`Move ${item.name} down`} disabled={index === items.length - 1} onClick={() => reorder(item.id, 1)}><ArrowDown /></button><button className="icon small" aria-label={`Edit ${item.name}`} onClick={() => setEditing(item.id)}><Edit3 /></button></div></div>)}{!items.length && <Empty title="Nothing recorded yet" text="Add an item, or mark this space as known empty." />}</div><div className="finish"><button disabled={!canMarkKnownEmpty} title={canMarkKnownEmpty ? undefined : "Remove live items and nested spaces before marking this space known empty."} onClick={() => void finish("known_empty")}>Known empty & next</button><button className="primary" onClick={() => void finish("counted")}>Mark counted & next</button></div></> : <Empty title="Add your first space" text="Give a room, cabinet, box, or drawer the same code as its physical label." />}</section>
     {editing && state.items.find((item) => item.id === editing) && <ItemEditor item={state.items.find((item) => item.id === editing) as ItemRecord} state={state} commit={commit} close={() => setEditing(null)} />}
   </div>;
 }
 
-function Spaces({ state, current, select, commit }: { state: WorkspaceState; current: Location | null; select: (id: string) => void; commit: Commit }) {
+function Spaces({ state, current, select, commit, focusEditorKey, focusEditorSection }: { state: WorkspaceState; current: Location | null; select: (id: string) => void; commit: Commit; focusEditorKey: number | null; focusEditorSection?: GuidanceFocus }) {
   const [editingItem, setEditingItem] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [dropCue, setDropCue] = useState<DropTarget | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const inspector = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (focusEditorKey === null) return;
+    const frame = requestAnimationFrame(() => {
+      const behavior = matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "auto"
+        : "smooth";
+      const target = focusEditorSection
+        ? inspector.current?.querySelector<HTMLElement>(
+            `[data-guidance-section="${focusEditorSection}"]`,
+          )
+        : inspector.current;
+      target?.scrollIntoView({ behavior, block: "start" });
+      target?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [focusEditorKey, focusEditorSection]);
   const live = state.locations.filter((location) => !location.archivedAt);
   const archived = state.locations.filter((location) => location.archivedAt);
   const liveIds = new Set(live.map((location) => location.id));
@@ -705,7 +845,7 @@ function Spaces({ state, current, select, commit }: { state: WorkspaceState; cur
     }
   };
 
-  return <div className="content split"><section className="panel tree-panel" data-dragging={dragging}><div className="title"><div><p className="eyebrow">Your physical hierarchy</p><h2>Rooms → cabinets → boxes</h2></div></div><p className="tree-help">Drag a handle onto the top, middle, or bottom of another row to place before, move inside, or place after. On touch, press the handle, slide, and release.</p><details className="tree-add"><summary>Add a top-level room or area</summary><form onSubmit={(event) => submitForm(event, addRoot)}><div className="form-pair"><input required name="code" aria-label="Short ID" placeholder="Short ID" autoCapitalize="characters" /><select name="kind" aria-label="Space type" defaultValue="room">{kinds.map((kind) => <option key={kind}>{kind}</option>)}</select></div><input required name="name" aria-label="Friendly name" placeholder="Friendly name" /><button>Add top-level space</button></form></details><div className="root-drop" data-drop-target="root" data-drop-intent={dropCue?.kind === "root" ? "inside" : undefined} onDragOver={(event) => dragOver(event, { id: null, intent: "inside", kind: "root" })} onDrop={(event) => drop(event, { id: null, intent: "inside", kind: "root" })}>Drop here to make a top-level room or area</div><div className="location-tree" role="list" aria-label="Space hierarchy">{branch(null)}</div>{current && <button className="mobile-edit-space primary" onClick={() => { const behavior = matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"; inspector.current?.scrollIntoView({ behavior, block: "start" }); inspector.current?.focus({ preventScroll: true }); }}>Edit {current.name}</button>}{archived.length > 0 && <details className="archived"><summary>{archived.length} archived</summary>{archived.map((location) => <div key={location.id}><span>{location.code} · {location.name}</span><button onClick={() => void perform(commit, { type: "location.archive", id: location.id, archived: false })}>Restore</button></div>)}</details>}</section><section className="panel inspector" id="space-inspector" ref={inspector} tabIndex={-1} aria-label={current ? `Edit ${current.name}` : "Space editor"}>{current ? <LocationEditor key={current.id} state={state} location={current} commit={commit} select={select} reorder={reorderLocation} remove={() => removeLocation(current)} editItem={setEditingItem} moveByDrop={finishTouchDrop} setDragging={setDragging} /> : <Empty title="Select a space" text="Edit it, move it, or drop an item or container onto it." />}</section>{editingItem && state.items.find((item) => item.id === editingItem) && <ItemEditor item={state.items.find((item) => item.id === editingItem) as ItemRecord} state={state} commit={commit} close={() => setEditingItem(null)} />}</div>;
+  return <div className="content split"><section className="panel tree-panel" data-dragging={dragging}><div className="title"><div><p className="eyebrow">Your physical hierarchy</p><h2>Rooms → cabinets → boxes</h2></div></div><p className="tree-help">Drag a handle onto the top, middle, or bottom of another row to place before, move inside, or place after. On touch, press the handle, slide, and release.</p><details className="tree-add"><summary>Add a top-level room or area</summary><form onSubmit={(event) => submitForm(event, addRoot)}><LocationCreateFields defaultKind="room" existingCodes={live.map((location) => location.code)} kindLabel="Space type" namePlaceholder="Friendly name" /><button>Add top-level space</button></form></details><div className="root-drop" data-drop-target="root" data-drop-intent={dropCue?.kind === "root" ? "inside" : undefined} onDragOver={(event) => dragOver(event, { id: null, intent: "inside", kind: "root" })} onDrop={(event) => drop(event, { id: null, intent: "inside", kind: "root" })}>Drop here to make a top-level room or area</div><div className="location-tree" role="list" aria-label="Space hierarchy">{branch(null)}</div>{current && <button className="mobile-edit-space primary" onClick={() => { const behavior = matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"; inspector.current?.scrollIntoView({ behavior, block: "start" }); inspector.current?.focus({ preventScroll: true }); }}>Edit {current.name}</button>}{archived.length > 0 && <details className="archived"><summary>{archived.length} archived</summary>{archived.map((location) => <div key={location.id}><span>{location.code} · {location.name}</span><button onClick={() => void perform(commit, { type: "location.archive", id: location.id, archived: false })}>Restore</button></div>)}</details>}</section><section className="panel inspector" id="space-inspector" ref={inspector} tabIndex={-1} aria-label={current ? `Edit ${current.name}` : "Space editor"}>{current ? <LocationEditor key={current.id} state={state} location={current} commit={commit} select={select} reorder={reorderLocation} remove={() => removeLocation(current)} editItem={setEditingItem} moveByDrop={finishTouchDrop} setDragging={setDragging} /> : <Empty title="Select a space" text="Edit it, move it, or drop an item or container onto it." />}</section>{editingItem && state.items.find((item) => item.id === editingItem) && <ItemEditor item={state.items.find((item) => item.id === editingItem) as ItemRecord} state={state} commit={commit} close={() => setEditingItem(null)} />}</div>;
 }
 
 function LocationEditor({ state, location, commit, select, reorder, remove, editItem, moveByDrop, setDragging }: { state: WorkspaceState; location: Location; commit: Commit; select: (id: string) => void; reorder: (location: Location, direction: -1 | 1) => void; remove: () => void; editItem: (id: string) => void; moveByDrop: (payload: DragPayload, target: DropTarget) => void; setDragging: (dragging: boolean) => void }) {
@@ -735,15 +875,19 @@ function LocationEditor({ state, location, commit, select, reorder, remove, edit
     const child = createLocation({ code: String(data.get("code")), name: String(data.get("name")), kind: String(data.get("kind")) as LocationKind, parentId: location.id, order: nextOrder(children) });
     return perform(commit, { type: "location.create", location: child });
   };
-  return <><form onSubmit={(event) => submitForm(event, save, false)} className="editor-form"><div className="title"><div><p className="eyebrow">{location.kind}</p><h2>Edit space</h2></div><span className="tag">{location.captureStatus.replace("_", " ")}</span></div>{!parentIsAvailable && <p className="form-warning" role="status">The previous parent is archived or missing. Choose a parent below; saving will place this space at the top level if you leave it unchanged.</p>}<div className="form-grid"><label>Friendly name<input required name="name" defaultValue={location.name} /></label><label>Short ID<input required name="code" defaultValue={location.code} autoCapitalize="characters" /></label><label>Type<select name="kind" defaultValue={location.kind}>{kinds.map((kind) => <option key={kind}>{kind}</option>)}</select></label><label>Parent space<select name="parentId" defaultValue={parentIsAvailable ? location.parentId ?? "" : ""}><option value="">Top level</option>{parentOptions.map(({ depth, location: candidate }) => <option key={candidate.id} value={candidate.id}>{`${"  ".repeat(depth)}${depth ? "↳ " : ""}${candidate.code} · ${candidate.name}`}</option>)}</select></label><label className="wide">Tags, comma-separated<input name="tags" defaultValue={location.tags.join(", ")} /></label><label className="wide">Description<textarea name="description" defaultValue={location.description} /></label></div><fieldset><legend>Suitability</legend><div className="check-grid"><label><input type="checkbox" name="foodSafe" defaultChecked={location.conditions.foodSafe} /> Food safe</label><label><input type="checkbox" name="dry" defaultChecked={location.conditions.dry} /> Dry</label><label><input type="checkbox" name="dark" defaultChecked={location.conditions.dark} /> Dark</label><label>Temperature<select name="temperature" defaultValue={location.conditions.temperature}><option>cold</option><option>cool</option><option>normal</option><option>warm</option></select></label><label>Humidity<select name="humidity" defaultValue={location.conditions.humidity}><option>dry</option><option>normal</option><option>humid</option></select></label></div></fieldset><fieldset><legend>Interior dimensions (optional)</legend><div className="dimension-grid"><label>W<input name="width" type="number" min="0.01" step="any" defaultValue={location.dimensions?.width} /></label><label>H<input name="height" type="number" min="0.01" step="any" defaultValue={location.dimensions?.height} /></label><label>D<input name="depth" type="number" min="0.01" step="any" defaultValue={location.dimensions?.depth} /></label><label>Unit<select name="dimensionUnit" defaultValue={location.dimensions?.unit ?? "in"}><option>in</option><option>cm</option></select></label></div></fieldset><button className="primary">Save space</button></form><div className="inspector-actions"><button onClick={() => reorder(location, -1)}><ArrowUp /> Earlier</button><button onClick={() => reorder(location, 1)}><ArrowDown /> Later</button><button disabled={!canArchive} title={canArchive ? undefined : "Move, archive, or delete live contents and nested spaces first."} onClick={() => void perform(commit, { type: "location.archive", id: location.id, archived: true }, () => select(state.locations.find((candidate) => !candidate.archivedAt && candidate.id !== location.id)?.id ?? ""))}><Archive /> Archive</button><button className="danger" onClick={remove}><Trash2 /> Delete subtree</button></div><form key={location.id} className="nested inline-add" onSubmit={(event) => submitForm(event, addChild)}><h3>Add inside {location.name}</h3><div className="form-pair"><input required name="code" aria-label="Short ID" placeholder="Short ID" autoCapitalize="characters" /><select name="kind" aria-label="Space type" defaultValue="box">{kinds.map((kind) => <option key={kind}>{kind}</option>)}</select></div><input required name="name" aria-label="Friendly name" placeholder="Friendly name" /><button>Add nested space</button></form><div className="location-contents"><h3>Direct contents <small>{contents.length} records</small></h3>{contents.map((item) => <div className="location-item-row" key={item.id} draggable onDragStart={(event) => { setDragging(true); writeDrag(event, { type: "item", id: item.id }); }} onDragEnd={() => setDragging(false)}><TouchDragHandle label={`Drag ${item.name} into another space`} onActiveChange={setDragging} onDrop={(target) => moveByDrop({ type: "item", id: item.id }, target)} /><button className="item-name" onClick={() => editItem(item.id)}><strong>{item.name}</strong><small>{item.quantity} {item.unit}</small></button><button className="icon small" aria-label={`Edit ${item.name}`} onClick={() => editItem(item.id)}><Edit3 /></button></div>)}{contents.length === 0 && <p className="muted">No direct item records. Drop an inventory item onto this space to move it here.</p>}</div></>;
+  return <><form onSubmit={(event) => submitForm(event, save, false)} className="editor-form"><div className="title"><div><p className="eyebrow">{location.kind}</p><h2>Edit space</h2></div><span className="tag">{location.captureStatus.replace("_", " ")}</span></div>{!parentIsAvailable && <p className="form-warning" role="status">The previous parent is archived or missing. Choose a parent below; saving will place this space at the top level if you leave it unchanged.</p>}<div className="form-grid"><label>Friendly name<input required name="name" defaultValue={location.name} /></label><label>Short ID<input required name="code" defaultValue={location.code} autoCapitalize="characters" /></label><label>Type<select name="kind" defaultValue={location.kind}>{kinds.map((kind) => <option key={kind}>{kind}</option>)}</select></label><label>Parent space<select name="parentId" defaultValue={parentIsAvailable ? location.parentId ?? "" : ""}><option value="">Top level</option>{parentOptions.map(({ depth, location: candidate }) => <option key={candidate.id} value={candidate.id}>{`${"  ".repeat(depth)}${depth ? "↳ " : ""}${candidate.code} · ${candidate.name}`}</option>)}</select></label><label className="wide">Tags, comma-separated<input name="tags" defaultValue={location.tags.join(", ")} /></label><label className="wide">Description<textarea name="description" defaultValue={location.description} /></label></div><fieldset data-guidance-section="space_suitability" tabIndex={-1}><legend>Suitability</legend><div className="check-grid"><label><input type="checkbox" name="foodSafe" defaultChecked={location.conditions.foodSafe} /> Food safe</label><label><input type="checkbox" name="dry" defaultChecked={location.conditions.dry} /> Dry</label><label><input type="checkbox" name="dark" defaultChecked={location.conditions.dark} /> Dark</label><label>Temperature<select name="temperature" defaultValue={location.conditions.temperature}><option>cold</option><option>cool</option><option>normal</option><option>warm</option></select></label><label>Humidity<select name="humidity" defaultValue={location.conditions.humidity}><option>dry</option><option>normal</option><option>humid</option></select></label></div></fieldset><fieldset data-guidance-section="space_capacity" tabIndex={-1}><legend>Interior dimensions (optional)</legend><div className="dimension-grid"><label>W<input name="width" type="number" min="0.01" step="any" defaultValue={location.dimensions?.width} /></label><label>H<input name="height" type="number" min="0.01" step="any" defaultValue={location.dimensions?.height} /></label><label>D<input name="depth" type="number" min="0.01" step="any" defaultValue={location.dimensions?.depth} /></label><label>Unit<select name="dimensionUnit" defaultValue={location.dimensions?.unit ?? "in"}><option>in</option><option>cm</option></select></label></div></fieldset><button className="primary">Save space</button></form><div className="inspector-actions"><button onClick={() => reorder(location, -1)}><ArrowUp /> Earlier</button><button onClick={() => reorder(location, 1)}><ArrowDown /> Later</button><button disabled={!canArchive} title={canArchive ? undefined : "Move, archive, or delete live contents and nested spaces first."} onClick={() => void perform(commit, { type: "location.archive", id: location.id, archived: true }, () => select(state.locations.find((candidate) => !candidate.archivedAt && candidate.id !== location.id)?.id ?? ""))}><Archive /> Archive</button><button className="danger" onClick={remove}><Trash2 /> Delete subtree</button></div><form key={location.id} className="nested inline-add" onSubmit={(event) => submitForm(event, addChild)}><h3>Add inside {location.name}</h3><LocationCreateFields defaultKind="box" existingCodes={state.locations.filter((candidate) => !candidate.archivedAt).map((candidate) => candidate.code)} kindLabel="Space type" namePlaceholder="Friendly name" /><button>Add nested space</button></form><div className="location-contents"><h3>Direct contents <small>{contents.length} records</small></h3>{contents.map((item) => <div className="location-item-row" key={item.id} draggable onDragStart={(event) => { setDragging(true); writeDrag(event, { type: "item", id: item.id }); }} onDragEnd={() => setDragging(false)}><TouchDragHandle label={`Drag ${item.name} into another space`} onActiveChange={setDragging} onDrop={(target) => moveByDrop({ type: "item", id: item.id }, target)} /><button className="item-name" onClick={() => editItem(item.id)}><strong>{item.name}</strong><small>{item.quantity} {item.unit}</small></button><button className="icon small" aria-label={`Edit ${item.name}`} onClick={() => editItem(item.id)}><Edit3 /></button></div>)}{contents.length === 0 && <p className="muted">No direct item records. Drop an inventory item onto this space to move it here.</p>}</div></>;
 }
 
-function Inventory({ state, commit }: { state: WorkspaceState; commit: Commit }) {
+function Inventory({ state, commit, editOnOpen, editFocus }: { state: WorkspaceState; commit: Commit; editOnOpen: string | null; editFocus?: GuidanceFocus }) {
   const [query, setQuery] = useState("");
   const [locationFilter, setLocationFilter] = useState("");
   const [sortBy, setSortBy] = useState<"location" | "name" | "quantity">("name");
   const [selected, setSelected] = useState<string[]>([]);
-  const [editing, setEditing] = useState<string | null>(null);
+  const [editing, setEditing] = useState<string | null>(
+    state.items.some((item) => item.id === editOnOpen && !item.archivedAt)
+      ? editOnOpen
+      : null,
+  );
   const locationName = useMemo(() => new Map(state.locations.map((location) => [location.id, locationPath(state.locations, location.id).map((part) => part.name).join(" › ")])), [state.locations]);
   const locationOptions = flattenLocationTree(state.locations.filter((location) => !location.archivedAt));
   const shown = useMemo(() => state.items.filter((item) => {
@@ -797,13 +941,14 @@ function Inventory({ state, commit }: { state: WorkspaceState; commit: Commit })
     const actionIdentity = `${item.name}, ${item.quantity} ${item.unit}`;
     return <div className="inventory-row" data-item-id={item.id} data-drop-target={canReorder ? "item" : undefined} data-drop-id={canReorder ? item.id : undefined} key={item.id} draggable={canReorder} onDragStart={canReorder ? (event) => writeDrag(event, { type: "item", id: item.id }) : undefined} onDragOver={canReorder ? (event) => event.preventDefault() : undefined} onDrop={canReorder ? (event) => dropOnItem(event, item) : undefined}>{canReorder ? <TouchDragHandle label={`Drag ${item.name} to reorder`} onDrop={(target) => moveItemByDrop({ type: "item", id: item.id }, target)} /> : <span className="inventory-marker" aria-hidden>•</span>}<label className="inventory-select"><input aria-label={`Select ${actionIdentity} in ${locationName.get(item.locationId) ?? "Unknown space"}`} type="checkbox" checked={activeSelection.includes(item.id)} onChange={() => setSelected((current) => { const valid = current.filter((id) => shownIds.has(id)); return valid.includes(item.id) ? valid.filter((id) => id !== item.id) : [...valid, item.id]; })} /></label><button className="item-name" aria-label={`Open ${actionIdentity} in ${locationName.get(item.locationId) ?? "Unknown space"}`} onClick={() => setEditing(item.id)}><strong>{item.name}</strong><small>{item.category} · {item.frequency} · {item.tags.join(", ") || "no tags"}</small></button><b>{item.quantity} {item.unit}</b><span className="location-path">{locationName.get(item.locationId)}</span>{canReorder && <span className="inventory-order-actions"><button type="button" className="icon small" aria-label={`Move ${actionIdentity} up`} disabled={siblingIndex === 0} onClick={() => reorderItem(item, -1)}><ArrowUp /></button><button type="button" className="icon small" aria-label={`Move ${actionIdentity} down`} disabled={siblingIndex === siblings.length - 1} onClick={() => reorderItem(item, 1)}><ArrowDown /></button></span>}<button className="row-action" aria-label={`Edit or move ${actionIdentity} in ${locationName.get(item.locationId) ?? "Unknown space"}`} onClick={() => setEditing(item.id)}><Edit3 /><span>Edit / move</span></button></div>;
   };
-  return <div className="content inventory-page"><div className="inventory-heading"><div><p className="eyebrow">Everything, regardless of container</p><h2>All item records</h2><p>Search the whole workspace, then select records for an explicit move. Filter to one container only when physical order matters.</p></div><b>{shown.length} records</b></div><div className="toolbar inventory-tools"><label className="search"><Search /><input aria-label="Search inventory" value={query} onChange={(event) => { setQuery(event.target.value); setSelected([]); }} placeholder="Search names, categories, tags, constraints, and notes" /></label><select aria-label="Filter by location" value={locationFilter} onChange={(event) => { setLocationFilter(event.target.value); setSelected([]); }}><option value="">Every container</option>{locationOptions.map(({ depth, location }) => <option key={location.id} value={location.id}>{`${"  ".repeat(depth)}${depth ? "↳ " : ""}${location.code} · ${location.name}`}</option>)}</select><select aria-label="Sort inventory" value={sortBy} onChange={(event) => setSortBy(event.target.value as typeof sortBy)} disabled={canReorder}><option value="name">Sort: name</option><option value="location">Sort: location</option><option value="quantity">Sort: quantity</option></select></div><p className="drag-hint">{canReorder ? `Showing one container. Drag handles or arrow buttons reorder ${shown.length} records here; use Edit / move to change containers.` : locationFilter && query.trim() ? "Search results are sorted for review. Clear the search before changing physical order." : "Showing the containerless inventory. Select one or more records to move them, or use Edit / move for details and partial quantities."}</p><section className="panel inventory">{shown.map(inventoryRow)}{shown.length === 0 && <Empty title="No matching records" text="Clear a filter or capture something new." />}</section>{activeSelection.length > 0 && <div className="floating"><b>{activeSelection.length} selected</b><select aria-label="Move selected items" defaultValue="" onChange={(event) => { if (event.target.value) void perform(commit, { type: "item.bulkMove", itemIds: activeSelection, destinationId: event.target.value }, () => setSelected([])); }}><option value="">Move to…</option>{locationOptions.map(({ depth, location }) => <option disabled={selectedItems.length > 0 && selectedItems.every((item) => item.locationId === location.id)} value={location.id} key={location.id}>{`${"  ".repeat(depth)}${depth ? "↳ " : ""}${location.code} · ${location.name}`}</option>)}</select><button onClick={() => setSelected([])}>Clear</button></div>}{editing && state.items.find((item) => item.id === editing) && <ItemEditor item={state.items.find((item) => item.id === editing) as ItemRecord} state={state} commit={commit} close={() => setEditing(null)} />}</div>;
+  return <div className="content inventory-page"><div className="inventory-heading"><div><p className="eyebrow">Everything, regardless of container</p><h2>All item records</h2><p>Search the whole workspace, then select records for an explicit move. Filter to one container only when physical order matters.</p></div><b>{shown.length} records</b></div><div className="toolbar inventory-tools"><label className="search"><Search /><input aria-label="Search inventory" value={query} onChange={(event) => { setQuery(event.target.value); setSelected([]); }} placeholder="Search names, categories, tags, constraints, and notes" /></label><select aria-label="Filter by location" value={locationFilter} onChange={(event) => { setLocationFilter(event.target.value); setSelected([]); }}><option value="">Every container</option>{locationOptions.map(({ depth, location }) => <option key={location.id} value={location.id}>{`${"  ".repeat(depth)}${depth ? "↳ " : ""}${location.code} · ${location.name}`}</option>)}</select><select aria-label="Sort inventory" value={sortBy} onChange={(event) => setSortBy(event.target.value as typeof sortBy)} disabled={canReorder}><option value="name">Sort: name</option><option value="location">Sort: location</option><option value="quantity">Sort: quantity</option></select></div><p className="drag-hint">{canReorder ? `Showing one container. Drag handles or arrow buttons reorder ${shown.length} records here; use Edit / move to change containers.` : locationFilter && query.trim() ? "Search results are sorted for review. Clear the search before changing physical order." : "Showing the containerless inventory. Select one or more records to move them, or use Edit / move for details and partial quantities."}</p><section className="panel inventory">{shown.map(inventoryRow)}{shown.length === 0 && <Empty title="No matching records" text="Clear a filter or capture something new." />}</section>{activeSelection.length > 0 && <div className="floating"><b>{activeSelection.length} selected</b><select aria-label="Move selected items" defaultValue="" onChange={(event) => { if (event.target.value) void perform(commit, { type: "item.bulkMove", itemIds: activeSelection, destinationId: event.target.value }, () => setSelected([])); }}><option value="">Move to…</option>{locationOptions.map(({ depth, location }) => <option disabled={selectedItems.length > 0 && selectedItems.every((item) => item.locationId === location.id)} value={location.id} key={location.id}>{`${"  ".repeat(depth)}${depth ? "↳ " : ""}${location.code} · ${location.name}`}</option>)}</select><button onClick={() => setSelected([])}>Clear</button></div>}{editing && state.items.find((item) => item.id === editing) && <ItemEditor item={state.items.find((item) => item.id === editing) as ItemRecord} state={state} commit={commit} close={() => setEditing(null)} focus={editing === editOnOpen ? editFocus : undefined} />}</div>;
 }
 
-function ItemEditor({ item, state, commit, close }: { item: ItemRecord; state: WorkspaceState; commit: Commit; close: () => void }) {
+function ItemEditor({ item, state, commit, close, focus }: { item: ItemRecord; state: WorkspaceState; commit: Commit; close: () => void; focus?: GuidanceFocus }) {
   const [message, setMessage] = useState("");
   const dialog = useRef<HTMLElement | null>(null);
   const closeRef = useRef(close);
+  const initialFocus = useRef(focus);
   const destinationOptions = flattenLocationTree(state.locations.filter((location) => !location.archivedAt && location.id !== item.locationId));
   const currentLocation = locationPath(state.locations, item.locationId);
   const currentLocationLabel = currentLocation.length ? currentLocation.map((location) => location.name).join(" › ") : "Unplaced";
@@ -831,7 +976,28 @@ function ItemEditor({ item, state, commit, close }: { item: ItemRecord; state: W
       available[nextIndex]?.focus();
     };
     const frame = requestAnimationFrame(() => {
-      if (matchMedia("(pointer: coarse)").matches) dialog.current?.focus();
+      const requestedFocus = initialFocus.current;
+      const coarsePointer = matchMedia("(pointer: coarse)").matches;
+      if (requestedFocus === "item_details") {
+        const section = dialog.current?.querySelector<HTMLElement>(
+          '[data-guidance-section="item_details"]',
+        );
+        section?.scrollIntoView({ block: "start" });
+        if (coarsePointer) section?.focus({ preventScroll: true });
+        else section?.querySelector<HTMLInputElement>('input[name="category"]')?.focus({ preventScroll: true });
+        return;
+      }
+      if (requestedFocus === "item_capacity") {
+        const section = dialog.current?.querySelector<HTMLDetailsElement>(
+          '[data-guidance-section="item_capacity"]',
+        );
+        if (section) section.open = true;
+        section?.scrollIntoView({ block: "start" });
+        if (coarsePointer) section?.querySelector<HTMLElement>("summary")?.focus({ preventScroll: true });
+        else section?.querySelector<HTMLInputElement>('input[name="width"]')?.focus({ preventScroll: true });
+        return;
+      }
+      if (coarsePointer) dialog.current?.focus();
       else dialog.current?.querySelector<HTMLInputElement>('input[name="name"]')?.focus();
     });
     addEventListener("keydown", keyboard);
@@ -867,22 +1033,193 @@ function ItemEditor({ item, state, commit, close }: { item: ItemRecord; state: W
       return false;
     }
   };
-  return <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}><section ref={dialog} tabIndex={-1} className="modal item-editor-modal" role="dialog" aria-modal="true" aria-labelledby="item-editor-title"><header className="item-editor-header"><div><p className="eyebrow">Item details</p><h2 id="item-editor-title">Edit item</h2><p>{item.name}</p></div><button className="icon" aria-label="Close item editor" onClick={close}><X /></button></header><div className="item-editor-context" aria-label="Current item summary"><span><small>Amount</small><strong>{item.quantity} {item.unit}</strong></span><span><small>Stored in</small><strong>{currentLocationLabel}</strong></span></div><div className="item-editor-layout"><form onSubmit={(event) => submitForm(event, save, false)} className="item-editor-form"><section className="item-section item-essential"><div className="item-section-heading"><b>1</b><span><strong>What is it?</strong><small>The everyday details you will use most.</small></span></div><div className="item-core-grid"><label className="item-name-field">Item name<input required name="name" defaultValue={item.name} /></label><label>Quantity<input required name="quantity" type="number" min="0.01" step="any" defaultValue={item.quantity} /></label><label>Unit<input required name="unit" defaultValue={item.unit} /></label></div></section><section className="item-section"><div className="item-section-heading"><b>2</b><span><strong>Organize and find it</strong><small>Structured labels keep search useful without becoming free-form chaos.</small></span></div><div className="item-organize-grid"><label>Category<input name="category" defaultValue={item.category} placeholder="e.g. Baking" /></label><label>How often is it used?<select name="frequency" defaultValue={item.frequency}>{frequencies.map((frequency) => <option key={frequency}>{frequency}</option>)}</select></label><label className="wide">Search tags<input name="tags" defaultValue={item.tags.join(", ")} placeholder="washable, seasonal, breakfast" /><small>Separate tags with commas.</small></label><label className="wide">Notes<textarea name="notes" defaultValue={item.notes} placeholder="Anything useful that does not belong in a structured field." /></label></div></section><details className="item-advanced" open={hasPlacementRules}><summary><span><strong>Placement requirements</strong><small>Only add rules that affect where this item can safely live.</small></span><b>{hasPlacementRules ? "Configured" : "Optional"}</b></summary><div className="item-advanced-body"><div className="constraint-grid"><label><input type="checkbox" name="foodOnly" defaultChecked={item.constraints.foodOnly} /><span><strong>Food-safe only</strong><small>Keep it out of unsuitable spaces.</small></span></label><label><input type="checkbox" name="avoidWarmth" defaultChecked={item.constraints.avoidWarmth} /><span><strong>Avoid warmth</strong><small>Exclude warm cabinets or zones.</small></span></label><label><input type="checkbox" name="avoidHumidity" defaultChecked={item.constraints.avoidHumidity} /><span><strong>Avoid humidity</strong><small>Prefer dry storage.</small></span></label></div><div className="item-organize-grid"><label>Keep-together group<input name="keepTogether" defaultValue={item.constraints.keepTogether ?? ""} placeholder="e.g. Coffee station" /></label><label>Required location tags<input name="requiredTags" defaultValue={item.constraints.requiredTags.join(", ")} placeholder="cool, dark" /></label></div></div></details><details className="item-advanced" open={Boolean(item.dimensions)}><summary><span><strong>Size per unit</strong><small>Useful when Stowplan needs to reason about capacity.</small></span><b>{item.dimensions ? "Measured" : "Optional"}</b></summary><div className="item-advanced-body"><div className="dimension-grid"><label>Width<input name="width" type="number" min="0.01" step="any" defaultValue={item.dimensions?.width} /></label><label>Height<input name="height" type="number" min="0.01" step="any" defaultValue={item.dimensions?.height} /></label><label>Depth<input name="depth" type="number" min="0.01" step="any" defaultValue={item.dimensions?.depth} /></label><label>Unit<select name="dimensionUnit" defaultValue={item.dimensions?.unit ?? "in"}><option>in</option><option>cm</option></select></label></div></div></details><footer className="item-save-bar"><span><strong>Changes stay on this device first.</strong><small>Server backup follows when available.</small></span><button className="primary">Save item</button></footer></form><aside className="item-editor-rail"><form onSubmit={(event) => submitForm(event, move, false)} className="move-card"><p className="eyebrow">Placement</p><h3>Move all or part</h3><p>Currently in <strong>{currentLocationLabel}</strong>.</p><label>How many?<input required name="moveQuantity" type="number" min="0.01" max={item.quantity} step="any" defaultValue={item.quantity} /></label><label>Move to<select required name="destination" defaultValue=""><option value="" disabled>Choose a space…</option>{destinationOptions.map(({ depth, location }) => <option key={location.id} value={location.id}>{`${"  ".repeat(depth)}${depth ? "↳ " : ""}${location.code} · ${location.name}`}</option>)}</select></label><button>Move quantity</button><small>Moving fewer than {item.quantity} creates a separate record at the destination.</small></form><details className="item-danger"><summary>More actions</summary><button type="button" className="danger" onClick={() => { if (confirm(`Delete ${item.name}? You can undo this from Activity.`)) void perform(commit, { type: "item.delete", id: item.id }, close); }}><Trash2 /> Delete item record</button><small>Deletion is recorded in Activity and can be undone.</small></details></aside></div>{message && <output className="form-message item-editor-message">{message}</output>}</section></div>;
+  return <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}><section ref={dialog} tabIndex={-1} className="modal item-editor-modal" role="dialog" aria-modal="true" aria-labelledby="item-editor-title"><header className="item-editor-header"><div><p className="eyebrow">Item details</p><h2 id="item-editor-title">Edit item</h2><p>{item.name}</p></div><button className="icon" aria-label="Close item editor" onClick={close}><X /></button></header><div className="item-editor-context" aria-label="Current item summary"><span><small>Amount</small><strong>{item.quantity} {item.unit}</strong></span><span><small>Stored in</small><strong>{currentLocationLabel}</strong></span></div><div className="item-editor-layout"><form onSubmit={(event) => submitForm(event, save, false)} className="item-editor-form"><section className="item-section item-essential"><div className="item-section-heading"><b>1</b><span><strong>What is it?</strong><small>The everyday details you will use most.</small></span></div><div className="item-core-grid"><label className="item-name-field">Item name<input required name="name" defaultValue={item.name} /></label><label>Quantity<input required name="quantity" type="number" min="0.01" step="any" defaultValue={item.quantity} /></label><label>Unit<input required name="unit" defaultValue={item.unit} /></label></div></section><section className="item-section" data-guidance-section="item_details" tabIndex={-1}><div className="item-section-heading"><b>2</b><span><strong>Organize and find it</strong><small>Structured labels keep search useful without becoming free-form chaos.</small></span></div><div className="item-organize-grid"><label>Category<input name="category" defaultValue={item.category} placeholder="e.g. Baking" /></label><label>How often is it used?<select name="frequency" defaultValue={item.frequency}>{frequencies.map((frequency) => <option key={frequency}>{frequency}</option>)}</select></label><label className="wide">Search tags<input name="tags" defaultValue={item.tags.join(", ")} placeholder="washable, seasonal, breakfast" /><small>Separate tags with commas.</small></label><label className="wide">Notes<textarea name="notes" defaultValue={item.notes} placeholder="Anything useful that does not belong in a structured field." /></label></div></section><details className="item-advanced" open={hasPlacementRules}><summary><span><strong>Placement requirements</strong><small>Only add rules that affect where this item can safely live.</small></span><b>{hasPlacementRules ? "Configured" : "Optional"}</b></summary><div className="item-advanced-body"><div className="constraint-grid"><label><input type="checkbox" name="foodOnly" defaultChecked={item.constraints.foodOnly} /><span><strong>Food-safe only</strong><small>Keep it out of unsuitable spaces.</small></span></label><label><input type="checkbox" name="avoidWarmth" defaultChecked={item.constraints.avoidWarmth} /><span><strong>Avoid warmth</strong><small>Exclude warm cabinets or zones.</small></span></label><label><input type="checkbox" name="avoidHumidity" defaultChecked={item.constraints.avoidHumidity} /><span><strong>Avoid humidity</strong><small>Prefer dry storage.</small></span></label></div><div className="item-organize-grid"><label>Keep-together group<input name="keepTogether" defaultValue={item.constraints.keepTogether ?? ""} placeholder="e.g. Coffee station" /></label><label>Required location tags<input name="requiredTags" defaultValue={item.constraints.requiredTags.join(", ")} placeholder="cool, dark" /></label></div></div></details><details className="item-advanced" data-guidance-section="item_capacity" open={Boolean(item.dimensions)}><summary><span><strong>Size per unit</strong><small>Useful when Stowplan needs to reason about capacity.</small></span><b>{item.dimensions ? "Measured" : "Optional"}</b></summary><div className="item-advanced-body"><div className="dimension-grid"><label>Width<input name="width" type="number" min="0.01" step="any" defaultValue={item.dimensions?.width} /></label><label>Height<input name="height" type="number" min="0.01" step="any" defaultValue={item.dimensions?.height} /></label><label>Depth<input name="depth" type="number" min="0.01" step="any" defaultValue={item.dimensions?.depth} /></label><label>Unit<select name="dimensionUnit" defaultValue={item.dimensions?.unit ?? "in"}><option>in</option><option>cm</option></select></label></div></div></details><footer className="item-save-bar"><span><strong>Changes stay on this device first.</strong><small>Server backup follows when available.</small></span><button className="primary">Save item</button></footer></form><aside className="item-editor-rail"><form onSubmit={(event) => submitForm(event, move, false)} className="move-card"><p className="eyebrow">Placement</p><h3>Move all or part</h3><p>Currently in <strong>{currentLocationLabel}</strong>.</p><label>How many?<input required name="moveQuantity" type="number" min="0.01" max={item.quantity} step="any" defaultValue={item.quantity} /></label><label>Move to<select required name="destination" defaultValue=""><option value="" disabled>Choose a space…</option>{destinationOptions.map(({ depth, location }) => <option key={location.id} value={location.id}>{`${"  ".repeat(depth)}${depth ? "↳ " : ""}${location.code} · ${location.name}`}</option>)}</select></label><button>Move quantity</button><small>Moving fewer than {item.quantity} creates a separate record at the destination.</small></form><details className="item-danger"><summary>More actions</summary><button type="button" className="danger" onClick={() => { if (confirm(`Delete ${item.name}? You can undo this from Activity.`)) void perform(commit, { type: "item.delete", id: item.id }, close); }}><Trash2 /> Delete item record</button><small>Deletion is recorded in Activity and can be undone.</small></details></aside></div>{message && <output className="form-message item-editor-message">{message}</output>}</section></div>;
 }
 
-function Planner({ state, commit }: { state: WorkspaceState; commit: Commit }) {
+function emptyPlanGuidance(readiness: PlanReadiness): string {
+  if (readiness.primaryGap === "inventory") {
+    return "Record at least one item so Stowplan has something to improve.";
+  }
+  if (readiness.primaryGap === "destinations") {
+    return "Count at least two shelves, drawers, boxes, or cabinets so there is a trustworthy alternative destination.";
+  }
+  if (readiness.primaryGap === "count") {
+    return "Finish the first-pass decision for the remaining spaces, then try again.";
+  }
+  if (readiness.primaryGap === "item_details") {
+    return "Add categories or placement requirements to quick-captured items so Stowplan can distinguish what belongs together and where it is safe.";
+  }
+  if (readiness.primaryGap === "destination_details") {
+    return "Review destination suitability, such as food safety, temperature, humidity, or useful tags.";
+  }
+  if (readiness.primaryGap === "capacity") {
+    return "The arrangement may already be good. Add measurements where fit matters, or adjust the priorities.";
+  }
+  return "The current arrangement already scores as well as the available alternatives.";
+}
+
+function PlanningReadinessPanel({
+  readiness,
+  state,
+  openGuidanceTarget,
+}: {
+  readiness: PlanReadiness;
+  state: WorkspaceState;
+  openGuidanceTarget: (
+    view: GuidanceTarget["view"],
+    id: string,
+    focus?: GuidanceFocus,
+  ) => void;
+}) {
+  const firstLiveLocation = state.locations.find(
+    (location) => !location.archivedAt,
+  )?.id ?? "";
+  const headline = readiness.level === "needs_inventory"
+    ? "Record inventory before trusting a plan"
+    : readiness.level === "needs_destinations"
+      ? "Count more possible destinations"
+      : readiness.level === "ready"
+        ? "Planning evidence is strong"
+        : "Enough to try, with gaps to review";
+  const issues: {
+    action?: () => void;
+    actionLabel?: string;
+    detail: string;
+    priority: "complete" | "optional" | "required" | "review";
+    title: string;
+  }[] = [];
+  if (readiness.activeItemIds.length === 0) {
+    issues.push({
+      action: () => openGuidanceTarget("capture", firstLiveLocation),
+      actionLabel: "Open Capture",
+      detail: "The planner needs at least one live item record.",
+      priority: "required",
+      title: "Add something to organize",
+    });
+  }
+  if (readiness.countedDestinationIds.length < 2) {
+    issues.push({
+      action: () => openGuidanceTarget(
+        "capture",
+        readiness.uncountedLocationIds[0] ?? firstLiveLocation,
+      ),
+      actionLabel: "Continue count",
+      detail: "Shelves, drawers, boxes, bins, cabinets, and containers can receive planned moves.",
+      priority: "required",
+      title: "Count two possible destinations",
+    });
+  } else if (readiness.uncountedLocationIds.length > 0) {
+    issues.push({
+      action: () => openGuidanceTarget(
+        "capture",
+        readiness.uncountedLocationIds[0] as string,
+      ),
+      actionLabel: "Continue count",
+      detail: "Mark each counted or known empty so missing information is not mistaken for an empty space.",
+      priority: "review",
+      title: `${readiness.uncountedLocationIds.length} space${readiness.uncountedLocationIds.length === 1 ? "" : "s"} still need a first-pass decision`,
+    });
+  }
+  if (readiness.uncategorizedItemIds.length > 0) {
+    issues.push({
+      action: () => openGuidanceTarget(
+        "inventory",
+        readiness.uncategorizedItemIds[0] as string,
+        "item_details",
+      ),
+      actionLabel: "Review an item",
+      detail: "Add a category, use frequency, or placement rule where it changes the right home.",
+      priority: "review",
+      title: `${readiness.uncategorizedItemIds.length} item${readiness.uncategorizedItemIds.length === 1 ? "" : "s"} still use quick-capture defaults`,
+    });
+  }
+  if (readiness.destinationsUsingDefaultsIds.length > 0) {
+    issues.push({
+      action: () => openGuidanceTarget(
+        "spaces",
+        readiness.destinationsUsingDefaultsIds[0] as string,
+        "space_suitability",
+      ),
+      actionLabel: "Review a space",
+      detail: "Review food safety, temperature, humidity, and tags only where they matter.",
+      priority: "review",
+      title: `${readiness.destinationsUsingDefaultsIds.length} counted destination${readiness.destinationsUsingDefaultsIds.length === 1 ? "" : "s"} use basic suitability defaults`,
+    });
+  }
+  if (
+    readiness.unmeasuredDestinationIds.length > 0 ||
+    readiness.unmeasuredItemIds.length > 0
+  ) {
+    issues.push({
+      action: () => readiness.unmeasuredDestinationIds.length
+        ? openGuidanceTarget(
+            "spaces",
+            readiness.unmeasuredDestinationIds[0] as string,
+            "space_capacity",
+          )
+        : openGuidanceTarget(
+            "inventory",
+            readiness.unmeasuredItemIds[0] as string,
+            "item_capacity",
+          ),
+      actionLabel: "Review capacity",
+      detail: `${readiness.unmeasuredDestinationIds.length} storage space${readiness.unmeasuredDestinationIds.length === 1 ? "" : "s"} and ${readiness.unmeasuredItemIds.length} item record${readiness.unmeasuredItemIds.length === 1 ? "" : "s"} lack dimensions. Measure only where fit is uncertain.`,
+      priority: "optional",
+      title: "Capacity remains partly unverified",
+    });
+  }
+  if (issues.length === 0) {
+    issues.push({
+      detail: "Generate a plan and review every physical move before marking it complete.",
+      priority: "complete",
+      title: "No obvious evidence gaps",
+    });
+  }
+  const renderIssue = (issue: typeof issues[number]) => <li
+    data-priority={issue.priority}
+    key={`${issue.priority}-${issue.title}`}
+  >
+    <span><strong>{issue.title}</strong><small>{issue.detail}</small></span>
+    {issue.action && issue.actionLabel && <button onClick={issue.action}>{issue.actionLabel}</button>}
+  </li>;
+  return <section className="plan-readiness" aria-label="Planning readiness">
+    <header>
+      <div>
+        <p className="eyebrow">Planning readiness</p>
+        <h3 id="plan-readiness-title">{headline}</h3>
+      </div>
+      <span data-level={readiness.level}>
+        {readiness.countedDestinationIds.length} counted destinations
+      </span>
+    </header>
+    <p>{readiness.canGenerateUsefulPlan
+      ? "You can generate a plan now. Resolving the items below will make its reasoning easier to trust."
+      : "Generation stays available, but the current evidence is too thin for a useful recommendation."}</p>
+    <ul>{renderIssue(issues[0] as typeof issues[number])}</ul>
+    {issues.length > 1 && <details className="plan-readiness-more">
+      <summary>{issues.length - 1} more way{issues.length === 2 ? "" : "s"} to improve confidence</summary>
+      <ul>{issues.slice(1).map(renderIssue)}</ul>
+    </details>}
+  </section>;
+}
+
+function Planner({ state, commit, openGuidanceTarget }: { state: WorkspaceState; commit: Commit; openGuidanceTarget: (view: GuidanceTarget["view"], id: string, focus?: GuidanceFocus) => void }) {
   const activePlans = state.plans.filter((plan) => plan.status === "active");
   const active = activePlans[0];
   const hasConflictingPlans = activePlans.length > 1;
+  const readiness = useMemo(() => assessPlanReadiness(state), [state]);
   const [weights, setWeights] = useState<PlanWeights>({ ...DEFAULT_PLAN_WEIGHTS });
   const [name, setName] = useState("Suggested reset");
   const [message, setMessage] = useState("");
   const generate = async () => {
     const plan = buildMovePlan(state, { name, weights });
-    if (!plan.steps.length) { setMessage("No beneficial moves were found with these weights and the current measurements."); return; }
+    if (!plan.steps.length) {
+      setMessage(`No beneficial moves were found. ${emptyPlanGuidance(readiness)}`);
+      return;
+    }
     try {
       await commit({ type: "plan.create", plan });
-      setMessage(`${plan.steps.length} explainable move(s) added to the new plan.`);
+      setMessage(`${plan.steps.length} explainable ${plan.steps.length === 1 ? "move" : "moves"} added to the new plan.`);
     } catch (error) { setMessage(error instanceof Error ? error.message : "Could not create the plan"); }
   };
   const updateWeight = (key: keyof PlanWeights, value: number) => setWeights((current) => ({ ...current, [key]: value }));
@@ -917,6 +1254,7 @@ function Planner({ state, commit }: { state: WorkspaceState; commit: Commit }) {
           </div>;
         })}
       </details>
+      <PlanningReadinessPanel readiness={readiness} state={state} openGuidanceTarget={openGuidanceTarget} />
       <div className="plan-actions">
         <button className="primary" onClick={() => void generate()}>{active ? "Replace with fresh plan" : "Generate move plan"}</button>
         {active && !hasConflictingPlans && <button onClick={() => void perform(commit, { type: "plan.status", planId: active.id, status: "discarded" })}>Discard current plan</button>}
@@ -926,16 +1264,34 @@ function Planner({ state, commit }: { state: WorkspaceState; commit: Commit }) {
     {hasConflictingPlans && <section className="panel form-message" role="alert"><h3>Resolve overlapping active plans</h3><p>This older workspace contains {activePlans.length} active plans. Generate a fresh plan to replace all of them, or discard plans until one remains before executing a move.</p>{activePlans.map((plan) => <button key={plan.id} onClick={() => void perform(commit, { type: "plan.status", planId: plan.id, status: "discarded" })}>Discard {plan.name}</button>)}</section>}
     {active && !hasConflictingPlans ? <>
       <div className="plan-progress"><strong>{active.name}</strong><span>{complete} of {active.steps.length} complete</span></div>
+      <p className="plan-review-note">Review links do not move anything. Saving changed item or destination details discards this plan so the next plan uses the corrected evidence.</p>
       <section className="panel plan-list">{active.steps.map((step, index) => {
         const item = step.itemId ? state.items.find((candidate) => candidate.id === step.itemId) : null;
         const container = step.locationId ? state.locations.find((candidate) => candidate.id === step.locationId) : null;
         const subject = item ? `${step.quantity ?? item.quantity} ${item.unit} of ${item.name}` : container?.name ?? "container";
-        const blockedByEarlier = active.steps.slice(0, index).some(
-          (candidate) => !candidate.completedAt,
+        const blockingStepIndex = active.steps.findIndex(
+          (candidate, candidateIndex) =>
+            candidateIndex < index && !candidate.completedAt,
         );
-        return <div key={step.id} data-done={!!step.completedAt}><i>{index + 1}</i><span><strong>Move {subject}</strong><small className="plan-route">{placeLabel(step.sourceId)} → {placeLabel(step.destinationId)}</small><small>{step.explanation.join(" · ")}</small></span><b>{state.locations.find((location) => location.id === step.sourceId)?.code} → {state.locations.find((location) => location.id === step.destinationId)?.code}</b><button disabled={!!step.completedAt || blockedByEarlier} title={blockedByEarlier ? "Complete earlier numbered moves first." : undefined} onClick={() => void perform(commit, { type: "plan.step.complete", planId: active.id, stepId: step.id })}>{step.completedAt ? "Moved" : "Mark moved"}</button></div>;
+        const blockedByEarlier = blockingStepIndex >= 0;
+        const moveActionState = step.completedAt
+          ? "complete"
+          : blockedByEarlier
+            ? "blocked"
+            : "ready";
+        const moveActionLabel = step.completedAt
+          ? "Moved"
+          : blockedByEarlier
+            ? `Step ${blockingStepIndex + 1} first`
+            : "Mark moved";
+        const capacityUnverified = step.explanation.some(
+          (reason) =>
+            reason.includes("capacity is unmeasured") ||
+            reason.includes("capacity cannot be verified"),
+        );
+        return <div key={step.id} data-done={!!step.completedAt}><i>{index + 1}</i><span><strong>Move {subject}</strong><small className="plan-route">{placeLabel(step.sourceId)} → {placeLabel(step.destinationId)}</small>{capacityUnverified && <em className="plan-confidence">Capacity unverified</em>}<small>{step.explanation.join(" · ")}</small></span><b>{state.locations.find((location) => location.id === step.sourceId)?.code} → {state.locations.find((location) => location.id === step.destinationId)?.code}</b><div className="plan-step-actions">{item && <button onClick={() => openGuidanceTarget("inventory", item.id)}>Review item</button>}{container && <button onClick={() => openGuidanceTarget("spaces", container.id)}>Review container</button>}<button onClick={() => openGuidanceTarget("spaces", step.destinationId)}>Review destination</button><button className="primary" data-step-state={moveActionState} disabled={moveActionState !== "ready"} title={blockedByEarlier ? `Complete step ${blockingStepIndex + 1} first.` : undefined} onClick={() => void perform(commit, { type: "plan.step.complete", planId: active.id, stepId: step.id })}>{moveActionLabel}</button></div></div>;
       })}</section>
-    </> : <Empty title="No active plan" text="Generate one after your first-pass count is reasonably complete." />}
+    </> : <Empty title="No active plan" text={readiness.canGenerateUsefulPlan ? "There is enough evidence to try a plan. Review the readiness guidance, then generate when you are comfortable with the gaps." : emptyPlanGuidance(readiness)} />}
   </div>;
 }
 function History({ state, commit }: { state: WorkspaceState; commit: Commit }) {
