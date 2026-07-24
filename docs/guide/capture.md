@@ -26,4 +26,6 @@ The capture queue is itself a hierarchy, and the breadcrumb above the active con
 - **Known empty:** inspected and empty.
 - **Counted:** inspected and represented accurately enough to plan.
 
+**Known empty & next** changes status only when no item or nested-space records remain. It does not mean "make empty." If item records remain, Stowplan opens a non-destructive review, names the records that prevent the observation, and makes no change. After physically removing the contents, close that review and choose the separately labeled **Empty container** action. Its own confirmation lists the records it will remove, remains undoable from Activity, and establishes the known-empty status as its result.
+
 Do not mark a parent counted merely because its visible loose items are recorded; count or explicitly classify every nested container too.

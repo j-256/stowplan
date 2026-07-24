@@ -101,6 +101,21 @@ type FeedbackDetail = {
   message: string;
   tone: "error" | "info" | "success";
 };
+const CONTAINER_REVIEW_KIND = Object.freeze({
+  EMPTY: "empty",
+  KNOWN_EMPTY: "known-empty",
+} as const);
+type ContainerReview = {
+  items: {
+    id: string;
+    name: string;
+    quantity: number;
+    unit: string;
+  }[];
+  kind: typeof CONTAINER_REVIEW_KIND[keyof typeof CONTAINER_REVIEW_KIND];
+  locationId: string;
+  locationName: string;
+};
 type AppliedTheme = "dark" | "light";
 
 const nav: { id: View; label: string; icon: typeof Boxes }[] = [
@@ -141,7 +156,9 @@ const COMPLETE_CAPTURE_STATUSES = new Set<CaptureStatus>([
   "known_empty",
 ]);
 const BROWSER_HISTORY_STATE = Object.freeze({ stowplan: true });
+const DISMISS_FEEDBACK_EVENT = "stowplan:feedback-dismiss";
 const FEEDBACK_EVENT = "stowplan:feedback";
+const SEARCH_BLOCKED_EVENT = "stowplan:search-blocked";
 const REORDER_DROP_MIDPOINT = 0.5;
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "stowplan-sidebar-collapsed";
 const THEME_STORAGE_KEY = "stowplan-theme";
@@ -378,6 +395,9 @@ function showFeedback(
     detail: { message, tone },
   }));
 }
+function dismissFeedback(): void {
+  dispatchEvent(new Event(DISMISS_FEEDBACK_EVENT));
+}
 const pendingForms = new WeakSet<HTMLFormElement>();
 function submitForm(
   event: React.FormEvent<HTMLFormElement>,
@@ -586,8 +606,13 @@ function Application() {
     const receiveFeedback = (event: Event) => {
       setFeedback((event as CustomEvent<FeedbackDetail>).detail);
     };
+    const dismissCurrentFeedback = () => setFeedback(null);
     addEventListener(FEEDBACK_EVENT, receiveFeedback);
-    return () => removeEventListener(FEEDBACK_EVENT, receiveFeedback);
+    addEventListener(DISMISS_FEEDBACK_EVENT, dismissCurrentFeedback);
+    return () => {
+      removeEventListener(FEEDBACK_EVENT, receiveFeedback);
+      removeEventListener(DISMISS_FEEDBACK_EVENT, dismissCurrentFeedback);
+    };
   }, []);
   useEffect(() => {
     if (!feedback) return;
@@ -606,14 +631,26 @@ function Application() {
         (event.metaKey || event.ctrlKey)
       ) {
         event.preventDefault();
+        if (
+          !jumpPaletteOpen &&
+          document.querySelector('[aria-modal="true"]')
+        ) {
+          const blocked = new Event(SEARCH_BLOCKED_EVENT, {
+            cancelable: true,
+          });
+          if (dispatchEvent(blocked)) {
+            showFeedback("Close the open dialog before searching", "info");
+          }
+          return;
+        }
         setJumpPaletteOpen((open) => !open);
-      } else if (event.key === "Escape") {
+      } else if (event.key === "Escape" && jumpPaletteOpen) {
         setJumpPaletteOpen(false);
       }
     };
     addEventListener("keydown", shortcut, true);
     return () => removeEventListener("keydown", shortcut, true);
-  }, [activeWorkspaceId, routeStatus, showWelcome]);
+  }, [activeWorkspaceId, jumpPaletteOpen, routeStatus, showWelcome]);
 
   const applyBrowserRoute = useCallback(async (route: AppRoute) => {
     const request = routeRequest.current + 1;
@@ -1118,10 +1155,17 @@ function Onboarding({ currentId, currentName, isDemo = false, online, statusRevi
 
 function Capture({ state, current, select, commit, focusEditorKey }: { state: WorkspaceState; current: Location | null; select: (id: string) => void; commit: Commit; focusEditorKey: number | null }) {
   const [editing, setEditing] = useState<string | null>(null);
+  const [emptying, setEmptying] = useState(false);
+  const [containerReview, setContainerReview] = useState<ContainerReview | null>(null);
+  const [containerReviewNotice, setContainerReviewNotice] = useState("");
   const [editorNavigationKey, setEditorNavigationKey] = useState(0);
   const [nativeReorderCue, setNativeReorderCue] = useState<DropTarget | null>(null);
   const [nativeReorderSource, setNativeReorderSource] = useState<DragPayload | null>(null);
   const [queueQuery, setQueueQuery] = useState("");
+  const emptyingRef = useRef(false);
+  const containerReviewDialog = useRef<HTMLElement | null>(null);
+  const containerReviewTrigger = useRef<HTMLElement | null>(null);
+  const restoreContainerReviewFocus = useRef(true);
   const editor = useRef<HTMLElement | null>(null);
   const nativeReorderHandled = useRef(false);
   const live = state.locations.filter((location) => !location.archivedAt);
@@ -1157,6 +1201,40 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
     });
     return () => cancelAnimationFrame(frame);
   }, [editorNavigationKey, focusEditorKey]);
+  useEffect(() => {
+    if (!containerReview) return;
+    const trigger = containerReviewTrigger.current;
+    const frame = requestAnimationFrame(() =>
+      containerReviewDialog.current
+        ?.querySelector<HTMLButtonElement>("[data-container-review-cancel]")
+        ?.focus()
+    );
+    const previousBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      if (emptyingRef.current) {
+        showFeedback("Emptying this container is still in progress", "info");
+        return;
+      }
+      setContainerReview(null);
+      showFeedback(`No changes were made to ${containerReview.locationName}`, "info");
+    };
+    const explainBlockedSearch = (event: Event) => {
+      event.preventDefault();
+      setContainerReviewNotice("Close this review before searching");
+    };
+    addEventListener("keydown", closeOnEscape);
+    addEventListener(SEARCH_BLOCKED_EVENT, explainBlockedSearch);
+    return () => {
+      cancelAnimationFrame(frame);
+      removeEventListener("keydown", closeOnEscape);
+      removeEventListener(SEARCH_BLOCKED_EVENT, explainBlockedSearch);
+      document.body.style.overflow = previousBodyOverflow;
+      if (restoreContainerReviewFocus.current && trigger?.isConnected) trigger.focus();
+    };
+  }, [containerReview]);
   const addContainer = async (data: FormData) => {
     const topLevel = data.get("topLevel") === "on";
     if (captureComplete && !topLevel) {
@@ -1189,40 +1267,105 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
       if (next) select(next.id);
     });
   };
-  const markKnownEmpty = async () => {
+  const openContainerReview = (
+    kind: ContainerReview["kind"],
+    location: Location,
+    trigger: HTMLElement,
+  ) => {
+    dismissFeedback();
+    setContainerReviewNotice("");
+    restoreContainerReviewFocus.current = true;
+    containerReviewTrigger.current = trigger;
+    setContainerReview({
+      items: items.map((item) => ({
+        id: item.id,
+        name: item.name,
+        quantity: item.quantity,
+        unit: item.unit,
+      })),
+      kind,
+      locationId: location.id,
+      locationName: location.name,
+    });
+  };
+  const reviewEmptyContainer = (trigger: HTMLElement) => {
+    if (!current) {
+      showFeedback("Select a container before emptying it");
+      return;
+    }
+    if (nested.length) {
+      showFeedback(
+        `${current.name} still contains ${nested.length} nested space${nested.length === 1 ? "" : "s"}. Move or remove them before emptying this container; no records were removed.`,
+      );
+      return;
+    }
+    if (!items.length) {
+      showFeedback(
+        `${current.name} has no recorded items. Use Known empty & next to record that observation.`,
+        "info",
+      );
+      return;
+    }
+    openContainerReview(CONTAINER_REVIEW_KIND.EMPTY, current, trigger);
+  };
+  const markKnownEmpty = async (trigger: HTMLElement) => {
     if (!current) {
       showFeedback("Select a container before marking it known empty");
       return;
     }
     if (nested.length) {
       showFeedback(
-        `${current.name} still contains ${nested.length} nested space${nested.length === 1 ? "" : "s"}. Move or remove them first; no items were removed.`,
+        `${current.name} still contains ${nested.length} nested space${nested.length === 1 ? "" : "s"}. Move or remove them first; no records were removed.`,
       );
       return;
     }
-    if (!items.length) {
-      await finish("known_empty");
+    if (items.length) {
+      openContainerReview(CONTAINER_REVIEW_KIND.KNOWN_EMPTY, current, trigger);
       return;
     }
-    const confirmed = confirm(
-      `Remove ${items.length} item record${items.length === 1 ? "" : "s"} from ${current.name} and mark it known empty? This is recorded as one change and can be undone from Activity.`,
-    );
-    if (!confirmed) {
-      showFeedback(`No changes were made to ${current.name}`, "info");
+    await finish("known_empty");
+  };
+  const dismissContainerReview = () => {
+    if (!containerReview) return;
+    if (emptyingRef.current) {
+      showFeedback("Emptying this container is still in progress", "info");
       return;
     }
-    const next = nextCaptureLocation(tree, current.id);
-    await perform(commit, {
+    setContainerReview(null);
+    showFeedback(`No changes were made to ${containerReview.locationName}`, "info");
+  };
+  const emptyContainer = async () => {
+    if (
+      !containerReview ||
+      containerReview.kind !== CONTAINER_REVIEW_KIND.EMPTY
+    ) {
+      showFeedback("Use the separate Empty container action before removing records");
+      return;
+    }
+    if (emptyingRef.current) {
+      showFeedback("Emptying this container is still in progress", "info");
+      return;
+    }
+    emptyingRef.current = true;
+    setEmptying(true);
+    const next = nextCaptureLocation(tree, containerReview.locationId);
+    const applied = await perform(commit, {
       type: "capture.empty",
-      id: current.id,
-      itemIds: items.map((item) => item.id),
+      id: containerReview.locationId,
+      itemIds: containerReview.items.map((item) => item.id),
     }, () => {
       showFeedback(
-        `${current.name} was emptied and marked known empty. Undo is available in Activity.`,
+        `${containerReview.locationName} was emptied and is now known empty. Undo is available in Activity.`,
         "success",
       );
       if (next) select(next.id);
     });
+    emptyingRef.current = false;
+    setEmptying(false);
+    if (applied) {
+      restoreContainerReviewFocus.current = false;
+      setContainerReview(null);
+    }
   };
   const reopenCapture = async () => {
     if (!current) {
@@ -1469,7 +1612,7 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
           <span className="reorder-drop-copy" aria-hidden>{cue === "before" ? "Place before" : cue === "after" ? "Place after" : ""}</span>
           {!captureComplete && <div className="row-actions"><button className="icon small" aria-label={`Move ${item.name} up`} disabled={index === 0} onClick={() => reorder(item.id, -1)}><ArrowUp /></button><button className="icon small" aria-label={`Move ${item.name} down`} disabled={index === items.length - 1} onClick={() => reorder(item.id, 1)}><ArrowDown /></button><button className="icon small" aria-label={`Edit ${item.name}`} onClick={() => setEditing(item.id)}><Edit3 /></button></div>}
         </div>;
-      })}{!items.length && <Empty title={captureComplete ? "No items recorded" : "Nothing recorded yet"} text={captureComplete ? "Reopen capture before adding an item." : "Add an item, or mark this space as known empty."} />}</div><div className="finish">{captureComplete ? <button className="reopen-capture" onClick={() => void reopenCapture()}><RotateCcw /><span>Reopen capture</span></button> : <><button className="known-empty-action" onClick={() => void markKnownEmpty()}><PackageX /><span>Known empty & next</span></button><button className="primary" onClick={() => void finish("counted")}><CheckCircle2 /><span>Counted & next</span></button></>}</div></> : <Empty title="Add your first space" text="Give a room, cabinet, box, or drawer the same code as its physical label." />}</section>;
+      })}{!items.length && <Empty title={captureComplete ? "No items recorded" : "Nothing recorded yet"} text={captureComplete ? "Reopen capture before adding an item." : "Add an item, or mark this space as known empty."} />}</div><div className="finish">{captureComplete ? <button className="reopen-capture" onClick={() => void reopenCapture()}><RotateCcw /><span>Reopen capture</span></button> : <>{items.length > 0 && <button className="danger" onClick={(event) => reviewEmptyContainer(event.currentTarget)}><Trash2 /><span>Empty container</span></button>}<button className="known-empty-action" onClick={(event) => void markKnownEmpty(event.currentTarget)}><PackageX /><span>Known empty & next</span></button><button className="primary" onClick={() => void finish("counted")}><CheckCircle2 /><span>Counted & next</span></button></>}</div></> : <Empty title="Add your first space" text="Give a room, cabinet, box, or drawer the same code as its physical label." />}</section>;
   return <>
     <ResizablePanels
       className="content capture"
@@ -1480,6 +1623,114 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
       secondary={capturePanel}
       storageId="capture"
     />
+    {containerReview && <div
+      className="modal-backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) dismissContainerReview();
+      }}
+    >
+      <section
+        aria-describedby="container-review-description"
+        aria-labelledby="container-review-title"
+        aria-modal="true"
+        className="modal container-review-dialog"
+        onKeyDown={(event) => {
+          if (event.key !== "Tab") return;
+          const focusable = [
+            ...(containerReviewDialog.current?.querySelectorAll<HTMLButtonElement>(
+              "button:not(:disabled)",
+            ) ?? []),
+          ];
+          const first = focusable[0];
+          const last = focusable.at(-1);
+          if (
+            event.shiftKey &&
+            (document.activeElement === first ||
+              !containerReviewDialog.current?.contains(document.activeElement))
+          ) {
+            event.preventDefault();
+            last?.focus();
+          } else if (
+            !event.shiftKey &&
+            (document.activeElement === last ||
+              !containerReviewDialog.current?.contains(document.activeElement))
+          ) {
+            event.preventDefault();
+            first?.focus();
+          }
+        }}
+        ref={containerReviewDialog}
+        role="dialog"
+        tabIndex={-1}
+      >
+        <header>
+          <div>
+            <p className="eyebrow">
+              {containerReview.kind === CONTAINER_REVIEW_KIND.EMPTY
+                ? "Destructive inventory action"
+                : "Observation only"}
+            </p>
+            <h2 id="container-review-title">
+              {containerReview.kind === CONTAINER_REVIEW_KIND.EMPTY
+                ? "Empty container?"
+                : "Known empty is unavailable"}
+            </h2>
+          </div>
+          <button
+            aria-label={containerReview.kind === CONTAINER_REVIEW_KIND.EMPTY
+              ? "Close empty container review"
+              : "Close known-empty review"}
+            className="icon"
+            disabled={emptying}
+            onClick={dismissContainerReview}
+          >
+            <X />
+          </button>
+        </header>
+        {containerReviewNotice && <output
+          className="container-review-notice"
+          role="status"
+        >
+          <Info />
+          <span>{containerReviewNotice}</span>
+        </output>}
+        <p id="container-review-description">
+          {containerReview.kind === CONTAINER_REVIEW_KIND.EMPTY
+            ? <>
+              This action removes the item records below from <strong>{containerReview.locationName}</strong> and marks the space known empty as one undoable change. Use it only after the physical contents are gone.
+            </>
+            : <>
+              <strong>Known empty records an observation. It never removes item records.</strong>{" "}
+              {containerReview.locationName} still has the records below, so nothing has changed. Move or remove them before recording the space as known empty. If their physical contents are already gone, close this review and use the separate Empty container action.
+            </>}
+        </p>
+        <ul className="container-review-list">
+          {containerReview.items.map((item) => <li key={item.id}>
+            <span>{item.name}</span>
+            <b>{item.quantity} {item.unit}</b>
+          </li>)}
+        </ul>
+        <footer className="container-review-actions">
+          <button
+            data-container-review-cancel
+            disabled={emptying}
+            onClick={dismissContainerReview}
+          >
+            {containerReview.kind === CONTAINER_REVIEW_KIND.EMPTY
+              ? "Keep records"
+              : "Keep counting"}
+          </button>
+          {containerReview.kind === CONTAINER_REVIEW_KIND.EMPTY && <button
+            className="danger"
+            disabled={emptying}
+            onClick={() => void emptyContainer()}
+          >
+            <Trash2 />
+            {emptying ? "Emptying..." : "Empty container"}
+          </button>}
+        </footer>
+      </section>
+    </div>}
     {editing && state.items.find((item) => item.id === editing) && <ItemEditor item={state.items.find((item) => item.id === editing) as ItemRecord} state={state} commit={commit} close={() => setEditing(null)} />}
   </>;
 }

@@ -172,6 +172,22 @@
 .known-empty-action{border-color:color-mix(in srgb,var(--clay) 48%,var(--line));color:var(--clay)}
 .known-empty-action:hover{background:color-mix(in srgb,var(--clay) 10%,transparent)}
 .reopen-capture{color:var(--sage)}
+.container-review-dialog{width:min(560px,100%)}
+.container-review-dialog>p{color:var(--muted);line-height:1.6}
+.container-review-dialog>p strong{color:var(--ink)}
+.container-review-notice{display:flex;align-items:center;gap:8px;margin:-4px 0 14px;padding:9px 10px;border:1px solid color-mix(in srgb,var(--warning) 48%,var(--line));border-radius:9px;background:color-mix(in srgb,var(--warning-bg) 72%,var(--panel));color:var(--warning);font-size:12px}
+.container-review-notice svg{width:18px;flex:none}
+.container-review-list{display:grid;gap:6px;max-height:min(300px,36dvh);margin:18px 0;padding:0;overflow-x:hidden;overflow-y:auto;list-style:none}
+.container-review-list li{display:flex;min-width:0;align-items:center;justify-content:space-between;gap:16px;padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:var(--bg)}
+.container-review-list span{min-width:0;overflow-wrap:anywhere}
+.container-review-list b{min-width:0;max-width:50%;color:var(--clay);font:600 11px "DM Mono",monospace;overflow-wrap:anywhere;text-align:right}
+.container-review-actions{display:flex;justify-content:flex-end;gap:8px;padding-top:16px;border-top:1px solid var(--line)}
+.container-review-actions button{display:flex;align-items:center;justify-content:center;gap:7px}
+.container-review-actions svg{width:17px}
+@media(max-width:540px){
+  .container-review-actions{display:grid;grid-template-columns:1fr}
+  .container-review-actions button{width:100%}
+}
 .feedback-toast{position:fixed;z-index:90;top:18px;right:18px;display:grid;grid-template-columns:24px minmax(0,1fr) 34px;align-items:center;gap:10px;width:min(440px,calc(100vw - 36px));padding:12px 12px 12px 14px;border:1px solid var(--line);border-radius:14px;background:var(--panel);box-shadow:0 20px 60px #0005;animation:feedback-in .18s ease-out}
 .feedback-toast>svg{width:21px}
 .feedback-toast>span{line-height:1.4}
