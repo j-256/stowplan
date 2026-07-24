@@ -1,11 +1,21 @@
-import { audit } from "../../../../src/server/admin";
 import {
+  AuthorizationError,
   authenticate,
+  authorizeAdmin,
   canWriteWorkspace,
   createGuestLink,
   isTrustedMutation,
 } from "../../../../src/server/auth";
 import { workspaceReturnTo } from "../../../../src/domain/app-url";
+import {
+  QuotaExceededError,
+  quotaProblem,
+} from "../../../../src/server/quotas";
+import {
+  CONTROL_REQUEST_MAX_BYTES,
+  readJsonRequest,
+  RequestBodyTooLargeError,
+} from "../../../../src/server/request-body";
 import { runtimeEnv } from "../../../../src/server/runtime";
 
 export async function POST(request: Request) {
@@ -21,20 +31,25 @@ export async function POST(request: Request) {
     if (!user) {
       return Response.json({ error: "Authentication required" }, { status: 401 });
     }
-    const body = await request.json() as {
+    const body = await readJsonRequest<{
       hours?: number;
       returnTo?: string;
       role?: "editor" | "viewer";
       workspaceId: string;
-    };
-    if (
-      user.globalRole !== "admin" &&
-      !await canWriteWorkspace(env.DB, user.userId, body.workspaceId)
-    ) {
-      return Response.json(
-        { error: "Workspace write access required" },
-        { status: 403 },
-      );
+    }>(request, CONTROL_REQUEST_MAX_BYTES);
+    const canWrite = await canWriteWorkspace(
+      env.DB,
+      user.userId,
+      body.workspaceId,
+    );
+    if (!canWrite) {
+      if (user.globalRole !== "admin") {
+        return Response.json(
+          { error: "Workspace write access required" },
+          { status: 403 },
+        );
+      }
+      await authorizeAdmin(env.DB, env, request);
     }
     const link = await createGuestLink(
       env.DB,
@@ -47,22 +62,23 @@ export async function POST(request: Request) {
     const base = env.AUTH_BASE_URL ?? request.url;
     const url = new URL(`/guest/${link.raw}`, base);
     url.searchParams.set("returnTo", returnTo);
-    await audit(
-      env.DB,
-      user.userId,
-      "guest.create",
-      "guest_link",
-      link.id,
-      { workspaceId: body.workspaceId, expiresAt: link.expiresAt },
-    );
     return Response.json(
       { url: url.toString(), expiresAt: link.expiresAt },
       { status: 201 },
     );
   } catch (error) {
+    if (error instanceof QuotaExceededError) {
+      return Response.json(quotaProblem(error), { status: error.status });
+    }
+    if (error instanceof RequestBodyTooLargeError) {
+      return Response.json(
+        { error: error.message },
+        { status: error.status },
+      );
+    }
     return Response.json(
       { error: error instanceof Error ? error.message : "Could not create guest link" },
-      { status: 400 },
+      { status: error instanceof AuthorizationError ? error.status : 400 },
     );
   }
 }

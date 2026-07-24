@@ -3,6 +3,7 @@ export * from "./demo";
 export * from "./errors";
 export * from "./expectations";
 export * from "./factories";
+export * from "./history-retention";
 export * from "./import";
 export * from "./location-code";
 export * from "./planner";

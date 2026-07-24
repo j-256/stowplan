@@ -61,6 +61,7 @@ export function parseRecoveryUpload(text: string): ParsedRecoveryUpload {
       throw new Error("Recovery bundle contains a malformed queued command");
     }
     const represented =
+      state.commandReceipts?.includes(envelope.id) ||
       state.activities.some((activity) => activity.commandId === envelope.id) ||
       state.audit.some((event) => event.id === `audit_${envelope.id}`);
     if (!represented) {

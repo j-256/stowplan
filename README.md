@@ -20,7 +20,7 @@ A mobile-first, local-first organizer for rooms, cabinets, drawers, boxes, bins,
 - Field-level history supports selected undo/reapply ("plucking") and batch undo/redo without overwriting newer same-field edits.
 - Blocked offline work remains inspectable and exportable; an explicit recovery flow can rebase unresolved commands or reset to an authorized server copy.
 - Google, GitHub, Cloudflare Access, short one-time guest URLs, opaque revocable sessions, workspace roles, and an audited admin panel are built in.
-- Cloudflare Workers + D1 is the reference deployment; Node 24 + SQLite and containers are supported composition roots.
+- Production runs on Sites with a Sites-managed D1 binding. Direct Cloudflare Workers + D1, Node 24 + SQLite, and containers remain reproducible alternative composition roots.
 
 ## Quick start
 

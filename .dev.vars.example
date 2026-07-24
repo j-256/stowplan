@@ -1,4 +1,4 @@
 # Copy to .dev.vars for `npm run dev:next` with local Wrangler bindings.
 AUTH_BASE_URL=http://localhost:3000
-AUTH_ADMIN_EMAILS=owner@example.com
+AUTH_ADMIN_EMAILS=owner@example.test
 AUTH_DEV_ENABLED=true

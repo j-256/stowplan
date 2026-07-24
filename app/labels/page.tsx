@@ -32,8 +32,10 @@ export default function Labels() {
           qr: await QRCode.toDataURL(
             new URL(workspacePath({
               locationId: location.id,
+              locationLabel: `${location.code} ${location.name}`,
               view: "capture",
               workspaceId: replica.state.workspace.id,
+              workspaceLabel: replica.state.workspace.name,
             }), window.location.origin).href,
             { width: 220, margin: 1, errorCorrectionLevel: "M" },
           ),

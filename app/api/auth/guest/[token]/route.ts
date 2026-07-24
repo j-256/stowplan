@@ -4,6 +4,10 @@ import {
   isTrustedMutation,
   sessionCookie,
 } from "../../../../../src/server/auth";
+import {
+  QuotaExceededError,
+  quotaProblem,
+} from "../../../../../src/server/quotas";
 import { runtimeEnv } from "../../../../../src/server/runtime";
 
 export async function GET(
@@ -50,6 +54,9 @@ export async function POST(
       },
     });
   } catch (error) {
+    if (error instanceof QuotaExceededError) {
+      return Response.json(quotaProblem(error), { status: error.status });
+    }
     return Response.json(
       { error: error instanceof Error ? error.message : "Guest sign-in failed" },
       { status: 401 },

@@ -1,6 +1,7 @@
 import { applyCommand } from "../domain/commands";
 import { normalizeWorkspaceState } from "../domain/import";
 import type { CommandEnvelope, SyncReceipt, WorkspaceState } from "../domain/types";
+import { API_QUOTAS } from "../shared/api-quotas";
 
 const DATABASE = "stowplan-v1";
 const STORE = "records";
@@ -43,6 +44,14 @@ export interface LocalWorkspaceSummary {
 export interface ReconciliationTarget {
   allowEmpty: boolean;
   workspaceId: string;
+}
+
+export function selectPendingSyncBatch(
+  outbox: readonly OutboxEntry[],
+): OutboxEntry[] {
+  return outbox
+    .filter((entry) => entry.status === "pending")
+    .slice(0, API_QUOTAS.commandsPerSyncRequest);
 }
 
 const workspaceKey = (workspaceId: string) => `workspace:${workspaceId}`;
@@ -591,7 +600,8 @@ export async function clearReplica(): Promise<void> {
 }
 
 function commandWasApplied(state: WorkspaceState, commandId: string): boolean {
-  return state.activities.some((activity) => activity.commandId === commandId) ||
+  return state.commandReceipts?.includes(commandId) ||
+    state.activities.some((activity) => activity.commandId === commandId) ||
     state.audit.some((event) => event.id === `audit_${commandId}`);
 }
 

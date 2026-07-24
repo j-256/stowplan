@@ -15,6 +15,8 @@ import {
   issueSession,
   revokeCurrentSession,
 } from "../src/server/auth";
+import { QuotaExceededError } from "../src/server/quotas";
+import { API_QUOTAS } from "../src/shared/api-quotas";
 import { numberedMigrationDatabase } from "./helpers/sqlite-d1";
 
 function database() {
@@ -23,6 +25,57 @@ function database() {
 
 describe("authentication",()=>{
   it("links identities, issues opaque sessions, and revokes them",async()=>{const db=database(),env={AUTH_ADMIN_EMAILS:"owner@example.com"};const user=await createOrLinkUser(db,env,{provider:"test",subject:"one",email:"OWNER@example.com",displayName:"Owner"});expect(user.globalRole).toBe("admin");const request=new Request("https://example.test",{headers:{"user-agent":"test"}}),session=await issueSession(db,env,user,request);expect(session.raw).toHaveLength(64);const authenticated=await authenticate(db,new Request("https://example.test",{headers:{cookie:`stowplan_session=${session.raw}`}}));expect(authenticated?.email).toBe("owner@example.com");await revokeCurrentSession(db,new Request("https://example.test",{headers:{cookie:`stowplan_session=${session.raw}`}}));expect(await authenticate(db,new Request("https://example.test",{headers:{cookie:`stowplan_session=${session.raw}`}}))).toBeNull()});
+  it("does not grant first-user admin scope around a configured allowlist", async () => {
+    const db = database();
+    const env = { AUTH_ADMIN_EMAILS: "configured-admin@example.com" };
+    const unlisted = await createOrLinkUser(db, env, {
+      displayName: "Unlisted",
+      email: "unlisted@example.com",
+      provider: "test",
+      subject: "unlisted-first",
+    });
+    const configured = await createOrLinkUser(db, env, {
+      displayName: "Configured",
+      email: "configured-admin@example.com",
+      provider: "test",
+      subject: "configured-second",
+    });
+
+    expect(unlisted.globalRole).toBe("user");
+    expect(configured.globalRole).toBe("admin");
+  });
+  it("promotes an existing allowlisted account when it signs in again", async () => {
+    const { database: db, sqlite } = numberedMigrationDatabase();
+    await createOrLinkUser(db, {}, {
+      displayName: "Initial owner",
+      email: "initial-owner@example.com",
+      provider: "test",
+      subject: "initial-owner",
+    });
+    const existing = await createOrLinkUser(db, {}, {
+      displayName: "Configured admin",
+      email: "configured-admin@example.com",
+      provider: "test",
+      subject: "configured-admin",
+    });
+    expect(existing.globalRole).toBe("user");
+
+    const promoted = await createOrLinkUser(
+      db,
+      { AUTH_ADMIN_EMAILS: "configured-admin@example.com" },
+      {
+        displayName: "Configured admin",
+        email: "configured-admin@example.com",
+        provider: "test",
+        subject: "configured-admin",
+      },
+    );
+
+    expect(promoted.globalRole).toBe("admin");
+    expect(sqlite.prepare(
+      "SELECT global_role FROM users WHERE user_id = ?",
+    ).get(existing.userId)).toEqual({ global_role: "admin" });
+  });
   it("stores only validated anonymous IP prefixes for normal sessions", async () => {
     const { database: db, sqlite } = numberedMigrationDatabase();
     const user = await createOrLinkUser(db, {}, {
@@ -100,6 +153,39 @@ describe("authentication",()=>{
        JOIN identities ON identities.user_id = sessions.user_id
        WHERE identities.provider = 'guest'`,
     ).get()).toEqual({ ip_prefix: "203.0.113.0/24" });
+  });
+  it("rolls back a guest link when its audit insert fails", async () => {
+    const { database: db, sqlite } = numberedMigrationDatabase();
+    const state = createEmptyState("Guest audit rollback");
+    await new D1SnapshotStore(db).initialize(state);
+    const owner = await createOrLinkUser(db, {}, {
+      displayName: "Guest audit owner",
+      email: "guest-audit-owner@example.com",
+      provider: "test",
+      subject: "guest-audit-owner",
+    });
+    await claimWorkspace(db, owner.userId, state.workspace.id);
+    sqlite.exec(
+      `CREATE TRIGGER reject_guest_audit
+       BEFORE INSERT ON auth_audit_events
+       WHEN NEW.action = 'guest.create'
+       BEGIN
+         SELECT RAISE(ABORT, 'injected guest audit failure');
+       END`,
+    );
+
+    await expect(createGuestLink(
+      db,
+      state.workspace.id,
+      owner.userId,
+      "viewer",
+    )).rejects.toThrow(/injected guest audit failure/);
+    expect(sqlite.prepare(
+      "SELECT COUNT(*) AS count FROM guest_links",
+    ).get()).toEqual({ count: 0 });
+    expect(sqlite.prepare(
+      "SELECT COUNT(*) AS count FROM auth_audit_events",
+    ).get()).toEqual({ count: 0 });
   });
   it("atomically consumes a guest link once and creates a short session",async()=>{const db=database(),env={};const state=createEmptyState("Guest test");await new D1SnapshotStore(db).initialize(state);const owner=await createOrLinkUser(db,env,{provider:"test",subject:"owner",email:"owner@example.com",displayName:"Owner"});await claimWorkspace(db,owner.userId,state.workspace.id);const link=await createGuestLink(db,state.workspace.id,owner.userId,"editor",1);const results=await Promise.allSettled([consumeGuestLink(db,env,link.raw,new Request("https://example.test")),consumeGuestLink(db,env,link.raw,new Request("https://example.test"))]);expect(results.filter((result)=>result.status==="fulfilled")).toHaveLength(1);expect(results.filter((result)=>result.status==="rejected")).toHaveLength(1);const fulfilled=results.find((result)=>result.status==="fulfilled");expect(fulfilled?.status==="fulfilled"&&fulfilled.value.workspaceId).toBe(state.workspace.id)});
   it("rolls back the guest claim when identity creation fails", async () => {
@@ -347,6 +433,228 @@ describe("authentication",()=>{
     expect(sqlite.prepare(
       "SELECT user_id FROM users WHERE user_id = ?",
     ).get(guest.user_id)).toBeUndefined();
+  });
+  it("limits the workspaces owned by one account", async () => {
+    const { database: db, sqlite } = numberedMigrationDatabase();
+    const owner = await createOrLinkUser(db, {}, {
+      provider: "test",
+      subject: "workspace-quota-owner",
+      email: "workspace-quota-owner@example.com",
+      displayName: "Owner",
+    });
+    for (
+      let index = 0;
+      index < API_QUOTAS.ownedWorkspacesPerUser;
+      index += 1
+    ) {
+      const state = createEmptyState(`Workspace ${index}`);
+      await new D1SnapshotStore(db).initialize(state);
+      await claimWorkspace(db, owner.userId, state.workspace.id);
+    }
+    const overage = createEmptyState("Workspace overage");
+    await new D1SnapshotStore(db).initialize(overage);
+
+    await expect(claimWorkspace(
+      db,
+      owner.userId,
+      overage.workspace.id,
+    )).rejects.toMatchObject({
+      actual: API_QUOTAS.ownedWorkspacesPerUser + 1,
+      code: "QUOTA_EXCEEDED",
+      limit: API_QUOTAS.ownedWorkspacesPerUser,
+      quota: "ownedWorkspacesPerUser",
+    } satisfies Partial<QuotaExceededError>);
+    expect(sqlite.prepare(
+      `SELECT COUNT(*) AS count
+       FROM workspace_members
+       WHERE user_id = ? AND role = 'owner'`,
+    ).get(owner.userId)).toEqual({
+      count: API_QUOTAS.ownedWorkspacesPerUser,
+    });
+  });
+  it("limits active and retained guest links independently", async () => {
+    const activeDatabase = numberedMigrationDatabase();
+    const activeState = createEmptyState("Active guest link quota");
+    await new D1SnapshotStore(activeDatabase.database).initialize(activeState);
+    const activeOwner = await createOrLinkUser(activeDatabase.database, {}, {
+      provider: "test",
+      subject: "active-link-owner",
+      email: "active-link-owner@example.com",
+      displayName: "Owner",
+    });
+    await claimWorkspace(
+      activeDatabase.database,
+      activeOwner.userId,
+      activeState.workspace.id,
+    );
+    const now = "2026-07-24T00:00:00.000Z";
+    const future = "2099-01-01T00:00:00.000Z";
+    const insertLink = activeDatabase.sqlite.prepare(
+      `INSERT INTO guest_links(
+         guest_link_id, workspace_id, created_by_user_id, token_hash, role,
+         created_at, expires_at, revoked_at
+       ) VALUES(?,?,?,?,?,?,?,?)`,
+    );
+    for (
+      let index = 0;
+      index < API_QUOTAS.activeGuestLinksPerWorkspace;
+      index += 1
+    ) {
+      insertLink.run(
+        `guest_active_${index}`,
+        activeState.workspace.id,
+        activeOwner.userId,
+        `hash_active_${index}`,
+        "viewer",
+        now,
+        future,
+        null,
+      );
+    }
+
+    await expect(createGuestLink(
+      activeDatabase.database,
+      activeState.workspace.id,
+      activeOwner.userId,
+      "viewer",
+    )).rejects.toMatchObject({
+      actual: API_QUOTAS.activeGuestLinksPerWorkspace + 1,
+      code: "QUOTA_EXCEEDED",
+      limit: API_QUOTAS.activeGuestLinksPerWorkspace,
+      quota: "activeGuestLinksPerWorkspace",
+    } satisfies Partial<QuotaExceededError>);
+
+    const retainedDatabase = numberedMigrationDatabase();
+    const retainedState = createEmptyState("Retained guest link quota");
+    await new D1SnapshotStore(retainedDatabase.database).initialize(
+      retainedState,
+    );
+    const retainedOwner = await createOrLinkUser(
+      retainedDatabase.database,
+      {},
+      {
+        provider: "test",
+        subject: "retained-link-owner",
+        email: "retained-link-owner@example.com",
+        displayName: "Owner",
+      },
+    );
+    await claimWorkspace(
+      retainedDatabase.database,
+      retainedOwner.userId,
+      retainedState.workspace.id,
+    );
+    const insertRetainedLink = retainedDatabase.sqlite.prepare(
+      `INSERT INTO guest_links(
+         guest_link_id, workspace_id, created_by_user_id, token_hash, role,
+         created_at, expires_at, revoked_at
+       ) VALUES(?,?,?,?,?,?,?,?)`,
+    );
+    for (
+      let index = 0;
+      index < API_QUOTAS.retainedGuestLinksPerWorkspace;
+      index += 1
+    ) {
+      insertRetainedLink.run(
+        `guest_retained_${index}`,
+        retainedState.workspace.id,
+        retainedOwner.userId,
+        `hash_retained_${index}`,
+        "viewer",
+        now,
+        future,
+        now,
+      );
+    }
+
+    await expect(createGuestLink(
+      retainedDatabase.database,
+      retainedState.workspace.id,
+      retainedOwner.userId,
+      "viewer",
+    )).rejects.toMatchObject({
+      actual: API_QUOTAS.retainedGuestLinksPerWorkspace + 1,
+      code: "QUOTA_EXCEEDED",
+      limit: API_QUOTAS.retainedGuestLinksPerWorkspace,
+      quota: "retainedGuestLinksPerWorkspace",
+    } satisfies Partial<QuotaExceededError>);
+  });
+  it("atomically reserves the final workspace member slot", async () => {
+    const { database: db, sqlite } = numberedMigrationDatabase();
+    const state = createEmptyState("Member quota");
+    await new D1SnapshotStore(db).initialize(state);
+    const owner = await createOrLinkUser(db, {}, {
+      provider: "test",
+      subject: "member-quota-owner",
+      email: "member-quota-owner@example.com",
+      displayName: "Owner",
+    });
+    await claimWorkspace(db, owner.userId, state.workspace.id);
+    const timestamp = "2026-07-24T00:00:00.000Z";
+    const insertUser = sqlite.prepare(
+      `INSERT INTO users(
+         user_id, email, display_name, global_role, status, created_at,
+         updated_at, last_seen_at
+       ) VALUES(?,?,'Member','user','active',?,?,?)`,
+    );
+    const insertMembership = sqlite.prepare(
+      `INSERT INTO workspace_members(
+         workspace_id, user_id, role, created_at
+       ) VALUES(?,?,'viewer',?)`,
+    );
+    for (
+      let index = 1;
+      index < API_QUOTAS.membersPerWorkspace - 1;
+      index += 1
+    ) {
+      const userId = `usr_member_quota_${index}`;
+      insertUser.run(
+        userId,
+        `member-quota-${index}@example.com`,
+        timestamp,
+        timestamp,
+        timestamp,
+      );
+      insertMembership.run(state.workspace.id, userId, timestamp);
+    }
+    const links = await Promise.all([
+      createGuestLink(db, state.workspace.id, owner.userId, "viewer"),
+      createGuestLink(db, state.workspace.id, owner.userId, "viewer"),
+    ]);
+
+    const results = await Promise.allSettled(links.map((link) =>
+      consumeGuestLink(
+        db,
+        {},
+        link.raw,
+        new Request("https://example.test"),
+      )
+    ));
+
+    expect(results.filter((result) => result.status === "fulfilled"))
+      .toHaveLength(1);
+    const rejected = results.find(
+      (result): result is PromiseRejectedResult =>
+        result.status === "rejected",
+    );
+    expect(rejected?.reason).toMatchObject({
+      actual: API_QUOTAS.membersPerWorkspace + 1,
+      code: "QUOTA_EXCEEDED",
+      limit: API_QUOTAS.membersPerWorkspace,
+      quota: "membersPerWorkspace",
+    } satisfies Partial<QuotaExceededError>);
+    expect(sqlite.prepare(
+      `SELECT COUNT(*) AS count
+       FROM workspace_members
+       WHERE workspace_id = ?`,
+    ).get(state.workspace.id)).toEqual({
+      count: API_QUOTAS.membersPerWorkspace,
+    });
+    expect(sqlite.prepare(
+      `SELECT COUNT(*) AS count
+       FROM guest_links
+       WHERE workspace_id = ? AND consumed_at IS NOT NULL`,
+    ).get(state.workspace.id)).toEqual({ count: 1 });
   });
   it("optionally requires a matching Cloudflare Access assertion for admin",async()=>{const db=database(),baseEnv={AUTH_ADMIN_EMAILS:"owner@example.com"};const user=await createOrLinkUser(db,baseEnv,{provider:"test",subject:"owner",email:"owner@example.com",displayName:"Owner"});const session=await issueSession(db,baseEnv,user,new Request("https://example.test"));const request=new Request("https://example.test/admin",{headers:{cookie:`stowplan_session=${session.raw}`}});expect((await authorizeAdmin(db,baseEnv,request)).userId).toBe(user.userId);await expect(authorizeAdmin(db,{...baseEnv,AUTH_ADMIN_REQUIRE_ACCESS:"true"},request)).rejects.toMatchObject({status:403} satisfies Partial<AuthorizationError>)});
   it("rejects cross-origin browser mutations while supporting trusted proxy origins",()=>{expect(isTrustedMutation(new Request("https://example.test/api/sync",{method:"POST"}))).toBe(true);expect(isTrustedMutation(new Request("https://example.test/api/sync",{method:"POST",headers:{origin:"https://evil.test"}}))).toBe(false);expect(isTrustedMutation(new Request("http://internal:3000/api/sync",{method:"POST",headers:{origin:"https://stowplan.example","x-forwarded-host":"stowplan.example","x-forwarded-proto":"https"}}))).toBe(true);expect(isTrustedMutation(new Request("http://internal:3000/api/sync",{method:"POST",headers:{origin:"https://stowplan.example"}}),"https://stowplan.example")).toBe(true)});

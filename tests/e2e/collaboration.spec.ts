@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { parseAppUrl, workspacePath } from "../../src/domain/app-url";
 import { projectContextOptions } from "./project-context";
 
 const DATABASE_NAME = "stowplan-v1";
@@ -22,10 +23,15 @@ test("signs in, backs up, and opens an exact workspace view through a one-time g
     name: "Explore the kitchen demo instead",
   }).click();
   await expect(page).toHaveURL(/\/workspaces\/[^/]+\//);
-  const workspaceId = new URL(page.url()).pathname.split("/")[2];
-  expect(workspaceId).toBeTruthy();
+  const route = parseAppUrl(page.url());
+  if (route.kind !== "workspace") throw new Error("Expected a workspace URL");
+  const workspaceId = route.workspaceId;
 
-  const settingsPath = `/workspaces/${encodeURIComponent(workspaceId)}/settings`;
+  const settingsPath = workspacePath({
+    view: "settings",
+    workspaceId,
+    workspaceLabel: "Kitchen reset",
+  });
   await page.goto(settingsPath);
   await page.getByRole("link", {
     name: "Sign in, sync, or create a guest link to this view",
@@ -35,7 +41,7 @@ test("signs in, backs up, and opens an exact workspace view through a one-time g
     `/account\\?workspace=${encodeURIComponent(workspaceId)}`,
   ));
   await page.getByLabel("Name").fill(OWNER_NAME);
-  await page.getByLabel("Admin email").fill(OWNER_EMAIL);
+  await page.getByLabel("Email", { exact: true }).fill(OWNER_EMAIL);
   await page.getByRole("button", { name: "Sign in locally" }).click();
 
   await expect(page).toHaveURL(new RegExp(`${settingsPath}$`));
@@ -166,7 +172,7 @@ test("shows an action-specific error when Access refuses an empty exchange", asy
   );
 });
 
-test("acknowledges a canceled guest-link share", async ({ page }) => {
+test("closes a canceled guest-link share without extra feedback", async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(navigator, "share", {
       configurable: true,
@@ -203,7 +209,7 @@ test("acknowledges a canceled guest-link share", async ({ page }) => {
 
   await page.getByRole("button", { name: "Create guest link" }).click();
   await page.getByRole("button", { name: "Share" }).click();
-  await expect(page.locator("output")).toHaveText("Sharing was canceled.");
+  await expect(page.locator("output")).toHaveCount(0);
 });
 
 test("reloads after development sign-out without visiting the Access logout endpoint", async ({

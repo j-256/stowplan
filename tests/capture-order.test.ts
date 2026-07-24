@@ -7,7 +7,7 @@ describe("Capture ordering", () => {
     it("advances through visible hierarchy order and wraps past completed spaces", () => {
         const state = createDemoState();
         const current = state.locations.find((location) => location.id === "loc_kitchen")!;
-        const older = state.locations.find((location) => location.id === "loc_unknown")!;
+        const older = state.locations.find((location) => location.id === "loc_corner")!;
         const prioritized = createLocation({
             code: "NEW",
             name: "Priority bin",
@@ -28,12 +28,12 @@ describe("Capture ordering", () => {
 
     it("reorders only siblings and uses the drop side", () => {
         const state = createDemoState();
-        const beforeCounter = captureReorderOrder(state.locations, "loc_unknown", "loc_counter", "inside");
-        const afterUnknown = captureReorderOrder(state.locations, "loc_counter", "loc_unknown", "inside");
+        const beforeCounter = captureReorderOrder(state.locations, "loc_corner", "loc_counter", "inside");
+        const afterUnknown = captureReorderOrder(state.locations, "loc_counter", "loc_corner", "inside");
 
         expect(beforeCounter).toBeGreaterThan(0);
         expect(beforeCounter).toBeLessThan(1);
         expect(afterUnknown).toBeGreaterThan(2);
-        expect(captureReorderOrder(state.locations, "loc_unknown", "loc_food", "before")).toBeNull();
+        expect(captureReorderOrder(state.locations, "loc_corner", "loc_food", "before")).toBeNull();
     });
 });

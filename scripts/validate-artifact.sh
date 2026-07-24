@@ -11,6 +11,7 @@ worker="${SITES_PROJECT_ROOT}/dist/server/index.js"
 hosting="${SITES_PROJECT_ROOT}/dist/.openai/hosting.json"
 source_hosting="${SITES_PROJECT_ROOT}/.openai/hosting.json"
 source_migrations="${SITES_PROJECT_ROOT}/drizzle"
+artifact="${SITES_PROJECT_ROOT}/dist"
 
 [[ -f "${worker}" ]] || {
   echo "Missing Sites Worker entry: dist/server/index.js" >&2
@@ -25,7 +26,9 @@ node --input-type=module - \
   "${worker}" \
   "${hosting}" \
   "${source_hosting}" \
-  "${source_migrations}" <<'NODE'
+  "${source_migrations}" \
+  "${artifact}" \
+  "${SITES_PROJECT_ROOT}" <<'NODE'
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -35,6 +38,8 @@ const [
   hostingPath,
   sourceHostingPath,
   sourceMigrationDirectory,
+  artifactDirectory,
+  projectRoot,
 ] = process.argv.slice(2);
 const [hostingBytes, sourceHostingBytes] = await Promise.all([
   readFile(hostingPath),
@@ -45,22 +50,40 @@ if (!hostingBytes.equals(sourceHostingBytes)) {
 }
 const hosting = JSON.parse(hostingBytes.toString("utf8"));
 
-async function filesBelow(directory, prefix = "", rejectFinderMetadata = false) {
+const forbiddenArtifactNames = new Set([
+  ".dev.vars",
+]);
+
+function isEnvironmentFile(name) {
+  return name === ".env" || name.startsWith(".env.");
+}
+
+async function filesBelow(directory, prefix = "", rejectMetadata = false) {
   const files = [];
   for (const entry of await readdir(directory, { withFileTypes: true })) {
-    if (entry.name === ".DS_Store") {
-      if (rejectFinderMetadata) {
-        throw new Error(`Finder metadata was packaged at ${join(prefix, entry.name)}`);
+    if (entry.name === ".DS_Store") continue;
+    if (
+      forbiddenArtifactNames.has(entry.name)
+      || isEnvironmentFile(entry.name)
+    ) {
+      if (rejectMetadata) {
+        throw new Error(`Local metadata was packaged at ${join(prefix, entry.name)}`);
       }
       continue;
     }
     const relativePath = join(prefix, entry.name);
+    if (entry.isSymbolicLink()) {
+      if (rejectMetadata) {
+        throw new Error(`Symbolic link was packaged at ${relativePath}`);
+      }
+      continue;
+    }
     if (entry.isDirectory()) {
       files.push(
         ...await filesBelow(
           join(directory, entry.name),
           relativePath,
-          rejectFinderMetadata,
+          rejectMetadata,
         ),
       );
     } else if (entry.isFile()) {
@@ -68,6 +91,15 @@ async function filesBelow(directory, prefix = "", rejectFinderMetadata = false) 
     }
   }
   return files.sort();
+}
+
+const artifactFiles = await filesBelow(artifactDirectory, "", true);
+const projectRootBytes = Buffer.from(resolve(projectRoot));
+for (const artifactFile of artifactFiles) {
+  const bytes = await readFile(join(artifactDirectory, artifactFile));
+  if (bytes.includes(projectRootBytes)) {
+    throw new Error(`A machine-specific project path was packaged at ${artifactFile}`);
+  }
 }
 
 if (hosting.d1) {

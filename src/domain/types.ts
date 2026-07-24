@@ -1,3 +1,5 @@
+import type { ApiQuotaName } from "../shared/api-quotas";
+
 export const SCHEMA_VERSION = 1;
 
 export type JsonPrimitive = boolean | number | string | null;
@@ -155,6 +157,7 @@ export interface AuditEvent {
 export interface WorkspaceState {
     activities: ActivityRecord[];
     audit: AuditEvent[];
+    commandReceipts: string[];
     items: ItemRecord[];
     locations: Location[];
     plans: MovePlan[];
@@ -242,11 +245,15 @@ export interface SyncConflict {
 }
 
 export interface SyncReceipt {
+    actual?: number;
+    code?: "QUOTA_EXCEEDED";
     commandId: string;
     revision: number;
     status: "applied" | "duplicate" | "rejected";
     conflicts?: SyncConflict[];
+    limit?: number;
     message?: string;
+    quota?: ApiQuotaName;
 }
 
 export interface SyncResponse {

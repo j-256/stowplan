@@ -1,11 +1,20 @@
 import { D1SnapshotStore } from "../../../src/adapters/d1-snapshot-store";
 import { DomainError } from "../../../src/domain/errors";
-import { validateImportSnapshot } from "../../../src/domain/import";
+import {
+  normalizeWorkspaceState,
+  validateImportSnapshot,
+} from "../../../src/domain/import";
 import type { CommandEnvelope, WorkspaceState } from "../../../src/domain/types";
 import { authenticate, canOwnWorkspace, canReadWorkspace, canWriteWorkspace, claimWorkspace, isTrustedMutation } from "../../../src/server/auth";
+import {
+  assertSnapshotWithinQuotas,
+  QuotaExceededError,
+  quotaProblem,
+} from "../../../src/server/quotas";
 import { readJsonRequest, RequestBodyTooLargeError, SYNC_REQUEST_MAX_BYTES } from "../../../src/server/request-body";
 import { runtimeEnv } from "../../../src/server/runtime";
 import { synchronize, WorkspaceNotFoundError } from "../../../src/server/sync-service";
+import { API_QUOTAS } from "../../../src/shared/api-quotas";
 
 export async function POST(request: Request) {
   try {
@@ -36,14 +45,30 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
+    if (body.commands.length > API_QUOTAS.commandsPerSyncRequest) {
+      throw new QuotaExceededError(
+        "commandsPerSyncRequest",
+        body.commands.length,
+        413,
+      );
+    }
+    const commands = body.commands.map((envelope) => ({
+      ...envelope,
+      actorId: user.userId,
+    }));
 
     const store = new D1SnapshotStore(env.DB);
     const current = await store.load(body.workspaceId);
     if (!current) {
       if (!body.snapshot || body.snapshot.workspace?.id !== body.workspaceId) return Response.json({ error: "Initial snapshot is required" }, { status: 400 });
+      assertSnapshotWithinQuotas(body.snapshot, { status: 413 });
       const issues = validateImportSnapshot(body.snapshot).filter(candidate => candidate.severity === "error");
       if (issues.length) return Response.json({ error: "Initial snapshot is invalid", issues }, { status: 400 });
-      const initialized = await store.initialize(body.snapshot);
+      const initialSnapshot = normalizeWorkspaceState(
+        structuredClone(body.snapshot),
+      );
+      assertSnapshotWithinQuotas(initialSnapshot, { status: 413 });
+      const initialized = await store.initialize(initialSnapshot);
       if (initialized === "created") {
         try {
           await claimWorkspace(env.DB, user.userId, body.workspaceId);
@@ -53,13 +78,13 @@ export async function POST(request: Request) {
         } catch (error) {
           await store.deleteIfUnclaimed(
             body.workspaceId,
-            body.snapshot.workspace.revision,
+            initialSnapshot.workspace.revision,
           );
           throw error;
         }
       }
       else {
-        const authorized = body.commands.length
+        const authorized = commands.length
           ? await canWriteWorkspace(env.DB, user.userId, body.workspaceId)
           : await canReadWorkspace(env.DB, user.userId, body.workspaceId);
         if (!authorized) {
@@ -70,15 +95,18 @@ export async function POST(request: Request) {
         }
       }
     } else {
-      const authorized = body.commands.length
+      const authorized = commands.length
         ? await canWriteWorkspace(env.DB, user.userId, body.workspaceId)
         : await canReadWorkspace(env.DB, user.userId, body.workspaceId);
       if (!authorized) return Response.json({ error: "Workspace access denied" }, { status: 403 });
     }
-    const result = await synchronize(store, body.workspaceId, body.commands);
+    const result = await synchronize(store, body.workspaceId, commands);
     return Response.json({ receipts: result.receipts, state: result.snapshot }, { headers: { "cache-control": "no-store" } });
   } catch (error) {
     if (error instanceof WorkspaceNotFoundError) return Response.json({ error: error.message }, { status: 404 });
+    if (error instanceof QuotaExceededError) {
+      return Response.json(quotaProblem(error), { status: error.status });
+    }
     if (error instanceof RequestBodyTooLargeError) {
       return Response.json({ error: error.message }, { status: error.status });
     }
