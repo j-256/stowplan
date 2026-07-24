@@ -27,6 +27,10 @@ interface ExecutionContext {
 
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const runtimeGlobal = globalThis as typeof globalThis & {
+      __STOWPLAN_ENV?: Env;
+    };
+    runtimeGlobal.__STOWPLAN_ENV = env;
     const url = new URL(request.url);
 
     if (url.pathname === "/_vinext/image") {

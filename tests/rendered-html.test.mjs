@@ -65,6 +65,37 @@ test("renders canonical workspace view routes", async () => {
   assert.match(await response.text(), developmentPreviewMeta);
 });
 
+test("passes the Sites D1 binding from the Worker environment to server routes", async () => {
+  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
+  workerUrl.searchParams.set("sites-binding-test", `${process.pid}-${Date.now()}`);
+  const { default: worker } = await import(workerUrl.href);
+  const runtimeGlobal = globalThis;
+
+  try {
+    const response = await worker.fetch(
+      new Request("http://localhost/api/health"),
+      {
+        ASSETS: {
+          fetch: async () => new Response("Not found", { status: 404 }),
+        },
+        DB: {},
+      },
+      {
+        waitUntil() {},
+        passThroughOnException() {},
+      },
+    );
+
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.storage, "configured");
+    assert.match(body.time, /^\d{4}-\d{2}-\d{2}T/);
+  } finally {
+    delete runtimeGlobal.__STOWPLAN_ENV;
+  }
+});
+
 test("keeps private APIs out of the service-worker cache and ships install icons", () => {
   const worker = readFileSync(new URL("../public/sw.js", import.meta.url), "utf8");
   assert.match(worker, /url\.pathname\.startsWith\("\/api\/"\)/);
