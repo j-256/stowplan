@@ -3,6 +3,7 @@ import { DomainError } from "../../../src/domain/errors";
 import { validateImportSnapshot } from "../../../src/domain/import";
 import type { CommandEnvelope, WorkspaceState } from "../../../src/domain/types";
 import { authenticate, canOwnWorkspace, canReadWorkspace, canWriteWorkspace, claimWorkspace, isTrustedMutation } from "../../../src/server/auth";
+import { readJsonRequest, RequestBodyTooLargeError, SYNC_REQUEST_MAX_BYTES } from "../../../src/server/request-body";
 import { runtimeEnv } from "../../../src/server/runtime";
 import { synchronize, WorkspaceNotFoundError } from "../../../src/server/sync-service";
 
@@ -13,7 +14,10 @@ export async function POST(request: Request) {
     if (!env.DB) return Response.json({ error: "Durable storage is not configured" }, { status: 503 });
     const user = await authenticate(env.DB, request);
     if (!user) return Response.json({ error: "Authentication required" }, { status: 401 });
-    const parsed = await request.json() as unknown;
+    const parsed = await readJsonRequest<unknown>(
+      request,
+      SYNC_REQUEST_MAX_BYTES,
+    );
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       return Response.json({ error: "Invalid sync request" }, { status: 400 });
     }
@@ -75,6 +79,9 @@ export async function POST(request: Request) {
     return Response.json({ receipts: result.receipts, state: result.snapshot }, { headers: { "cache-control": "no-store" } });
   } catch (error) {
     if (error instanceof WorkspaceNotFoundError) return Response.json({ error: error.message }, { status: 404 });
+    if (error instanceof RequestBodyTooLargeError) {
+      return Response.json({ error: error.message }, { status: error.status });
+    }
     if (error instanceof SyntaxError || error instanceof DomainError) {
       return Response.json(
         { error: error instanceof Error ? error.message : "Invalid sync request" },

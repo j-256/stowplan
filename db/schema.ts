@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { desc, sql } from "drizzle-orm";
 import {
   check,
   index,
@@ -18,6 +18,17 @@ export const workspaceSnapshots = sqliteTable("workspace_snapshots", {
 }, (table) => [
   check("workspace_snapshots_revision_check", sql`${table.revision} >= 0`),
   check("workspace_snapshots_state_json_check", sql`json_valid(${table.stateJson})`),
+]);
+
+export const stowplanMigrationStream = sqliteTable("stowplan_migration_stream", {
+  id: integer("id").primaryKey(),
+  stream: text("stream", { enum: ["numbered", "sites"] }).notNull(),
+}, (table) => [
+  check("stowplan_migration_stream_id_check", sql`${table.id} = 1`),
+  check(
+    "stowplan_migration_stream_value_check",
+    sql`${table.stream} in ('numbered', 'sites')`,
+  ),
 ]);
 
 export const users = sqliteTable("users", {
@@ -109,9 +120,11 @@ export const guestLinks = sqliteTable("guest_links", {
   expiresAt: text("expires_at").notNull(),
   consumedAt: text("consumed_at"),
   revokedAt: text("revoked_at"),
+  redemptionId: text("redemption_id"),
 }, (table) => [
   check("guest_links_role_check", sql`${table.role} in ('editor', 'viewer')`),
   uniqueIndex("guest_links_token_hash_idx").on(table.tokenHash),
+  uniqueIndex("guest_links_redemption_id_idx").on(table.redemptionId),
   index("guest_links_workspace_id_idx").on(table.workspaceId),
   index("guest_links_expires_at_idx").on(table.expiresAt),
 ]);
@@ -139,6 +152,6 @@ export const authAuditEvents = sqliteTable("auth_audit_events", {
   ipPrefix: text("ip_prefix"),
 }, (table) => [
   check("auth_audit_detail_json_check", sql`json_valid(${table.detailJson})`),
-  index("auth_audit_created_at_idx").on(table.createdAt),
+  index("auth_audit_created_at_idx").on(desc(table.createdAt)),
   index("auth_audit_actor_idx").on(table.actorUserId),
 ]);

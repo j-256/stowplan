@@ -1,19 +1,20 @@
 import { normalizeWorkspaceState, type WorkspaceState } from "../domain";
 import type { SnapshotStore } from "../server/storage";
 
-interface D1Result {
+export interface D1ResultLike {
     meta?: { changes?: number };
     success: boolean;
 }
 
-interface D1Statement {
-    bind(...values: unknown[]): D1Statement;
+export interface D1StatementLike {
+    bind(...values: unknown[]): D1StatementLike;
     first<T = Record<string, unknown>>(): Promise<T | null>;
-    run(): Promise<D1Result>;
+    run(): Promise<D1ResultLike>;
 }
 
 export interface D1DatabaseLike {
-    prepare(query: string): D1Statement;
+    batch(statements: D1StatementLike[]): Promise<D1ResultLike[]>;
+    prepare(query: string): D1StatementLike;
 }
 
 interface SnapshotRow {

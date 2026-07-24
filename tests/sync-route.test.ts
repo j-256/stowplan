@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createEmptyState } from "../src/domain/factories";
+import { SYNC_REQUEST_MAX_BYTES } from "../src/server/request-body";
 
 const mocks = vi.hoisted(() => ({
   authenticate: vi.fn(),
@@ -85,6 +86,27 @@ describe("sync route authorization", () => {
       state.workspace.id,
     );
     expect(mocks.canReadWorkspace).not.toHaveBeenCalled();
+    expect(mocks.synchronize).not.toHaveBeenCalled();
+  });
+
+  it("rejects an oversized sync body before storage work", async () => {
+    const response = await POST(new Request(
+      "https://stowplan.test/api/sync",
+      {
+        body: "{}",
+        headers: {
+          "content-length": String(SYNC_REQUEST_MAX_BYTES + 1),
+          "content-type": "application/json",
+        },
+        method: "POST",
+      },
+    ));
+
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toMatchObject({
+      error: expect.stringContaining("byte limit"),
+    });
+    expect(mocks.load).not.toHaveBeenCalled();
     expect(mocks.synchronize).not.toHaveBeenCalled();
   });
 });

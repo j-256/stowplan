@@ -93,10 +93,82 @@ try {
   const overview = await admin.json();
   assert(overview.users.some(user => user.email === "owner@example.test"));
 
+  const timestamp = new Date().toISOString();
+  const workspaceId = "ws_next_d1_smoke";
+  const syncHeaders = {
+    "content-type": "application/json",
+    cookie,
+    origin,
+  };
+  const initialize = await fetch(`${origin}/api/sync`, {
+    method: "POST",
+    headers: syncHeaders,
+    body: JSON.stringify({
+      commands: [],
+      snapshot: {
+        activities: [],
+        audit: [],
+        items: [],
+        locations: [],
+        plans: [],
+        schemaVersion: 1,
+        workspace: {
+          createdAt: timestamp,
+          id: workspaceId,
+          name: "Next D1 smoke",
+          revision: 0,
+          updatedAt: timestamp,
+        },
+      },
+      workspaceId,
+    }),
+  });
+  assert.equal(initialize.status, 200, await initialize.clone().text());
+
+  const guestLink = await fetch(`${origin}/api/admin/guest-links`, {
+    method: "POST",
+    headers: syncHeaders,
+    body: JSON.stringify({
+      hours: 1,
+      returnTo: `/workspaces/${workspaceId}/inventory`,
+      role: "viewer",
+      workspaceId,
+    }),
+  });
+  assert.equal(guestLink.status, 201, await guestLink.clone().text());
+  const guestUrl = new URL((await guestLink.json()).url);
+  const guestToken = guestUrl.pathname.slice("/guest/".length);
+  assert(guestToken);
+  const redeem = await fetch(
+    `${origin}/api/auth/guest/${encodeURIComponent(guestToken)}`,
+    {
+      method: "POST",
+      headers: { origin },
+      redirect: "manual",
+    },
+  );
+  assert.equal(redeem.status, 302, await redeem.clone().text());
+  const guestCookie = (redeem.headers.get("set-cookie") ?? "").split(";")[0];
+  assert.match(guestCookie, /^stowplan_session=/);
+  const guestSnapshot = await fetch(
+    `${origin}/api/snapshot?workspaceId=${workspaceId}`,
+    { headers: { cookie: guestCookie } },
+  );
+  assert.equal(guestSnapshot.status, 200, await guestSnapshot.clone().text());
+  const replay = await fetch(
+    `${origin}/api/auth/guest/${encodeURIComponent(guestToken)}`,
+    {
+      method: "POST",
+      headers: { origin },
+      redirect: "manual",
+    },
+  );
+  assert.equal(replay.status, 401);
+
   const page = await fetch(`${origin}/admin`);
   assert.equal(page.status, 200);
   assert.match(await page.text(), /Stowplan administration/);
-  console.log("Next dev + local D1 smoke passed: bindings, development login, admin authorization, and control-panel route.");
+  console.log("Next dev + local D1 smoke passed: bindings, development login, guest redemption, admin authorization, and control-panel route.");
 } finally {
   await stop(child);
 }

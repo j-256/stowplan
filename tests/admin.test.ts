@@ -1,26 +1,12 @@
-import { readFileSync } from "node:fs";
-import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import { D1SnapshotStore, type D1DatabaseLike } from "../src/adapters/d1-snapshot-store";
+import { D1SnapshotStore } from "../src/adapters/d1-snapshot-store";
 import { createEmptyState } from "../src/domain/factories";
 import { adminMutation, adminOverview } from "../src/server/admin";
 import { claimWorkspace, createOrLinkUser } from "../src/server/auth";
+import { numberedMigrationDatabase } from "./helpers/sqlite-d1";
 
-function database(): D1DatabaseLike {
-  const sqlite = new DatabaseSync(":memory:");
-  sqlite.exec(readFileSync(new URL("../migrations/0001_initial.sql", import.meta.url), "utf8"));
-  return {
-    prepare(sql: string) {
-      const statement = sqlite.prepare(sql);
-      const wrapped = (values: unknown[] = []) => ({
-        bind(...next: unknown[]) { return wrapped(next); },
-        first: async () => statement.get(...values as SQLInputValue[]) as never,
-        all: async () => ({ results: statement.all(...values as SQLInputValue[]) as never[] }),
-        run: async () => { const result = statement.run(...values as SQLInputValue[]); return { success: true, meta: { changes: Number(result.changes) } }; },
-      });
-      return wrapped() as ReturnType<D1DatabaseLike["prepare"]>;
-    },
-  };
+function database() {
+  return numberedMigrationDatabase().database;
 }
 
 describe("admin control plane", () => {

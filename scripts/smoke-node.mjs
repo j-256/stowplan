@@ -1,9 +1,15 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { createServer } from "node:net";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
+
+const MigrationStream = Object.freeze({
+  NUMBERED: "numbered",
+  SITES: "sites",
+});
 
 async function availablePort() {
   const server = createServer();
@@ -42,16 +48,113 @@ async function stop(child) {
   ]);
 }
 
+function captureOutput(child) {
+  let output = "";
+  for (const stream of [child.stdout, child.stderr]) {
+    stream.setEncoding("utf8");
+    stream.on("data", chunk => {
+      output = `${output}${chunk}`.slice(-12_000);
+    });
+  }
+  return () => output;
+}
+
+async function waitForExit(child, logs) {
+  return await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error(`Timed out waiting for the Node process to exit\n${logs()}`));
+    }, 5_000);
+    child.once("error", error => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.once("exit", (code, signal) => {
+      clearTimeout(timeout);
+      resolve({ code, signal });
+    });
+  });
+}
+
 async function assertStatus(response, expected) {
   if (response.status !== expected) {
     assert.fail(`Expected HTTP ${expected}, received ${response.status}: ${await response.text()}`);
   }
 }
 
+async function assertSitesMigrationStreamRefused(directory) {
+  const databasePath = join(directory, "sites.sqlite");
+  const sqlite = new DatabaseSync(databasePath);
+  const migrationDirectory = new URL("../drizzle/", import.meta.url);
+  const migrationNames = (await readdir(migrationDirectory))
+    .filter(name => name.endsWith(".sql"))
+    .sort();
+  for (const migrationName of migrationNames) {
+    sqlite.exec((await readFile(
+      new URL(migrationName, migrationDirectory),
+      "utf8",
+    )).replaceAll("--> statement-breakpoint", ""));
+  }
+  sqlite.close();
+
+  const child = spawn(process.execPath, ["scripts/node-server.mjs"], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      NODE_ENV: "production",
+      STOWPLAN_SQLITE_PATH: databasePath,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const logs = captureOutput(child);
+  try {
+    const result = await waitForExit(child, logs);
+    assert.notEqual(result.code, 0);
+    assert.match(
+      logs(),
+      /Refusing to use a Sites migration stream with the Node runtime/,
+    );
+  } finally {
+    await stop(child);
+  }
+
+  const refusedDatabase = new DatabaseSync(databasePath);
+  try {
+    assert.deepEqual(
+      refusedDatabase.prepare(
+        "SELECT id, stream FROM stowplan_migration_stream ORDER BY id",
+      ).all().map(({ id, stream }) => ({ id, stream })),
+      [{ id: 1, stream: MigrationStream.SITES }],
+    );
+    assert.equal(
+      refusedDatabase.prepare(
+        `SELECT name
+         FROM sqlite_schema
+         WHERE type = 'table' AND name = 'stowplan_node_migrations'`,
+      ).get(),
+      undefined,
+    );
+  } finally {
+    refusedDatabase.close();
+  }
+}
+
 const directory = await mkdtemp(join(tmpdir(), "stowplan-node-smoke-"));
+try {
+  await assertSitesMigrationStreamRefused(directory);
+} catch (error) {
+  await rm(directory, { recursive: true, force: true });
+  throw error;
+}
+const databasePath = join(directory, "stowplan.sqlite");
+const legacyDatabase = new DatabaseSync(databasePath);
+legacyDatabase.exec(await readFile(
+  new URL("../migrations/0001_initial.sql", import.meta.url),
+  "utf8",
+));
+legacyDatabase.close();
 const port = await availablePort();
 const origin = `http://127.0.0.1:${port}`;
-let output = "";
 const child = spawn(process.execPath, ["scripts/node-server.mjs"], {
   cwd: process.cwd(),
   env: {
@@ -62,18 +165,35 @@ const child = spawn(process.execPath, ["scripts/node-server.mjs"], {
     HOST: "127.0.0.1",
     NODE_ENV: "production",
     PORT: String(port),
-    STOWPLAN_SQLITE_PATH: join(directory, "stowplan.sqlite"),
+    STOWPLAN_SQLITE_PATH: databasePath,
   },
   stdio: ["ignore", "pipe", "pipe"],
 });
-for (const stream of [child.stdout, child.stderr]) {
-  stream.setEncoding("utf8");
-  stream.on("data", chunk => { output = `${output}${chunk}`.slice(-12_000); });
-}
+const logs = captureOutput(child);
 
 try {
-  const health = await waitForServer(origin, child, () => output);
+  const health = await waitForServer(origin, child, logs);
   assert.deepEqual(await health.json().then(({ ok, storage }) => ({ ok, storage })), { ok: true, storage: "configured" });
+  const migratedDatabase = new DatabaseSync(databasePath);
+  try {
+    assert.deepEqual(
+      migratedDatabase.prepare(
+        "SELECT id, stream FROM stowplan_migration_stream ORDER BY id",
+      ).all().map(({ id, stream }) => ({ id, stream })),
+      [{ id: 1, stream: MigrationStream.NUMBERED }],
+    );
+    const expectedMigrations = (await readdir(
+      new URL("../migrations/", import.meta.url),
+    )).filter(name => /^\d+_.+\.sql$/.test(name)).sort();
+    assert.deepEqual(
+      migratedDatabase.prepare(
+        "SELECT name FROM stowplan_node_migrations ORDER BY name",
+      ).all().map(({ name }) => name),
+      expectedMigrations,
+    );
+  } finally {
+    migratedDatabase.close();
+  }
 
   const home = await fetch(origin);
   assert.equal(home.status, 200);
@@ -239,7 +359,7 @@ try {
   });
   assert.equal(replayGuest.status, 401);
 
-  console.log("Node + SQLite smoke passed: health, headers, auth, sync, idempotency, restore, admin, viewer refresh, and scanner-safe guest links.");
+  console.log("Node + SQLite smoke passed: stream isolation, legacy migration, health, headers, auth, sync, idempotency, restore, admin, viewer refresh, and scanner-safe guest links.");
 } finally {
   await stop(child);
   await rm(directory, { recursive: true, force: true });

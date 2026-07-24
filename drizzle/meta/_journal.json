@@ -8,6 +8,27 @@
       "when": 1784862109347,
       "tag": "0000_natural_leper_queen",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1784905007392,
+      "tag": "0001_wakeful_unus",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1784909422135,
+      "tag": "0002_scrub_legacy_ip_metadata",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1784914107387,
+      "tag": "0003_light_iron_monger",
+      "breakpoints": true
     }
   ]
 }

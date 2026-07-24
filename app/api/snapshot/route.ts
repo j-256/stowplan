@@ -3,6 +3,7 @@ import { validateImportSnapshot } from "../../../src/domain/import";
 import type { WorkspaceState } from "../../../src/domain/types";
 import { audit } from "../../../src/server/admin";
 import { authenticate, canOwnWorkspace, canReadWorkspace, isTrustedMutation } from "../../../src/server/auth";
+import { readJsonRequest, RequestBodyTooLargeError, SNAPSHOT_REQUEST_MAX_BYTES } from "../../../src/server/request-body";
 import { runtimeEnv } from "../../../src/server/runtime";
 
 export async function GET(request: Request) {
@@ -27,7 +28,11 @@ export async function PUT(request: Request) {
     if (!env.DB) return Response.json({ error: "Durable storage is not configured" }, { status: 503 });
     const user = await authenticate(env.DB, request);
     if (!user) return Response.json({ error: "Authentication required" }, { status: 401 });
-    const body = await request.json() as { expectedRevision?: number; snapshot?: WorkspaceState; workspaceId?: string };
+    const body = await readJsonRequest<{
+      expectedRevision?: number;
+      snapshot?: WorkspaceState;
+      workspaceId?: string;
+    }>(request, SNAPSHOT_REQUEST_MAX_BYTES);
     if (!body.workspaceId || !body.snapshot || body.snapshot.workspace?.id !== body.workspaceId || !Number.isSafeInteger(body.expectedRevision)) {
       return Response.json({ error: "workspaceId, expectedRevision, and a matching snapshot are required" }, { status: 400 });
     }
@@ -55,7 +60,13 @@ export async function PUT(request: Request) {
   } catch (error) {
     return Response.json(
       { error: error instanceof Error ? error.message : "Could not restore backup" },
-      { status: error instanceof SyntaxError ? 400 : 500 },
+      {
+        status: error instanceof RequestBodyTooLargeError
+          ? error.status
+          : error instanceof SyntaxError
+            ? 400
+            : 500,
+      },
     );
   }
 }
