@@ -54,8 +54,26 @@ const locationKinds = new Set([
     "zone",
 ]);
 const captureStatuses = new Set(["counted", "in_progress", "known_empty", "uncounted"]);
+const completeCaptureStatuses = new Set(["counted", "known_empty"]);
 const frequencies = new Set(["daily", "weekly", "monthly", "rarely"]);
 const planStatuses = new Set(["active", "completed", "discarded"]);
+const CAPTURE_COMPLETE_ERROR = "CAPTURE_COMPLETE";
+const NO_CHANGES_ERROR = "NO_CHANGES";
+const captureContentActions = Object.freeze({
+    addItem: "adding an item",
+    addLocation: "adding a nested space",
+    archiveLocation: "archiving a nested space",
+    deleteItem: "deleting an item",
+    deleteLocation: "deleting a nested space",
+    moveItemIn: "moving an item into it",
+    moveItemOut: "moving an item out of it",
+    moveLocationIn: "moving a nested space into it",
+    moveLocationOut: "moving a nested space out of it",
+    reorderItems: "reordering its items",
+    reorderLocations: "reordering its nested spaces",
+    restoreLocation: "restoring a nested space",
+    updateItem: "editing an item",
+});
 
 function clone<T>(value: T): T {
     return structuredClone(value);
@@ -285,6 +303,27 @@ function requireActiveLocation(state: WorkspaceState, id: string): Location {
     return location;
 }
 
+function assertCaptureContentsEditable(
+    state: WorkspaceState,
+    changes: Array<{ action: string; locationId: string | null }>,
+): void {
+    const checked = new Set<string>();
+    for (const change of changes) {
+        if (!change.locationId || checked.has(change.locationId)) continue;
+        checked.add(change.locationId);
+        const location = requireLocation(state, change.locationId);
+        if (
+            !location.archivedAt &&
+            completeCaptureStatuses.has(location.captureStatus)
+        ) {
+            throw new DomainError(
+                CAPTURE_COMPLETE_ERROR,
+                `Reopen ${location.name} before ${change.action}`,
+            );
+        }
+    }
+}
+
 function requireItem(state: WorkspaceState, id: string): ItemRecord {
     const item = state.items.find((candidate) => candidate.id === id);
     if (!item) throw new DomainError("ITEM_NOT_FOUND", `Item ${id} was not found`);
@@ -467,6 +506,40 @@ function captureProgressPatches(
         patch("location", location.id, "captureStatus", location.captureStatus, "in_progress"),
         patch("location", location.id, "updatedAt", location.updatedAt, timestamp),
     ];
+}
+
+function planCaptureProgressPatches(
+    state: WorkspaceState,
+    sourceId: string,
+    destinationId: string,
+    timestamp: string,
+): FieldPatch[] {
+    return [...new Set([sourceId, destinationId])].flatMap((locationId) => {
+        const location = requireActiveLocation(state, locationId);
+        const shouldProgress =
+            completeCaptureStatuses.has(location.captureStatus) ||
+            (
+                locationId === destinationId &&
+                location.captureStatus === "uncounted"
+            );
+        if (!shouldProgress) return [];
+        return [
+            patch(
+                "location",
+                location.id,
+                "captureStatus",
+                location.captureStatus,
+                "in_progress",
+            ),
+            patch(
+                "location",
+                location.id,
+                "updatedAt",
+                location.updatedAt,
+                timestamp,
+            ),
+        ];
+    });
 }
 
 function planInvalidationPatches(
@@ -655,6 +728,12 @@ function normalPatches(
         }
         const name = command.name.trim();
         if (!name) throw new DomainError("NAME_REQUIRED", "Workspace name is required");
+        if (name === state.workspace.name) {
+            throw new DomainError(
+                NO_CHANGES_ERROR,
+                `Workspace is already named ${name}`,
+            );
+        }
         return {
             label: `Renamed workspace to ${name}`,
             patches: [patch("workspace", state.workspace.id, "name", state.workspace.name, name)],
@@ -664,6 +743,12 @@ function normalPatches(
 
     if (command.type === "location.create") {
         validateLocation(state, command.location);
+        if (!command.location.archivedAt && command.location.parentId) {
+            assertCaptureContentsEditable(state, [{
+                action: captureContentActions.addLocation,
+                locationId: command.location.parentId,
+            }]);
+        }
         return {
             label: `Created ${command.location.name}`,
             patches: [
@@ -715,13 +800,34 @@ function normalPatches(
             ...("code" in command.changes ? { code: next.code } : {}),
             ...("name" in command.changes ? { name: next.name } : {}),
         };
-        const patches = Object.entries(normalizedChanges).map(([path, value]) =>
+        const changedEntries = Object.entries(normalizedChanges).filter(
+            ([path, value]) => !equal(readPath(location, path), value),
+        );
+        if (!changedEntries.length) {
+            throw new DomainError(
+                NO_CHANGES_ERROR,
+                `No changes to save for ${location.name}`,
+            );
+        }
+        if (next.parentId !== location.parentId) {
+            assertCaptureContentsEditable(state, [
+                {
+                    action: captureContentActions.moveLocationOut,
+                    locationId: location.parentId,
+                },
+                {
+                    action: captureContentActions.moveLocationIn,
+                    locationId: next.parentId,
+                },
+            ]);
+        }
+        const patches = changedEntries.map(([path, value]) =>
             patch("location", location.id, path, readPath(location, path), value),
         );
         patches.push(patch("location", location.id, "updatedAt", location.updatedAt, envelope.timestamp));
         if (
             ["conditions", "dimensions", "kind", "parentId", "tags"].some(
-                (field) => field in command.changes,
+                (field) => changedEntries.some(([path]) => path === field),
             )
         ) {
             patches.push(
@@ -765,6 +871,33 @@ function normalPatches(
                 throw new DomainError("LOCATION_CYCLE", "A location cannot move inside its descendant");
             }
         }
+        const nextOrder = command.order ?? location.order;
+        const changesParent = command.parentId !== location.parentId;
+        const changesOrder = nextOrder !== location.order;
+        if (!changesParent && !changesOrder) {
+            throw new DomainError(
+                NO_CHANGES_ERROR,
+                `${location.name} is already in that position`,
+            );
+        }
+        assertCaptureContentsEditable(
+            state,
+            changesParent
+                ? [
+                      {
+                          action: captureContentActions.moveLocationOut,
+                          locationId: location.parentId,
+                      },
+                      {
+                          action: captureContentActions.moveLocationIn,
+                          locationId: command.parentId,
+                      },
+                  ]
+                : [{
+                      action: captureContentActions.reorderLocations,
+                      locationId: location.parentId,
+                  }],
+        );
         const patches = [
             patch("location", location.id, "parentId", location.parentId, command.parentId),
             patch("location", location.id, "updatedAt", location.updatedAt, envelope.timestamp),
@@ -790,6 +923,16 @@ function normalPatches(
         if (!Number.isFinite(command.order)) {
             throw new DomainError("INVALID_ORDER", "Location order must be a number");
         }
+        if (command.order === location.order) {
+            throw new DomainError(
+                NO_CHANGES_ERROR,
+                `${location.name} is already in that position`,
+            );
+        }
+        assertCaptureContentsEditable(state, [{
+            action: captureContentActions.reorderLocations,
+            locationId: location.parentId,
+        }]);
         return {
             label: `Reordered ${location.name}`,
             patches: [
@@ -804,6 +947,12 @@ function normalPatches(
         const location = requireLocation(state, command.id);
         if (typeof command.archived !== "boolean") {
             throw new DomainError("INVALID_ARCHIVE", "Archive state must be true or false");
+        }
+        if (Boolean(location.archivedAt) === command.archived) {
+            throw new DomainError(
+                NO_CHANGES_ERROR,
+                `${location.name} is already ${command.archived ? "archived" : "available"}`,
+            );
         }
         const archivedAt = command.archived ? envelope.timestamp : null;
         if (command.archived) {
@@ -828,6 +977,17 @@ function normalPatches(
             }
         } else {
             validateLocation(state, { ...location, archivedAt: null }, location.id);
+        }
+        if (
+            location.parentId &&
+            Boolean(location.archivedAt) !== command.archived
+        ) {
+            assertCaptureContentsEditable(state, [{
+                action: command.archived
+                    ? captureContentActions.archiveLocation
+                    : captureContentActions.restoreLocation,
+                locationId: location.parentId,
+            }]);
         }
         return {
             label: `${command.archived ? "Archived" : "Restored"} ${location.name}`,
@@ -871,6 +1031,21 @@ function normalPatches(
                 "Contents changed after deletion review; review the subtree again",
             );
         }
+        assertCaptureContentsEditable(state, [
+            ...[location, ...descendants]
+                .filter((candidate) => !candidate.archivedAt && candidate.parentId)
+                .map((candidate) => ({
+                    action: captureContentActions.deleteLocation,
+                    locationId: candidate.parentId,
+                })),
+            ...itemIds
+                .map((itemId) => requireItem(state, itemId))
+                .filter((item) => !item.archivedAt)
+                .map((item) => ({
+                    action: captureContentActions.deleteItem,
+                    locationId: item.locationId,
+                })),
+        ]);
         const patches: FieldPatch[] = [];
         patches.push(...planInvalidationPatches(state, itemIds, locationIds));
         for (const itemId of itemIds) {
@@ -951,7 +1126,7 @@ function normalPatches(
         }
         if (location.captureStatus === command.status) {
             throw new DomainError(
-                "NO_CHANGES",
+                NO_CHANGES_ERROR,
                 `${location.name} is already marked ${command.status.replace("_", " ")}`,
             );
         }
@@ -988,6 +1163,12 @@ function normalPatches(
         validateItem(state, command.item);
         if (state.items.some((item) => item.id === command.item.id)) {
             throw new DomainError("ITEM_EXISTS", "An item with this ID already exists");
+        }
+        if (!command.item.archivedAt) {
+            assertCaptureContentsEditable(state, [{
+                action: captureContentActions.addItem,
+                locationId: command.item.locationId,
+            }]);
         }
         return {
             label: `Recorded ${command.item.quantity} ${command.item.unit} ${command.item.name}`,
@@ -1039,12 +1220,27 @@ function normalPatches(
             ...("name" in command.changes ? { name: next.name } : {}),
             ...("unit" in command.changes ? { unit: next.unit } : {}),
         };
-        const patches = Object.entries(normalizedChanges).map(([path, value]) =>
+        const changedEntries = Object.entries(normalizedChanges).filter(
+            ([path, value]) => !equal(readPath(item, path), value),
+        );
+        if (!changedEntries.length) {
+            throw new DomainError(
+                NO_CHANGES_ERROR,
+                `No changes to save for ${item.name}`,
+            );
+        }
+        if (!item.archivedAt) {
+            assertCaptureContentsEditable(state, [{
+                action: captureContentActions.updateItem,
+                locationId: item.locationId,
+            }]);
+        }
+        const patches = changedEntries.map(([path, value]) =>
             patch("item", item.id, path, readPath(item, path), value),
         );
         if (
             ["category", "constraints", "dimensions", "frequency", "quantity", "tags", "unit"].some(
-                (field) => field in command.changes,
+                (field) => changedEntries.some(([path]) => path === field),
             )
         ) {
             patches.unshift(
@@ -1063,6 +1259,18 @@ function normalPatches(
         if (!Number.isFinite(command.order)) {
             throw new DomainError("INVALID_ORDER", "Item order must be a number");
         }
+        if (command.order === item.order) {
+            throw new DomainError(
+                NO_CHANGES_ERROR,
+                `${item.name} is already in that position`,
+            );
+        }
+        if (!item.archivedAt) {
+            assertCaptureContentsEditable(state, [{
+                action: captureContentActions.reorderItems,
+                locationId: item.locationId,
+            }]);
+        }
         return {
             label: `Reordered ${item.name}`,
             patches: [
@@ -1076,6 +1284,12 @@ function normalPatches(
 
     if (command.type === "item.delete") {
         const item = requireItem(state, command.id);
+        if (!item.archivedAt) {
+            assertCaptureContentsEditable(state, [{
+                action: captureContentActions.deleteItem,
+                locationId: item.locationId,
+            }]);
+        }
         return {
             label: `Deleted ${item.name}`,
             patches: [
@@ -1095,6 +1309,16 @@ function normalPatches(
             command.quantity,
             envelope,
         );
+        assertCaptureContentsEditable(state, [
+            {
+                action: captureContentActions.moveItemOut,
+                locationId: item.locationId,
+            },
+            {
+                action: captureContentActions.moveItemIn,
+                locationId: command.destinationId,
+            },
+        ]);
         return {
             label: `Moved ${command.quantity} ${item.unit} ${item.name}`,
             patches: [
@@ -1140,6 +1364,16 @@ function normalPatches(
             applyPatches(working, itemPatches);
             patches.push(...itemPatches);
         }
+        assertCaptureContentsEditable(state, [
+            ...movableIds.map((id) => ({
+                action: captureContentActions.moveItemOut,
+                locationId: requireItem(state, id).locationId,
+            })),
+            {
+                action: captureContentActions.moveItemIn,
+                locationId: command.destinationId,
+            },
+        ]);
         return {
             label: movableIds.length === itemIds.length
                 ? `Moved ${movableIds.length} item record${movableIds.length === 1 ? "" : "s"}`
@@ -1283,6 +1517,12 @@ function normalPatches(
         if (!planStatuses.has(String(command.status))) {
             throw new DomainError("INVALID_PLAN_STATUS", "Plan status is invalid");
         }
+        if (plan.status === command.status) {
+            throw new DomainError(
+                NO_CHANGES_ERROR,
+                `${plan.name} is already marked ${command.status}`,
+            );
+        }
         if (
             command.status === "active" &&
             state.plans.some(
@@ -1362,8 +1602,9 @@ function normalPatches(
                     step.quantity ?? item.quantity,
                     envelope,
                 ),
-                ...captureProgressPatches(
+                ...planCaptureProgressPatches(
                     state,
+                    step.sourceId,
                     step.destinationId,
                     envelope.timestamp,
                 ),
@@ -1388,8 +1629,9 @@ function normalPatches(
             physicalPatches.push(
                 patch("location", location.id, "parentId", location.parentId, step.destinationId),
                 patch("location", location.id, "updatedAt", location.updatedAt, envelope.timestamp),
-                ...captureProgressPatches(
+                ...planCaptureProgressPatches(
                     state,
+                    step.sourceId,
                     step.destinationId,
                     envelope.timestamp,
                 ),

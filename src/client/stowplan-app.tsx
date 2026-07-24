@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Activity,
   AlertCircle,
@@ -64,6 +71,12 @@ import {
 } from "../domain/app-url";
 import { listWorkspaceReplicas, readWorkspaceReplica, type LocalWorkspaceSummary } from "./local-replica";
 import { JumpPalette } from "./jump-palette";
+import {
+  PREFERENCE_STORAGE_ERROR_EVENT,
+  preferenceStorageUnavailable,
+  readPreference,
+  writePreference,
+} from "./preference-storage";
 import { ResizablePanels } from "./resizable-panels";
 import { DEVICE_ONLY_BACKUP_ERROR, StowplanProvider, useStowplan, WorkspaceOpenError } from "./store";
 
@@ -88,6 +101,7 @@ type FeedbackDetail = {
   message: string;
   tone: "error" | "info" | "success";
 };
+type AppliedTheme = "dark" | "light";
 
 const nav: { id: View; label: string; icon: typeof Boxes }[] = [
   { id: "capture", label: "Capture", icon: PackagePlus },
@@ -130,6 +144,27 @@ const BROWSER_HISTORY_STATE = Object.freeze({ stowplan: true });
 const FEEDBACK_EVENT = "stowplan:feedback";
 const REORDER_DROP_MIDPOINT = 0.5;
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "stowplan-sidebar-collapsed";
+const THEME_STORAGE_KEY = "stowplan-theme";
+const THEME_PREFERENCES = new Set<ThemePreference>([
+  "dark",
+  "light",
+  "system",
+]);
+
+function isThemePreference(value: string | null): value is ThemePreference {
+  return value !== null && THEME_PREFERENCES.has(value as ThemePreference);
+}
+
+function applyThemePreference(theme: ThemePreference): AppliedTheme {
+  const appliedTheme = theme === "dark" || (
+    theme === "system" &&
+    matchMedia("(prefers-color-scheme:dark)").matches
+  )
+    ? "dark"
+    : "light";
+  document.documentElement.dataset.theme = appliedTheme;
+  return appliedTheme;
+}
 
 function sortItems(items: ItemRecord[]): ItemRecord[] {
   return [...items].sort((left, right) => left.order - right.order || left.createdAt.localeCompare(right.createdAt));
@@ -247,7 +282,7 @@ function reorderTargetAt(
     ? reorderDropTarget(target, clientY, kind, id)
     : null;
 }
-function TouchDragHandle({ label, onActiveChange, onDrop, targetAt = dropTargetAt }: { label: string; onActiveChange?: (active: boolean) => void; onDrop: (target: DropTarget) => void; targetAt?: (clientX: number, clientY: number) => DropTarget | null }) {
+function TouchDragHandle({ label, onActiveChange, onDrop, onInvalidDrop, targetAt = dropTargetAt }: { label: string; onActiveChange?: (active: boolean) => void; onDrop: (target: DropTarget) => void; onInvalidDrop?: () => void; targetAt?: (clientX: number, clientY: number) => DropTarget | null }) {
   const active = useRef(false);
   const highlighted = useRef<HTMLElement | null>(null);
   const scrollContainer = useRef<HTMLElement | null>(null);
@@ -279,7 +314,7 @@ function TouchDragHandle({ label, onActiveChange, onDrop, targetAt = dropTargetA
   return <span className="drag-handle" aria-hidden="true" title={label} draggable
     onPointerDown={(event) => { if (event.pointerType === "mouse") return; event.preventDefault(); active.current = true; scrollContainer.current = event.currentTarget.closest<HTMLElement>(".capture-tree"); onActiveChange?.(true); event.currentTarget.setPointerCapture(event.pointerId); document.documentElement.dataset.touchDragging = "true"; track(event.clientX, event.clientY); }}
     onPointerMove={(event) => { if (active.current) track(event.clientX, event.clientY); }}
-    onPointerUp={(event) => { if (!active.current) return; const target = targetAt(event.clientX, event.clientY); clear(); if (target) onDrop(target); }}
+    onPointerUp={(event) => { if (!active.current) return; const target = targetAt(event.clientX, event.clientY); clear(); if (target) onDrop(target); else onInvalidDrop?.(); }}
     onPointerCancel={clear}><GripVertical aria-hidden /></span>;
 }
 function writeDrag(event: React.DragEvent, payload: DragPayload): void {
@@ -483,44 +518,70 @@ function Application() {
   const [inventoryItemId, setInventoryItemId] = useState<string | null>(null);
   const [showWelcome, setShowWelcome] = useState(false);
   const [theme, setTheme] = useState<ThemePreference>("system");
+  const [appliedTheme, setAppliedTheme] = useState<AppliedTheme>("light");
   const [themeReady, setThemeReady] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarReady, setSidebarReady] = useState(false);
   const [workspaceNotice, setWorkspaceNotice] = useState("");
   const [jumpPaletteOpen, setJumpPaletteOpen] = useState(false);
   const [feedback, setFeedback] = useState<FeedbackDetail | null>(null);
+  const [preferencesSessionOnly, setPreferencesSessionOnly] = useState(false);
   const [guidanceTarget, setGuidanceTarget] = useState<GuidanceTarget | null>(null);
   const [routeStatus, setRouteStatus] = useState<"blocked" | "loading" | "ready">("loading");
   const routeRequest = useRef(0);
 
+  useLayoutEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect -- hydrate device-only preferences after the server-consistent first render */
+    const saved = readPreference(THEME_STORAGE_KEY) as ThemePreference | null;
+    const nextTheme = isThemePreference(saved) ? saved : "system";
+    setTheme(nextTheme);
+    setAppliedTheme(applyThemePreference(nextTheme));
+    setThemeReady(true);
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, []);
   useEffect(() => {
     /* eslint-disable react-hooks/set-state-in-effect -- hydrate device-only preferences after the server-consistent first render */
-    const saved = localStorage.getItem("stowplan-theme") as ThemePreference | null;
-    if (saved && ["dark", "light", "system"].includes(saved)) setTheme(saved);
     setSidebarCollapsed(
-      localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === "true",
+      readPreference(SIDEBAR_COLLAPSED_STORAGE_KEY) === "true",
     );
-    setThemeReady(true);
+    if (preferenceStorageUnavailable()) setPreferencesSessionOnly(true);
     setSidebarReady(true);
     /* eslint-enable react-hooks/set-state-in-effect */
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => undefined);
   }, []);
   useEffect(() => {
     if (!themeReady) return;
+    writePreference(THEME_STORAGE_KEY, theme);
+    if (theme !== "system") return;
     const media = matchMedia("(prefers-color-scheme:dark)");
-    const apply = () => { document.documentElement.dataset.theme = theme === "dark" || (theme === "system" && media.matches) ? "dark" : "light"; };
-    apply();
-    localStorage.setItem("stowplan-theme", theme);
-    if (theme === "system") media.addEventListener("change", apply);
-    return () => media.removeEventListener("change", apply);
+    const applySystemTheme = () => {
+      setAppliedTheme(applyThemePreference("system"));
+    };
+    media.addEventListener("change", applySystemTheme);
+    return () => media.removeEventListener("change", applySystemTheme);
   }, [theme, themeReady]);
   useEffect(() => {
     if (!sidebarReady) return;
-    localStorage.setItem(
+    writePreference(
       SIDEBAR_COLLAPSED_STORAGE_KEY,
       String(sidebarCollapsed),
     );
   }, [sidebarCollapsed, sidebarReady]);
+  useEffect(() => {
+    const receivePreferenceStorageError = () =>
+      setPreferencesSessionOnly(true);
+    addEventListener(
+      PREFERENCE_STORAGE_ERROR_EVENT,
+      receivePreferenceStorageError,
+    );
+    /* eslint-disable react-hooks/set-state-in-effect -- storage can fail before child and parent effects subscribe */
+    if (preferenceStorageUnavailable()) setPreferencesSessionOnly(true);
+    /* eslint-enable react-hooks/set-state-in-effect */
+    return () => removeEventListener(
+      PREFERENCE_STORAGE_ERROR_EVENT,
+      receivePreferenceStorageError,
+    );
+  }, []);
   useEffect(() => {
     const receiveFeedback = (event: Event) => {
       setFeedback((event as CustomEvent<FeedbackDetail>).detail);
@@ -756,6 +817,9 @@ function Application() {
     view: nextView,
     workspaceId: state.workspace.id,
   });
+  const syncIssue = lastSyncError === DEVICE_ONLY_BACKUP_ERROR
+    ? null
+    : lastSyncError;
   const selectView = (nextView: View) => {
     setGuidanceTarget(null);
     setInventoryItemId(null);
@@ -830,18 +894,30 @@ function Application() {
     try {
       if (typeof navigator.share === "function") {
         await navigator.share({ title, url });
-        setWorkspaceNotice("Shared this workspace view.");
+        showFeedback("Shared this workspace view", "success");
         return;
       }
       if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(url);
-        setWorkspaceNotice("Link copied. Anyone with workspace access can open this exact view.");
+        showFeedback(
+          "Link copied. Anyone with workspace access can open this exact view.",
+          "success",
+        );
         return;
       }
-      setWorkspaceNotice("This view is ready to share from the browser address bar.");
+      showFeedback(
+        "Copy this view from the browser address bar to share it",
+        "info",
+      );
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return;
-      setWorkspaceNotice("Could not share automatically. Copy this view from the browser address bar.");
+      if (error instanceof DOMException && error.name === "AbortError") {
+        showFeedback("Sharing was canceled", "info");
+        return;
+      }
+      showFeedback(
+        "Could not share automatically. Copy this view from the browser address bar.",
+        "error",
+      );
     }
   };
   const FeedbackIcon = feedback?.tone === "success"
@@ -849,6 +925,13 @@ function Application() {
     : feedback?.tone === "info"
       ? Info
       : AlertCircle;
+  const selectTheme = (nextTheme: ThemePreference) => {
+    setTheme(nextTheme);
+    setAppliedTheme(applyThemePreference(nextTheme));
+  };
+  const themeToggleLabel = appliedTheme === "dark"
+    ? "Dark theme active. Switch to light theme"
+    : "Light theme active. Switch to dark theme";
   return <div className="app-shell" data-sidebar-collapsed={sidebarCollapsed}>
     <aside aria-label="Workspace navigation">
       <Brand />
@@ -866,14 +949,23 @@ function Application() {
       <div className="sync" title={lastSyncError ?? (lastSyncedAt ? `Last successful backup: ${formatTimestamp(lastSyncedAt)}` : "This workspace has not been backed up online yet.")}>{online ? <Wifi /> : <WifiOff />}<span>{blocked ? `${blocked} need review` : backupConfigured === false ? pending ? `${pending} saved on device` : "Device only" : syncing ? "Backing up…" : pending ? `${pending} pending upload` : !online ? "Working offline" : lastSyncedAt ? `Backed up ${formatTimestamp(lastSyncedAt)}` : "Device only"}</span></div>
     </aside>
     <main>
-      <header><div><p className="eyebrow">{state.workspace.name}</p><h1>{nav.find((entry) => entry.id === view)?.label}</h1></div><div className="header-actions"><button className="jump-trigger" aria-label="Search and jump, Command or Control K" onClick={() => setJumpPaletteOpen(true)}><Search /><span>Search</span><kbd>⌘ / Ctrl K</kbd></button><a className="icon" href={WORKSPACE_LIST_PATH} aria-label="Open main menu" onClick={(event) => followAppLink(event, openWorkspaceMenu)}><Home /></a><a className="icon mobile-settings" data-active={view === "settings"} aria-label="Open settings" href={tabPath("settings")} onClick={(event) => followAppLink(event, () => selectView("settings"))}><Settings /></a><button className="icon" aria-label="Share this view" onClick={() => void shareCurrentView()}><Share2 /></button><button className="icon" aria-label="Change theme" onClick={() => setTheme(theme === "system" ? "dark" : theme === "dark" ? "light" : "system")}>{theme === "dark" ? <Moon /> : <Sun />}</button></div></header>
+      <header><div><p className="eyebrow">{state.workspace.name}</p><h1>{nav.find((entry) => entry.id === view)?.label}</h1></div><div className="header-actions"><button className="jump-trigger" aria-label="Search and jump, Command or Control K" onClick={() => setJumpPaletteOpen(true)}><Search /><span>Search</span><kbd>⌘ / Ctrl K</kbd></button><a className="icon" href={WORKSPACE_LIST_PATH} aria-label="Open main menu" onClick={(event) => followAppLink(event, openWorkspaceMenu)}><Home /></a><a className="icon mobile-settings" data-active={view === "settings"} aria-label="Open settings" href={tabPath("settings")} onClick={(event) => followAppLink(event, () => selectView("settings"))}><Settings /></a><button className="icon" aria-label="Share this view" onClick={() => void shareCurrentView()}><Share2 /></button><button className="icon" aria-label={themeToggleLabel} title={themeToggleLabel} onClick={() => selectTheme(appliedTheme === "dark" ? "light" : "dark")}>{appliedTheme === "dark" ? <Moon /> : <Sun />}</button></div></header>
+      {syncIssue && <section className="sync-error-banner" role="alert">
+        <AlertCircle />
+        <span><strong>Backup needs attention</strong><small>{syncIssue}</small></span>
+        <a href={WORKSPACE_LIST_PATH} onClick={(event) => followAppLink(event, openWorkspaceMenu)}>Review backup</a>
+      </section>}
+      {preferencesSessionOnly && <section className="preference-storage-banner" role="status">
+        <Info />
+        <span><strong>Preferences are session-only</strong><small>Theme, sidebar, and panel choices will reset after reload because browser preference storage is unavailable.</small></span>
+      </section>}
       {view === "capture" && <Capture state={state} current={current} select={selectLocation} commit={dispatch} focusEditorKey={guidanceTarget?.view === "capture" ? guidanceTarget.token : null} />}
       {view === "spaces" && <Spaces state={state} current={current} select={selectLocation} commit={dispatch} focusEditorKey={guidanceTarget?.view === "spaces" ? guidanceTarget.token : null} focusEditorSection={guidanceTarget?.view === "spaces" ? guidanceTarget.focus : undefined} />}
       {view === "inventory" && <Inventory state={state} commit={dispatch} editing={validInventoryItemId} editFocus={guidanceTarget?.view === "inventory" ? guidanceTarget.focus : undefined} locationFilter={validInventoryLocationId ?? ""} onEditingChange={changeInventoryItem} onLocationFilterChange={changeInventoryLocation} />}
       {view === "plan" && <Planner state={state} commit={dispatch} openGuidanceTarget={openGuidanceTarget} />}
       {view === "activity" && <History state={state} commit={dispatch} />}
       {workspaceNotice && <output className="workspace-notice">{workspaceNotice}</output>}
-      {view === "settings" && <Preferences state={state} commit={dispatch} theme={theme} setTheme={setTheme} openMenu={openWorkspaceMenu} returnTo={canonicalPath ?? tabPath("settings")} />}
+      {view === "settings" && <Preferences state={state} commit={dispatch} theme={theme} setTheme={selectTheme} openMenu={openWorkspaceMenu} returnTo={canonicalPath ?? tabPath("settings")} />}
     </main>
     {feedback && <output
       className="feedback-toast"
@@ -884,14 +976,14 @@ function Application() {
       <span>{feedback.message}</span>
       <button className="icon small" aria-label="Dismiss message" onClick={() => setFeedback(null)}><X /></button>
     </output>}
-    <JumpPalette
+    {jumpPaletteOpen && <JumpPalette
       close={() => setJumpPaletteOpen(false)}
       open={jumpPaletteOpen}
       openItem={(id) => openGuidanceTarget("inventory", id)}
       openLocation={(id) => openGuidanceTarget("spaces", id)}
       openView={selectView}
       state={state}
-    />
+    />}
     <nav className="bottom">{nav.filter((entry) => entry.id !== "settings").map((entry) => <Nav key={entry.id} {...entry} active={entry.id === view} href={tabPath(entry.id)} select={() => selectView(entry.id)} />)}</nav>
   </div>;
 }
@@ -999,7 +1091,7 @@ function Onboarding({ currentId, currentName, isDemo = false, online, statusRevi
         ? `Its last known successful online backup was ${formatTimestamp(latest.lastSyncedAt)}. This removal does not request server deletion.`
         : "This workspace has never been backed up online, so removing it will permanently erase this device's only copy.";
       const changeWarning = unsynced ? ` ${unsynced} unsynced change${unsynced === 1 ? "" : "s"} will be lost.` : "";
-      if (!confirm(`Remove “${latest.name}” from this device?\n\n${backupWarning}${changeWarning}\n\nThis does not delete any server copy.`)) return;
+      if (!confirm(`Remove "${latest.name}" from this device?\n\n${backupWarning}${changeWarning}\n\nThis does not delete any server copy.`)) return;
       await onRemoveWorkspace(latest.id, latest.updatedAt);
       setWorkspaces(await listWorkspaceReplicas());
       setMessage(`${latest.name} was removed from this device.`);
@@ -1014,14 +1106,14 @@ function Onboarding({ currentId, currentName, isDemo = false, online, statusRevi
   if (!workspacesLoaded) return <main className="onboarding"><section><Brand /><div className="loading-inline" role="status">Checking workspaces on this device…</div></section></main>;
   if (!currentName && workspaces.length === 0) return <main className="onboarding"><section><Brand /><p className="eyebrow">A calmer first pass</p><h1>Label it. Count it.<br />Find it later.</h1><p>Start with one box, drawer, or cabinet. Stowplan remembers nested containers and keeps working without connectivity or a healthy server.</p><div className="steps"><span><b>1</b>Label a space</span><span><b>2</b>Add what is inside</span><span><b>3</b>Mark it counted</span></div><form className="workspace-start" onSubmit={(event) => submitForm(event, (data) => begin(false, String(data.get("workspaceName"))), false)}><label>Workspace name<input required maxLength={80} name="workspaceName" defaultValue="My home" autoComplete="organization" /></label><button className="primary" disabled={busy}>{busy ? "Starting…" : "Start my workspace"}</button></form><button className="linkish" disabled={busy} onClick={() => void begin(true)}>Explore the kitchen demo instead</button><small>Your inventory is saved on this device first.</small>{message && <output className="form-message">{message}</output>}</section></main>;
 
-  return <main className="onboarding workspace-home"><section><Brand /><div className="workspace-home-heading"><div><p className="eyebrow">Workspaces</p><h1>Where to next?</h1><p>Choose a local workspace and see exactly what has—or has not—reached the server.</p></div><span className="connectivity" data-online={online}>{online ? <Wifi /> : <WifiOff />}{online ? "Online" : "Offline"}</span></div><div className="workspace-cards">{workspaces.map((workspace) => {
+  return <main className="onboarding workspace-home"><section><Brand /><div className="workspace-home-heading"><div><p className="eyebrow">Workspaces</p><h1>Where to next?</h1><p>Choose a local workspace and see exactly what has or has not reached the server.</p></div><span className="connectivity" data-online={online}>{online ? <Wifi /> : <WifiOff />}{online ? "Online" : "Offline"}</span></div><div className="workspace-cards">{workspaces.map((workspace) => {
     const current = workspace.id === currentId;
     const unsynced = workspace.pending + workspace.blocked;
     const localOnly = workspace.lastSyncError === DEVICE_ONLY_BACKUP_ERROR;
     const status = workspace.blocked ? `${workspace.blocked} change${workspace.blocked === 1 ? "" : "s"} need review` : localOnly ? workspace.pending ? `${workspace.pending} change${workspace.pending === 1 ? "" : "s"} saved on device` : "Device only" : workspace.pending ? `${workspace.pending} change${workspace.pending === 1 ? "" : "s"} pending upload` : workspace.lastSyncedAt ? "Backed up online" : "Device only";
     const detail = workspace.lastSyncedAt ? `Last successful backup ${formatTimestamp(workspace.lastSyncedAt)}` : "Never backed up online";
     return <article className="workspace-card" data-current={current} key={workspace.id}><header><div><span>{current ? "Open now" : "On this device"}</span><h2>{workspace.name}</h2></div><b data-state={workspace.blocked ? "blocked" : workspace.pending ? "pending" : workspace.lastSyncedAt ? "synced" : "local"}>{status}</b></header><div className="workspace-dates"><span><small>Last local change</small><strong>{formatTimestamp(workspace.updatedAt)}</strong></span><span><small>Server backup</small><strong>{detail}</strong></span></div>{workspace.lastSyncError && <p className="workspace-sync-error">Latest backup check {formatTimestamp(workspace.lastSyncAttemptAt)}: {workspace.lastSyncError}</p>}{unsynced > 0 && <details className="workspace-queue"><summary>Queued changes ({unsynced})</summary><ol>{workspace.changes.slice(0, 6).map((change) => <li key={change.id}><span><strong>{change.label}</strong><small>{formatTimestamp(change.timestamp)}</small></span><b data-state={change.status}>{change.status === "blocked" ? "Needs review" : localOnly ? "Saved locally" : "Pending upload"}</b>{change.error && <small>{change.error}</small>}</li>)}</ol>{workspace.changes.length > 6 && <p>+ {workspace.changes.length - 6} more changes</p>}</details>}<footer><button disabled={busy} className={current ? "primary" : ""} onClick={() => current ? onContinue?.() : void open(workspace.id)}>{current ? "Continue current workspace" : "Open workspace"}</button><button disabled={busy} className="workspace-remove danger" aria-label={`Remove ${workspace.name} from this device`} onClick={() => void remove(workspace)}><Trash2 /><span>Remove</span></button></footer></article>;
-  })}</div><div className="workspace-home-actions"><details className="workspace-create"><summary>Start a new workspace</summary><form onSubmit={(event) => submitForm(event, (data) => begin(false, String(data.get("workspaceName"))), false)}><label>Workspace name<input required maxLength={80} name="workspaceName" placeholder="e.g. Jamie’s apartment" /></label><button className="primary" disabled={busy}>{busy ? "Starting…" : "Create workspace"}</button></form></details>{isDemo ? <button disabled={busy} className="danger menu-action" onClick={() => void run(() => onResetDemo?.() ?? Promise.resolve(), "Could not reset the demo")}><RotateCcw /> Reset kitchen demo</button> : <button disabled={busy} className="linkish" onClick={() => void run(() => onOpenDemo?.() ?? Promise.resolve(), "Could not open the demo")}>Open kitchen demo</button>}</div><small className="workspace-home-note">Removing a workspace here affects this device only. Online deletion is never implied.</small>{message && <output className="form-message">{message}</output>}</section></main>;
+  })}</div><div className="workspace-home-actions"><details className="workspace-create"><summary>Start a new workspace</summary><form onSubmit={(event) => submitForm(event, (data) => begin(false, String(data.get("workspaceName"))), false)}><label>Workspace name<input required maxLength={80} name="workspaceName" placeholder="e.g. Jamie's apartment" /></label><button className="primary" disabled={busy}>{busy ? "Starting…" : "Create workspace"}</button></form></details>{isDemo ? <button disabled={busy} className="danger menu-action" onClick={() => void run(() => onResetDemo?.() ?? Promise.resolve(), "Could not reset the demo")}><RotateCcw /> Reset kitchen demo</button> : <button disabled={busy} className="linkish" onClick={() => void run(() => onOpenDemo?.() ?? Promise.resolve(), "Could not open the demo")}>Open kitchen demo</button>}</div><small className="workspace-home-note">Removing a workspace here affects this device only. Online deletion is never implied.</small>{message && <output className="form-message">{message}</output>}</section></main>;
 }
 
 function Capture({ state, current, select, commit, focusEditorKey }: { state: WorkspaceState; current: Location | null; select: (id: string) => void; commit: Commit; focusEditorKey: number | null }) {
@@ -1031,6 +1123,7 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
   const [nativeReorderSource, setNativeReorderSource] = useState<DragPayload | null>(null);
   const [queueQuery, setQueueQuery] = useState("");
   const editor = useRef<HTMLElement | null>(null);
+  const nativeReorderHandled = useRef(false);
   const live = state.locations.filter((location) => !location.archivedAt);
   const tree = flattenLocationTree(live);
   const normalizedQuery = queueQuery.trim().toLocaleLowerCase();
@@ -1065,12 +1158,21 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
     return () => cancelAnimationFrame(frame);
   }, [editorNavigationKey, focusEditorKey]);
   const addContainer = async (data: FormData) => {
-    const parentId = data.get("topLevel") === "on" ? null : current?.id ?? null;
+    const topLevel = data.get("topLevel") === "on";
+    if (captureComplete && !topLevel) {
+      showFeedback(`Reopen ${current?.name ?? "this space"} before adding a container`);
+      return false;
+    }
+    const parentId = topLevel ? null : current?.id ?? null;
     const siblings = live.filter((location) => location.parentId === parentId);
     return perform(commit, { type: "location.create", location: createLocation({ code: String(data.get("code")), name: String(data.get("name")), kind: String(data.get("kind")) as LocationKind, parentId, order: nextOrder(siblings) }) });
   };
   const addItem = async (data: FormData): Promise<boolean> => {
     if (!current) return false;
+    if (captureComplete) {
+      showFeedback(`Reopen ${current.name} before adding an item`);
+      return false;
+    }
     const siblings = state.items.filter((item) => item.locationId === current.id && !item.archivedAt);
     return perform(commit, { type: "item.create", item: createItem({ locationId: current.id, name: String(data.get("name")), quantity: Number(data.get("quantity")), unit: String(data.get("unit")), order: nextOrder(siblings) }) });
   };
@@ -1146,9 +1248,21 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
     setNativeReorderSource(null);
   };
   const startNativeReorder = (event: React.DragEvent, payload: DragPayload) => {
+    nativeReorderHandled.current = false;
     setNativeReorderCue(null);
     setNativeReorderSource(payload);
     writeDrag(event, payload);
+  };
+  const endNativeReorder = (payload: DragPayload) => {
+    if (!nativeReorderHandled.current) {
+      showFeedback(
+        payload.type === "location"
+          ? "Capture only reorders sibling spaces. Use Spaces to change nesting."
+          : "Items can only be reordered onto a different item in the same container",
+      );
+    }
+    nativeReorderHandled.current = false;
+    clearNativeReorder();
   };
   const canDropLocation = (sourceId: string, targetId: string) => {
     if (sourceId === targetId) return false;
@@ -1187,6 +1301,7 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
       nativeReorderSource?.type !== "location" ||
       !canDropLocation(nativeReorderSource.id, targetId)
     ) {
+      event.preventDefault();
       event.dataTransfer.dropEffect = "none";
       setNativeReorderCue(null);
       return;
@@ -1203,10 +1318,16 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
       payload?.type !== "location" ||
       !canDropLocation(payload.id, targetId)
     ) {
+      event.preventDefault();
+      nativeReorderHandled.current = true;
+      showFeedback(
+        "Capture only reorders sibling spaces. Use Spaces to change nesting.",
+      );
       clearNativeReorder();
       return;
     }
     event.preventDefault();
+    nativeReorderHandled.current = true;
     reorderLocationByDrop(
       payload,
       reorderDropTarget(event.currentTarget, event.clientY, "location", targetId),
@@ -1214,10 +1335,18 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
     clearNativeReorder();
   };
   const reorder = (id: string, direction: -1 | 1) => {
+    if (captureComplete) {
+      showFeedback(`Reopen ${current?.name ?? "this space"} before reordering its items`);
+      return;
+    }
     const order = movedOrder(items, id, direction);
     if (order !== null) void perform(commit, { type: "item.reorder", id, order });
   };
   const reorderByDrop = (payload: DragPayload | null, target: DropTarget) => {
+    if (captureComplete) {
+      showFeedback(`Reopen ${current?.name ?? "this space"} before reordering its items`);
+      return;
+    }
     if (payload?.type !== "item" || target.kind !== "item" || !target.id) return;
     const source = state.items.find((item) => item.id === payload.id);
     const targetItem = state.items.find((item) => item.id === target.id);
@@ -1232,6 +1361,7 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
       nativeReorderSource?.type !== "item" ||
       !canDropItem(nativeReorderSource.id, targetId)
     ) {
+      event.preventDefault();
       event.dataTransfer.dropEffect = "none";
       setNativeReorderCue(null);
       return;
@@ -1245,10 +1375,14 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
   const dropOnItem = (event: React.DragEvent<HTMLElement>, targetId: string) => {
     const payload = readDrag(event) ?? nativeReorderSource;
     if (payload?.type !== "item" || !canDropItem(payload.id, targetId)) {
+      event.preventDefault();
+      nativeReorderHandled.current = true;
+      showFeedback("Items can only be reordered onto a different item in the same container");
       clearNativeReorder();
       return;
     }
     event.preventDefault();
+    nativeReorderHandled.current = true;
     reorderByDrop(
       payload,
       reorderDropTarget(event.currentTarget, event.clientY, "item", targetId),
@@ -1285,7 +1419,7 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
         data-drop-valid={validDrop === null ? undefined : String(validDrop)}
         data-location-id={location.id}
         draggable
-        onDragEnd={clearNativeReorder}
+        onDragEnd={() => endNativeReorder({ type: "location", id: location.id })}
         onDragLeave={(event) => leaveNativeReorderTarget(event, "location", location.id)}
         onDragOver={(event) => dragOverLocation(event, location.id)}
         onDragStart={(event) => startNativeReorder(event, { type: "location", id: location.id })}
@@ -1294,13 +1428,13 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
         <TouchDragHandle label={`Drag ${location.name} to reorder within ${parent}`} targetAt={(clientX, clientY) => {
           const target = reorderTargetAt(clientX, clientY, "location");
           return target?.id && canDropLocation(location.id, target.id) ? target : null;
-        }} onDrop={(target) => reorderLocationByDrop({ type: "location", id: location.id }, target)} />
+        }} onDrop={(target) => reorderLocationByDrop({ type: "location", id: location.id }, target)} onInvalidDrop={() => showFeedback("Capture only reorders sibling spaces. Use Spaces to change nesting.")} />
         <button type="button" className="queue-row" aria-current={current?.id === location.id} data-active={current?.id === location.id} data-depth={depth} style={{ paddingLeft: 8 + depth * 12 }} onClick={() => select(location.id)}><span className="hierarchy-marker" aria-hidden>{depth ? "↳" : "●"}</span><span className="queue-name"><b>{location.code}</b><span>{location.name}</span></span><small>{childCount ? `${childCount} inside · ` : ""}{location.captureStatus.replace("_", " ")}</small></button>
         <span className="reorder-drop-copy" aria-hidden>{cue === "before" ? "Place before" : cue === "after" ? "Place after" : ""}</span>
         <div className="row-actions"><button type="button" className="icon small" aria-label={`Move ${location.name} up`} disabled={index === 0} onClick={() => reorderLocation(location, -1)}><ArrowUp /></button><button type="button" className="icon small" aria-label={`Move ${location.name} down`} disabled={index === siblings.length - 1} onClick={() => reorderLocation(location, 1)}><ArrowDown /></button></div>
       </div>;
-    })}</div>{queueShown.length === 0 && <p className="muted queue-empty">No matching container.</p>}<form key={current?.id ?? "root"} onSubmit={(event) => submitForm(event, addContainer)} className="nested"><LocationCreateFields defaultKind={current ? "box" : "room"} existingCodes={live.map((location) => location.code)} kindLabel="Container type" namePlaceholder={current ? "Friendly name (e.g. winter gear bin)" : "Friendly name (e.g. apartment)"} />{current && <label className="top-level"><input type="checkbox" name="topLevel" /> Add as another top-level space</label>}<button>{current ? `Add inside ${current.name}` : "Add first space"}</button></form></section>;
-  const capturePanel = <section className="panel capture-card" ref={editor} tabIndex={-1} aria-label={current ? `Capture inside ${current.name}` : "Capture editor"}>{current ? <><nav className="breadcrumbs" aria-label="Current container path">{breadcrumbs.map((location, index) => <span key={location.id}>{index > 0 && <i aria-hidden>›</i>}<button onClick={() => select(location.id)}>{location.code}</button></span>)}</nav><div className="title"><div><p className="eyebrow">Inside this container</p><h2>{current.code} · {current.name}</h2></div><span className="tag capture-status" data-status={current.captureStatus}><CaptureStatusIcon /><span>{current.captureStatus.replace("_", " ")}</span></span></div>{nextUncounted && <button className="capture-next-location" type="button" aria-label={`Open next unfinished location without changing ${current.name}: ${nextUncounted.code}, ${nextUncounted.name}`} onClick={() => { select(nextUncounted.id); setEditorNavigationKey((value) => value + 1); }}><span>Next unfinished</span><strong>{nextUncounted.code} · {nextUncounted.name}</strong></button>}<form key={current.id} className="quick" onSubmit={(event) => submitForm(event, addItem)}><label>Qty<input required type="number" min="0.01" step="any" name="quantity" defaultValue="1" /></label><label>Unit<input required name="unit" defaultValue="each" list="capture-units" /><datalist id="capture-units"><option value="each" /><option value="boxes" /><option value="bags" /><option value="cans" /><option value="pairs" /></datalist></label><label className="grow">What is it?<input required name="name" placeholder="e.g. winter gloves" /></label><button className="primary">Save & add next</button></form>
+    })}</div>{queueShown.length === 0 && <p className="muted queue-empty">No matching container.</p>}{captureComplete ? <form key={`${current?.id ?? "root"}-top-level`} onSubmit={(event) => submitForm(event, addContainer)} className="nested"><h3>Add an unrelated top-level space</h3><LocationCreateFields defaultKind="room" existingCodes={live.map((location) => location.code)} kindLabel="Space type" namePlaceholder="Friendly name (e.g. garage)" /><input type="hidden" name="topLevel" value="on" /><button>Add top-level space</button></form> : <form key={current?.id ?? "root"} onSubmit={(event) => submitForm(event, addContainer)} className="nested"><LocationCreateFields defaultKind={current ? "box" : "room"} existingCodes={live.map((location) => location.code)} kindLabel="Container type" namePlaceholder={current ? "Friendly name (e.g. winter gear bin)" : "Friendly name (e.g. apartment)"} />{current && <label className="top-level"><input type="checkbox" name="topLevel" /> Add as another top-level space</label>}<button>{current ? `Add inside ${current.name}` : "Add first space"}</button></form>}</section>;
+  const capturePanel = <section className="panel capture-card" ref={editor} tabIndex={-1} aria-label={current ? `Capture inside ${current.name}` : "Capture editor"}>{current ? <><nav className="breadcrumbs" aria-label="Current container path">{breadcrumbs.map((location, index) => <span key={location.id}>{index > 0 && <i aria-hidden>›</i>}<button onClick={() => select(location.id)}>{location.code}</button></span>)}</nav><div className="title"><div><p className="eyebrow">Inside this container</p><h2>{current.code} · {current.name}</h2></div><span className="tag capture-status" data-status={current.captureStatus}><CaptureStatusIcon /><span>{current.captureStatus.replace("_", " ")}</span></span></div>{nextUncounted && <button className="capture-next-location" type="button" aria-label={`Open next unfinished location without changing ${current.name}: ${nextUncounted.code}, ${nextUncounted.name}`} onClick={() => { select(nextUncounted.id); setEditorNavigationKey((value) => value + 1); }}><span>Next unfinished</span><strong>{nextUncounted.code} · {nextUncounted.name}</strong></button>}{captureComplete ? <div className="capture-locked" role="status"><CheckCircle2 /><span><strong>Capture is complete</strong><small>Reopen this space before adding, editing, or reordering its contents.</small></span></div> : <form key={current.id} className="quick" onSubmit={(event) => submitForm(event, addItem)}><label>Qty<input required type="number" min="0.01" step="any" name="quantity" defaultValue="1" /></label><label>Unit<input required name="unit" defaultValue="each" list="capture-units" /><datalist id="capture-units"><option value="each" /><option value="boxes" /><option value="bags" /><option value="cans" /><option value="pairs" /></datalist></label><label className="grow">What is it?<input required name="name" placeholder="e.g. winter gloves" /></label><button className="primary">Save & add next</button></form>}
       {nested.length > 0 && <div className="nested-list"><small>Nested containers</small>{nested.map((location) => <button key={location.id} onClick={() => select(location.id)}><b>{location.code}</b><span>{location.name}</span><small>{location.captureStatus.replace("_", " ")}</small></button>)}</div>}
       <div className="captured">{items.map((item, index) => {
         const validDrop = nativeReorderSource?.type === "item"
@@ -1313,29 +1447,29 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
         return <div
           className="captured-row"
           data-dragging={nativeReorderSource?.type === "item" && nativeReorderSource.id === item.id ? "true" : undefined}
-          data-drop-id={item.id}
+          data-drop-id={captureComplete ? undefined : item.id}
           data-drop-intent={cue}
-          data-drop-target="item"
+          data-drop-target={captureComplete ? undefined : "item"}
           data-drop-valid={validDrop === null ? undefined : String(validDrop)}
           data-item-id={item.id}
           key={item.id}
-          draggable
-          onDragEnd={clearNativeReorder}
-          onDragLeave={(event) => leaveNativeReorderTarget(event, "item", item.id)}
-          onDragOver={(event) => dragOverItem(event, item.id)}
-          onDragStart={(event) => startNativeReorder(event, { type: "item", id: item.id })}
-          onDrop={(event) => dropOnItem(event, item.id)}
+          draggable={!captureComplete}
+          onDragEnd={captureComplete ? undefined : () => endNativeReorder({ type: "item", id: item.id })}
+          onDragLeave={captureComplete ? undefined : (event) => leaveNativeReorderTarget(event, "item", item.id)}
+          onDragOver={captureComplete ? undefined : (event) => dragOverItem(event, item.id)}
+          onDragStart={captureComplete ? undefined : (event) => startNativeReorder(event, { type: "item", id: item.id })}
+          onDrop={captureComplete ? undefined : (event) => dropOnItem(event, item.id)}
         >
-          <TouchDragHandle label={`Drag ${item.name} to reorder`} targetAt={(clientX, clientY) => {
+          {captureComplete ? <span className="capture-readonly-marker" aria-hidden><CheckCircle2 /></span> : <TouchDragHandle label={`Drag ${item.name} to reorder`} targetAt={(clientX, clientY) => {
             const target = reorderTargetAt(clientX, clientY, "item");
             return target?.id && canDropItem(item.id, target.id) ? target : null;
-          }} onDrop={(target) => reorderByDrop({ type: "item", id: item.id }, target)} />
+          }} onDrop={(target) => reorderByDrop({ type: "item", id: item.id }, target)} onInvalidDrop={() => showFeedback("Items can only be reordered onto a different item in the same container")} />}
           <b>{item.quantity} {item.unit}</b>
-          <button className="item-name" onClick={() => setEditing(item.id)}><strong>{item.name}</strong><small>{item.category} · {item.frequency}</small></button>
+          {captureComplete ? <span className="item-name"><strong>{item.name}</strong><small>{item.category} · {item.frequency}</small></span> : <button className="item-name" onClick={() => setEditing(item.id)}><strong>{item.name}</strong><small>{item.category} · {item.frequency}</small></button>}
           <span className="reorder-drop-copy" aria-hidden>{cue === "before" ? "Place before" : cue === "after" ? "Place after" : ""}</span>
-          <div className="row-actions"><button className="icon small" aria-label={`Move ${item.name} up`} disabled={index === 0} onClick={() => reorder(item.id, -1)}><ArrowUp /></button><button className="icon small" aria-label={`Move ${item.name} down`} disabled={index === items.length - 1} onClick={() => reorder(item.id, 1)}><ArrowDown /></button><button className="icon small" aria-label={`Edit ${item.name}`} onClick={() => setEditing(item.id)}><Edit3 /></button></div>
+          {!captureComplete && <div className="row-actions"><button className="icon small" aria-label={`Move ${item.name} up`} disabled={index === 0} onClick={() => reorder(item.id, -1)}><ArrowUp /></button><button className="icon small" aria-label={`Move ${item.name} down`} disabled={index === items.length - 1} onClick={() => reorder(item.id, 1)}><ArrowDown /></button><button className="icon small" aria-label={`Edit ${item.name}`} onClick={() => setEditing(item.id)}><Edit3 /></button></div>}
         </div>;
-      })}{!items.length && <Empty title="Nothing recorded yet" text="Add an item, or mark this space as known empty." />}</div><div className="finish">{captureComplete ? <button className="reopen-capture" onClick={() => void reopenCapture()}><RotateCcw /><span>Reopen capture</span></button> : <><button className="known-empty-action" onClick={() => void markKnownEmpty()}><PackageX /><span>Known empty & next</span></button><button className="primary" onClick={() => void finish("counted")}><CheckCircle2 /><span>Counted & next</span></button></>}</div></> : <Empty title="Add your first space" text="Give a room, cabinet, box, or drawer the same code as its physical label." />}</section>;
+      })}{!items.length && <Empty title={captureComplete ? "No items recorded" : "Nothing recorded yet"} text={captureComplete ? "Reopen capture before adding an item." : "Add an item, or mark this space as known empty."} />}</div><div className="finish">{captureComplete ? <button className="reopen-capture" onClick={() => void reopenCapture()}><RotateCcw /><span>Reopen capture</span></button> : <><button className="known-empty-action" onClick={() => void markKnownEmpty()}><PackageX /><span>Known empty & next</span></button><button className="primary" onClick={() => void finish("counted")}><CheckCircle2 /><span>Counted & next</span></button></>}</div></> : <Empty title="Add your first space" text="Give a room, cabinet, box, or drawer the same code as its physical label." />}</section>;
   return <>
     <ResizablePanels
       className="content capture"
@@ -1356,6 +1490,7 @@ function Spaces({ state, current, select, commit, focusEditorKey, focusEditorSec
   const [dropCue, setDropCue] = useState<DropTarget | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const inspector = useRef<HTMLElement | null>(null);
+  const nativeDropHandled = useRef(false);
   useEffect(() => {
     if (focusEditorKey === null) return;
     const frame = requestAnimationFrame(() => {
@@ -1381,38 +1516,95 @@ function Spaces({ state, current, select, commit, focusEditorKey, focusEditorSec
   const chooseLocation = (id: string) => {
     select(id);
   };
+  const refuseDrop = (message = "That record cannot be dropped there") => {
+    showFeedback(message);
+  };
+  const refuseCompletedContents = (
+    locationIds: (string | null)[],
+  ): boolean => {
+    const completed = locationIds
+      .filter((id): id is string => Boolean(id))
+      .map((id) => state.locations.find((location) => location.id === id))
+      .find((location) =>
+        location && COMPLETE_CAPTURE_STATUSES.has(location.captureStatus)
+      );
+    if (!completed) return false;
+    refuseDrop(`Reopen ${completed.name} before changing its contents`);
+    return true;
+  };
   const addRoot = async (data: FormData) => {
     const roots = live.filter((location) => location.parentId === null);
     const created = createLocation({ code: String(data.get("code")), name: String(data.get("name")), kind: String(data.get("kind")) as LocationKind, parentId: null, order: nextOrder(roots) });
     return perform(commit, { type: "location.create", location: created }, () => chooseLocation(created.id));
   };
   const moveByDrop = (payload: DragPayload | null, target: DropTarget) => {
-    if (!payload) return;
-    if (payload.type === "item" && target.kind === "location" && target.id) {
+    if (!payload) {
+      refuseDrop("That dragged record could not be read");
+      return;
+    }
+    if (payload.type === "item") {
+      if (target.kind !== "location" || !target.id) {
+        refuseDrop("Items can only be dropped into a space");
+        return;
+      }
       const item = state.items.find((candidate) => candidate.id === payload.id);
-      if (item && item.locationId !== target.id) void perform(commit, { type: "item.move", id: item.id, destinationId: target.id, quantity: item.quantity });
+      if (!item) {
+        refuseDrop("That item is no longer available");
+        return;
+      }
+      if (item.locationId === target.id) {
+        refuseDrop(`${item.name} is already in that space`);
+        return;
+      }
+      if (refuseCompletedContents([item.locationId, target.id])) return;
+      void perform(commit, { type: "item.move", id: item.id, destinationId: target.id, quantity: item.quantity });
       return;
     }
     if (payload.type === "location") {
       const location = state.locations.find((candidate) => candidate.id === payload.id);
-      if (!location) return;
+      if (!location) {
+        refuseDrop("That space is no longer available");
+        return;
+      }
       if (target.kind === "root") {
+        if (refuseCompletedContents([location.parentId])) return;
         const siblings = live.filter((candidate) => candidate.parentId === null && candidate.id !== location.id);
         void perform(commit, { type: "location.move", id: location.id, parentId: null, order: nextOrder(siblings) });
         return;
       }
-      if (target.kind !== "location" || !target.id || location.id === target.id) return;
+      if (target.kind !== "location" || !target.id) {
+        refuseDrop("Spaces can only be dropped onto another space or the top-level target");
+        return;
+      }
+      if (location.id === target.id) {
+        refuseDrop(`Choose a different destination for ${location.name}`);
+        return;
+      }
       const destination = state.locations.find((candidate) => candidate.id === target.id);
-      if (!destination) return;
+      if (!destination) {
+        refuseDrop("That destination is no longer available");
+        return;
+      }
       if (target.intent === "inside") {
+        if (refuseCompletedContents([location.parentId, destination.id])) return;
         const siblings = live.filter((candidate) => candidate.parentId === destination.id && candidate.id !== location.id);
         setCollapsed((current) => { const next = new Set(current); next.delete(destination.id); return next; });
         void perform(commit, { type: "location.move", id: location.id, parentId: destination.id, order: nextOrder(siblings) });
         return;
       }
+      if (
+        refuseCompletedContents([
+          location.parentId,
+          destination.parentId,
+        ])
+      ) return;
       const siblings = live.filter((candidate) => candidate.parentId === destination.parentId);
       const order = target.intent === "before" ? orderBefore(siblings, location.id, destination.id) : orderAfter(siblings, location.id, destination.id);
-      if (order !== null) void perform(commit, { type: "location.move", id: location.id, parentId: destination.parentId, order });
+      if (order === null) {
+        refuseDrop(`Choose a different destination for ${location.name}`);
+        return;
+      }
+      void perform(commit, { type: "location.move", id: location.id, parentId: destination.parentId, order });
     }
   };
   const dragOver = (event: React.DragEvent, fallback: DropTarget) => {
@@ -1420,9 +1612,25 @@ function Spaces({ state, current, select, commit, focusEditorKey, focusEditorSec
     event.dataTransfer.dropEffect = "move";
     setDropCue(dropTargetAt(event.clientX, event.clientY) ?? fallback);
   };
+  const startNativeDrag = (
+    event: React.DragEvent,
+    payload: DragPayload,
+  ) => {
+    event.stopPropagation();
+    nativeDropHandled.current = false;
+    setDragging(true);
+    writeDrag(event, payload);
+  };
+  const endNativeDrag = (message: string) => {
+    if (!nativeDropHandled.current) refuseDrop(message);
+    nativeDropHandled.current = false;
+    setDragging(false);
+    setDropCue(null);
+  };
   const drop = (event: React.DragEvent, fallback: DropTarget) => {
     event.preventDefault();
     event.stopPropagation();
+    nativeDropHandled.current = true;
     const target = dropTargetAt(event.clientX, event.clientY) ?? fallback;
     moveByDrop(readDrag(event), target);
     setDragging(false);
@@ -1434,6 +1642,7 @@ function Spaces({ state, current, select, commit, focusEditorKey, focusEditorSec
     setDropCue(null);
   };
   const reorderLocation = (location: Location, direction: -1 | 1) => {
+    if (refuseCompletedContents([location.parentId])) return;
     const siblings = live.filter((candidate) => candidate.parentId === location.parentId);
     const order = movedOrder(siblings, location.id, direction);
     if (order !== null) void perform(commit, { type: "location.reorder", id: location.id, order });
@@ -1446,7 +1655,7 @@ function Spaces({ state, current, select, commit, focusEditorKey, focusEditorSec
     const itemCount = state.items.filter((item) => item.locationId === location.id && !item.archivedAt).length;
     const cue = dropCue?.kind === "location" && dropCue.id === location.id ? dropCue.intent : undefined;
     const isCollapsed = collapsed.has(location.id);
-    return <div className="tree-node" role="listitem" key={location.id}><div className="tree-row" data-location-id={location.id} data-drop-target="location" data-drop-id={location.id} data-drop-intent={cue} data-active={current?.id === location.id} draggable onDragStart={(event) => { event.stopPropagation(); setDragging(true); writeDrag(event, { type: "location", id: location.id }); }} onDragEnd={() => { setDragging(false); setDropCue(null); }} onDragOver={(event) => dragOver(event, { id: location.id, intent: "inside", kind: "location" })} onDrop={(event) => drop(event, { id: location.id, intent: "inside", kind: "location" })}><TouchDragHandle label={`Drag ${location.name} to move or nest it`} onActiveChange={setDragging} onDrop={(target) => finishTouchDrop({ type: "location", id: location.id }, target)} />{children.length ? <button className="tree-toggle" aria-expanded={!isCollapsed} aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${location.name}`} onClick={() => setCollapsed((current) => { const next = new Set(current); if (next.has(location.id)) next.delete(location.id); else next.add(location.id); return next; })}>{isCollapsed ? <ChevronRight /> : <ChevronDown />}</button> : <span className="tree-toggle-spacer" />}<button className="tree-select" aria-current={current?.id === location.id ? "true" : undefined} onClick={() => chooseLocation(location.id)}><span className="tree-code"><b>{location.code}</b><i>{location.kind}</i></span><span className="tree-name">{location.name}<small>{children.length} nested · {itemCount} items</small></span></button><span className="drop-copy" aria-hidden>{cue === "before" ? "Place before" : cue === "after" ? "Place after" : "Move inside"}</span><div className="row-actions"><button className="icon small" aria-label={`Move ${location.name} up`} disabled={index === 0} onClick={() => reorderLocation(location, -1)}><ArrowUp /></button><button className="icon small" aria-label={`Move ${location.name} down`} disabled={index === siblings.length - 1} onClick={() => reorderLocation(location, 1)}><ArrowDown /></button></div></div>{children.length > 0 && !isCollapsed && <div className="tree-children" role="list">{branch(location.id, depth + 1)}</div>}</div>;
+    return <div className="tree-node" role="listitem" key={location.id}><div className="tree-row" data-location-id={location.id} data-drop-target="location" data-drop-id={location.id} data-drop-intent={cue} data-active={current?.id === location.id} draggable onDragStart={(event) => startNativeDrag(event, { type: "location", id: location.id })} onDragEnd={() => endNativeDrag(`Choose a valid destination for ${location.name}`)} onDragOver={(event) => dragOver(event, { id: location.id, intent: "inside", kind: "location" })} onDrop={(event) => drop(event, { id: location.id, intent: "inside", kind: "location" })}><TouchDragHandle label={`Drag ${location.name} to move or nest it`} onActiveChange={setDragging} onDrop={(target) => finishTouchDrop({ type: "location", id: location.id }, target)} onInvalidDrop={() => refuseDrop(`Choose a valid destination for ${location.name}`)} />{children.length ? <button className="tree-toggle" aria-expanded={!isCollapsed} aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${location.name}`} onClick={() => setCollapsed((current) => { const next = new Set(current); if (next.has(location.id)) next.delete(location.id); else next.add(location.id); return next; })}>{isCollapsed ? <ChevronRight /> : <ChevronDown />}</button> : <span className="tree-toggle-spacer" />}<button className="tree-select" aria-current={current?.id === location.id ? "true" : undefined} onClick={() => chooseLocation(location.id)}><span className="tree-code"><b>{location.code}</b><i>{location.kind}</i></span><span className="tree-name">{location.name}<small>{children.length} nested · {itemCount} items</small></span></button><span className="drop-copy" aria-hidden>{cue === "before" ? "Place before" : cue === "after" ? "Place after" : "Move inside"}</span><div className="row-actions"><button className="icon small" aria-label={`Move ${location.name} up`} disabled={index === 0} onClick={() => reorderLocation(location, -1)}><ArrowUp /></button><button className="icon small" aria-label={`Move ${location.name} down`} disabled={index === siblings.length - 1} onClick={() => reorderLocation(location, 1)}><ArrowDown /></button></div></div>{children.length > 0 && !isCollapsed && <div className="tree-children" role="list">{branch(location.id, depth + 1)}</div>}</div>;
   });
   const removeLocation = (location: Location) => {
     const descendants = descendantIds(state, location.id);
@@ -1458,7 +1667,7 @@ function Spaces({ state, current, select, commit, focusEditorKey, focusEditorSec
   };
 
   const treePanel = <section className="panel tree-panel" data-dragging={dragging}><div className="title"><div><p className="eyebrow">Your physical hierarchy</p><h2>Rooms → cabinets → boxes</h2></div></div><p className="tree-help">Drag a handle onto the top, middle, or bottom of another row to place before, move inside, or place after. On touch, press the handle, slide, and release.</p><details className="tree-add"><summary>Add a top-level room or area</summary><form onSubmit={(event) => submitForm(event, addRoot)}><LocationCreateFields defaultKind="room" existingCodes={live.map((location) => location.code)} kindLabel="Space type" namePlaceholder="Friendly name" /><button>Add top-level space</button></form></details><div className="root-drop" data-drop-target="root" data-drop-intent={dropCue?.kind === "root" ? "inside" : undefined} onDragOver={(event) => dragOver(event, { id: null, intent: "inside", kind: "root" })} onDrop={(event) => drop(event, { id: null, intent: "inside", kind: "root" })}>Drop here to make a top-level room or area</div><div className="location-tree" role="list" aria-label="Space hierarchy">{branch(null)}</div>{current && <button className="mobile-edit-space primary" onClick={() => { const behavior = matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"; inspector.current?.scrollIntoView({ behavior, block: "start" }); inspector.current?.focus({ preventScroll: true }); }}>Edit {current.name}</button>}{archived.length > 0 && <details className="archived"><summary>{archived.length} archived</summary>{archived.map((location) => <div key={location.id}><span>{location.code} · {location.name}</span><button onClick={() => void perform(commit, { type: "location.archive", id: location.id, archived: false })}>Restore</button></div>)}</details>}</section>;
-  const inspectorPanel = <section className="panel inspector" id="space-inspector" ref={inspector} tabIndex={-1} aria-label={current ? `Edit ${current.name}` : "Space editor"}>{current ? <LocationEditor key={current.id} state={state} location={current} commit={commit} select={select} reorder={reorderLocation} remove={() => removeLocation(current)} editItem={setEditingItem} moveByDrop={finishTouchDrop} setDragging={setDragging} /> : <Empty title="Select a space" text="Edit it, move it, or drop an item or container onto it." />}</section>;
+  const inspectorPanel = <section className="panel inspector" id="space-inspector" ref={inspector} tabIndex={-1} aria-label={current ? `Edit ${current.name}` : "Space editor"}>{current ? <LocationEditor key={current.id} state={state} location={current} commit={commit} select={select} reorder={reorderLocation} remove={() => removeLocation(current)} editItem={setEditingItem} moveByDrop={finishTouchDrop} setDragging={setDragging} startNativeDrag={startNativeDrag} endNativeDrag={endNativeDrag} /> : <Empty title="Select a space" text="Edit it, move it, or drop an item or container onto it." />}</section>;
   return <>
     <ResizablePanels
       className="content split"
@@ -1473,7 +1682,7 @@ function Spaces({ state, current, select, commit, focusEditorKey, focusEditorSec
   </>;
 }
 
-function LocationEditor({ state, location, commit, select, reorder, remove, editItem, moveByDrop, setDragging }: { state: WorkspaceState; location: Location; commit: Commit; select: (id: string) => void; reorder: (location: Location, direction: -1 | 1) => void; remove: () => void; editItem: (id: string) => void; moveByDrop: (payload: DragPayload, target: DropTarget) => void; setDragging: (dragging: boolean) => void }) {
+function LocationEditor({ state, location, commit, select, reorder, remove, editItem, moveByDrop, setDragging, startNativeDrag, endNativeDrag }: { state: WorkspaceState; location: Location; commit: Commit; select: (id: string) => void; reorder: (location: Location, direction: -1 | 1) => void; remove: () => void; editItem: (id: string) => void; moveByDrop: (payload: DragPayload, target: DropTarget) => void; setDragging: (dragging: boolean) => void; startNativeDrag: (event: React.DragEvent, payload: DragPayload) => void; endNativeDrag: (message: string) => void }) {
   const invalidParents = new Set([location.id, ...descendantIds(state, location.id)]);
   const contents = sortItems(state.items.filter((item) => item.locationId === location.id && !item.archivedAt));
   const liveDescendantCount = descendantIds(state, location.id).filter(
@@ -1482,9 +1691,31 @@ function LocationEditor({ state, location, commit, select, reorder, remove, edit
   const canArchive = contents.length === 0 && liveDescendantCount === 0;
   const parentOptions = flattenLocationTree(state.locations.filter((candidate) => !candidate.archivedAt && !invalidParents.has(candidate.id)));
   const parentIsAvailable = location.parentId === null || parentOptions.some(({ location: candidate }) => candidate.id === location.parentId);
+  const siblings = sortLocations(state.locations.filter(
+    (candidate) =>
+      !candidate.archivedAt &&
+      candidate.parentId === location.parentId,
+  ));
+  const siblingIndex = siblings.findIndex(
+    (candidate) => candidate.id === location.id,
+  );
   const save = async (data: FormData) => {
     const dimensions = optionalDimensions(data);
     const parentId = String(data.get("parentId")) || null;
+    if (parentId !== location.parentId) {
+      const completedParent = [location.parentId, parentId]
+        .filter((id): id is string => Boolean(id))
+        .map((id) => state.locations.find((candidate) => candidate.id === id))
+        .find((candidate) =>
+          candidate && COMPLETE_CAPTURE_STATUSES.has(candidate.captureStatus)
+        );
+      if (completedParent) {
+        showFeedback(
+          `Reopen ${completedParent.name} before changing its contents`,
+        );
+        return false;
+      }
+    }
     const changes: Partial<Omit<Location, "id" | "createdAt">> = {
       name: String(data.get("name")), code: String(data.get("code")), kind: String(data.get("kind")) as LocationKind,
       description: String(data.get("description")), tags: splitList(data.get("tags")), dimensions, parentId,
@@ -1500,7 +1731,80 @@ function LocationEditor({ state, location, commit, select, reorder, remove, edit
     const child = createLocation({ code: String(data.get("code")), name: String(data.get("name")), kind: String(data.get("kind")) as LocationKind, parentId: location.id, order: nextOrder(children) });
     return perform(commit, { type: "location.create", location: child });
   };
-  return <><form onSubmit={(event) => submitForm(event, save, false)} className="editor-form"><div className="title"><div><p className="eyebrow">{location.kind}</p><h2>Edit space</h2></div><span className="tag">{location.captureStatus.replace("_", " ")}</span></div>{!parentIsAvailable && <p className="form-warning" role="status">The previous parent is archived or missing. Choose a parent below; saving will place this space at the top level if you leave it unchanged.</p>}<div className="form-grid"><label>Friendly name<input required name="name" defaultValue={location.name} /></label><label>Short ID<input required name="code" defaultValue={location.code} autoCapitalize="characters" /></label><label>Type<select name="kind" defaultValue={location.kind}>{kinds.map((kind) => <option key={kind}>{kind}</option>)}</select></label><label>Parent space<select name="parentId" defaultValue={parentIsAvailable ? location.parentId ?? "" : ""}><option value="">Top level</option>{parentOptions.map(({ depth, location: candidate }) => <option key={candidate.id} value={candidate.id}>{`${"  ".repeat(depth)}${depth ? "↳ " : ""}${candidate.code} · ${candidate.name}`}</option>)}</select></label><label className="wide">Tags, comma-separated<input name="tags" defaultValue={location.tags.join(", ")} /></label><label className="wide">Description<textarea name="description" defaultValue={location.description} /></label></div><fieldset data-guidance-section="space_suitability" tabIndex={-1}><legend>Suitability</legend><div className="check-grid"><label><input type="checkbox" name="foodSafe" defaultChecked={location.conditions.foodSafe} /> Food safe</label><label><input type="checkbox" name="dry" defaultChecked={location.conditions.dry} /> Dry</label><label><input type="checkbox" name="dark" defaultChecked={location.conditions.dark} /> Dark</label><label>Temperature<select name="temperature" defaultValue={location.conditions.temperature}><option>cold</option><option>cool</option><option>normal</option><option>warm</option></select></label><label>Humidity<select name="humidity" defaultValue={location.conditions.humidity}><option>dry</option><option>normal</option><option>humid</option></select></label></div></fieldset><fieldset data-guidance-section="space_capacity" tabIndex={-1}><legend>Interior dimensions (optional)</legend><div className="dimension-grid"><label>W<input name="width" type="number" min="0.01" step="any" defaultValue={location.dimensions?.width} /></label><label>H<input name="height" type="number" min="0.01" step="any" defaultValue={location.dimensions?.height} /></label><label>D<input name="depth" type="number" min="0.01" step="any" defaultValue={location.dimensions?.depth} /></label><label>Unit<select name="dimensionUnit" defaultValue={location.dimensions?.unit ?? "in"}><option>in</option><option>cm</option></select></label></div></fieldset><button className="primary">Save space</button></form><div className="inspector-actions"><button onClick={() => reorder(location, -1)}><ArrowUp /> Earlier</button><button onClick={() => reorder(location, 1)}><ArrowDown /> Later</button><button disabled={!canArchive} title={canArchive ? undefined : "Move, archive, or delete live contents and nested spaces first."} onClick={() => void perform(commit, { type: "location.archive", id: location.id, archived: true }, () => select(state.locations.find((candidate) => !candidate.archivedAt && candidate.id !== location.id)?.id ?? ""))}><Archive /> Archive</button><button className="danger" onClick={remove}><Trash2 /> Delete subtree</button></div><form key={location.id} className="nested inline-add" onSubmit={(event) => submitForm(event, addChild)}><h3>Add inside {location.name}</h3><LocationCreateFields defaultKind="box" existingCodes={state.locations.filter((candidate) => !candidate.archivedAt).map((candidate) => candidate.code)} kindLabel="Space type" namePlaceholder="Friendly name" /><button>Add nested space</button></form><div className="location-contents"><h3>Direct contents <small>{contents.length} records</small></h3>{contents.map((item) => <div className="location-item-row" key={item.id} draggable onDragStart={(event) => { setDragging(true); writeDrag(event, { type: "item", id: item.id }); }} onDragEnd={() => setDragging(false)}><TouchDragHandle label={`Drag ${item.name} into another space`} onActiveChange={setDragging} onDrop={(target) => moveByDrop({ type: "item", id: item.id }, target)} /><button className="item-name" onClick={() => editItem(item.id)}><strong>{item.name}</strong><small>{item.quantity} {item.unit}</small></button><button className="icon small" aria-label={`Edit ${item.name}`} onClick={() => editItem(item.id)}><Edit3 /></button></div>)}{contents.length === 0 && <p className="muted">No direct item records. Drop an inventory item onto this space to move it here.</p>}</div></>;
+  const captureComplete = COMPLETE_CAPTURE_STATUSES.has(location.captureStatus);
+  const reopenCapture = () => perform(commit, {
+    type: "capture.status",
+    id: location.id,
+    status: contents.length || liveDescendantCount ? "in_progress" : "uncounted",
+  }, () => showFeedback(`${location.name} is open for changes again`, "success"));
+  return <>
+    <form onSubmit={(event) => submitForm(event, save, false)} className="editor-form">
+      <div className="title">
+        <div><p className="eyebrow">{location.kind}</p><h2>Edit space</h2></div>
+        <span className="tag">{location.captureStatus.replace("_", " ")}</span>
+      </div>
+      {!parentIsAvailable && <p className="form-warning" role="status">The previous parent is archived or missing. Choose a parent below; saving will place this space at the top level if you leave it unchanged.</p>}
+      <div className="form-grid">
+        <label>Friendly name<input required name="name" defaultValue={location.name} /></label>
+        <label>Short ID<input required name="code" defaultValue={location.code} autoCapitalize="characters" /></label>
+        <label>Type<select name="kind" defaultValue={location.kind}>{kinds.map((kind) => <option key={kind}>{kind}</option>)}</select></label>
+        <label>Parent space<select name="parentId" defaultValue={parentIsAvailable ? location.parentId ?? "" : ""}><option value="">Top level</option>{parentOptions.map(({ depth, location: candidate }) => <option key={candidate.id} value={candidate.id}>{`${"  ".repeat(depth)}${depth ? "↳ " : ""}${candidate.code} · ${candidate.name}`}</option>)}</select></label>
+        <label className="wide">Tags, comma-separated<input name="tags" defaultValue={location.tags.join(", ")} /></label>
+        <label className="wide">Description<textarea name="description" defaultValue={location.description} /></label>
+      </div>
+      <fieldset data-guidance-section="space_suitability" tabIndex={-1}>
+        <legend>Suitability</legend>
+        <div className="check-grid">
+          <label><input type="checkbox" name="foodSafe" defaultChecked={location.conditions.foodSafe} /> Food safe</label>
+          <label><input type="checkbox" name="dry" defaultChecked={location.conditions.dry} /> Dry</label>
+          <label><input type="checkbox" name="dark" defaultChecked={location.conditions.dark} /> Dark</label>
+          <label>Temperature<select name="temperature" defaultValue={location.conditions.temperature}><option>cold</option><option>cool</option><option>normal</option><option>warm</option></select></label>
+          <label>Humidity<select name="humidity" defaultValue={location.conditions.humidity}><option>dry</option><option>normal</option><option>humid</option></select></label>
+        </div>
+      </fieldset>
+      <fieldset data-guidance-section="space_capacity" tabIndex={-1}>
+        <legend>Interior dimensions (optional)</legend>
+        <div className="dimension-grid">
+          <label>W<input name="width" type="number" min="0.01" step="any" defaultValue={location.dimensions?.width} /></label>
+          <label>H<input name="height" type="number" min="0.01" step="any" defaultValue={location.dimensions?.height} /></label>
+          <label>D<input name="depth" type="number" min="0.01" step="any" defaultValue={location.dimensions?.depth} /></label>
+          <label>Unit<select name="dimensionUnit" defaultValue={location.dimensions?.unit ?? "in"}><option>in</option><option>cm</option></select></label>
+        </div>
+      </fieldset>
+      <button className="primary">Save space</button>
+    </form>
+    <div className="inspector-actions">
+      <button disabled={siblingIndex <= 0} onClick={() => reorder(location, -1)}><ArrowUp /> Earlier</button>
+      <button disabled={siblingIndex < 0 || siblingIndex === siblings.length - 1} onClick={() => reorder(location, 1)}><ArrowDown /> Later</button>
+      <button disabled={!canArchive} title={canArchive ? undefined : "Move, archive, or delete live contents and nested spaces first."} onClick={() => void perform(commit, { type: "location.archive", id: location.id, archived: true }, () => select(state.locations.find((candidate) => !candidate.archivedAt && candidate.id !== location.id)?.id ?? ""))}><Archive /> Archive</button>
+      <button className="danger" onClick={remove}><Trash2 /> Delete subtree</button>
+    </div>
+    {captureComplete && <div className="capture-locked capture-locked-action" role="status">
+      <CheckCircle2 />
+      <span><strong>Contents are read-only</strong><small>Reopen capture before adding, editing, moving, or reordering direct contents.</small></span>
+      <button type="button" onClick={() => void reopenCapture()}><RotateCcw /> Reopen capture</button>
+    </div>}
+    {!captureComplete && <form key={location.id} className="nested inline-add" onSubmit={(event) => submitForm(event, addChild)}>
+      <h3>Add inside {location.name}</h3>
+      <LocationCreateFields defaultKind="box" existingCodes={state.locations.filter((candidate) => !candidate.archivedAt).map((candidate) => candidate.code)} kindLabel="Space type" namePlaceholder="Friendly name" />
+      <button>Add nested space</button>
+    </form>}
+    <div className="location-contents">
+      <h3>Direct contents <small>{contents.length} records</small></h3>
+      {contents.map((item) => <div
+        className="location-item-row"
+        key={item.id}
+        draggable={!captureComplete}
+        onDragStart={captureComplete ? undefined : (event) => startNativeDrag(event, { type: "item", id: item.id })}
+        onDragEnd={captureComplete ? undefined : () => endNativeDrag(`Choose a different space for ${item.name}`)}
+      >
+        {captureComplete ? <span className="capture-readonly-marker" aria-hidden><CheckCircle2 /></span> : <TouchDragHandle label={`Drag ${item.name} into another space`} onActiveChange={setDragging} onDrop={(target) => moveByDrop({ type: "item", id: item.id }, target)} onInvalidDrop={() => showFeedback(`Choose a different space for ${item.name}`)} />}
+        {captureComplete ? <span className="item-name"><strong>{item.name}</strong><small>{item.quantity} {item.unit}</small></span> : <button className="item-name" onClick={() => editItem(item.id)}><strong>{item.name}</strong><small>{item.quantity} {item.unit}</small></button>}
+        {!captureComplete && <button className="icon small" aria-label={`Edit ${item.name}`} onClick={() => editItem(item.id)}><Edit3 /></button>}
+      </div>)}
+      {contents.length === 0 && <p className="muted">{captureComplete ? "No direct item records. Reopen capture before adding contents." : "No direct item records. Drop an inventory item onto this space to move it here."}</p>}
+    </div>
+  </>;
 }
 
 function Inventory({ state, commit, editing, editFocus, locationFilter, onEditingChange, onLocationFilterChange }: { state: WorkspaceState; commit: Commit; editing: string | null; editFocus?: GuidanceFocus; locationFilter: string; onEditingChange: (id: string | null) => void; onLocationFilterChange: (id: string) => void }) {
@@ -1509,6 +1813,7 @@ function Inventory({ state, commit, editing, editFocus, locationFilter, onEditin
   const [selected, setSelected] = useState<string[]>([]);
   const [nativeReorderCue, setNativeReorderCue] = useState<DropTarget | null>(null);
   const [nativeReorderSource, setNativeReorderSource] = useState<DragPayload | null>(null);
+  const nativeReorderHandled = useRef(false);
   const locationName = useMemo(() => new Map(state.locations.map((location) => [location.id, locationPath(state.locations, location.id).map((part) => part.name).join(" › ")])), [state.locations]);
   const locationOptions = flattenLocationTree(state.locations.filter((location) => !location.archivedAt));
   const shown = useMemo(() => state.items.filter((item) => {
@@ -1526,18 +1831,71 @@ function Inventory({ state, commit, editing, editFocus, locationFilter, onEditin
     if (sortBy === "location") return (locationName.get(left.locationId) ?? "").localeCompare(locationName.get(right.locationId) ?? "") || left.name.localeCompare(right.name);
     return left.name.localeCompare(right.name);
   }), [state, query, locationFilter, locationName, sortBy]);
-  const canReorder = Boolean(locationFilter) && !query.trim();
+  const filteredLocation = state.locations.find(
+    (location) => location.id === locationFilter,
+  );
+  const filteredCaptureComplete = Boolean(
+    filteredLocation &&
+    COMPLETE_CAPTURE_STATUSES.has(filteredLocation.captureStatus),
+  );
+  const canReorder = Boolean(locationFilter) &&
+    !query.trim() &&
+    !filteredCaptureComplete;
   const shownIds = new Set(shown.map((item) => item.id));
   const activeSelection = selected.filter((id) => shownIds.has(id));
   const selectedItems = state.items.filter((item) => activeSelection.includes(item.id));
+  const reopenFilteredCapture = () => {
+    if (!filteredLocation) return;
+    const hasContents = state.items.some(
+      (item) => item.locationId === filteredLocation.id && !item.archivedAt,
+    ) || state.locations.some(
+      (location) =>
+        location.parentId === filteredLocation.id && !location.archivedAt,
+    );
+    void perform(commit, {
+      type: "capture.status",
+      id: filteredLocation.id,
+      status: hasContents ? "in_progress" : "uncounted",
+    }, () => showFeedback(
+      `${filteredLocation.name} is open for changes again`,
+      "success",
+    ));
+  };
+  const moveSelected = (destinationId: string) => {
+    const completed = [
+      ...selectedItems.map((item) => item.locationId),
+      destinationId,
+    ]
+      .map((id) => state.locations.find((location) => location.id === id))
+      .find((location) =>
+        location && COMPLETE_CAPTURE_STATUSES.has(location.captureStatus)
+      );
+    if (completed) {
+      showFeedback(`Reopen ${completed.name} before changing its contents`);
+      return;
+    }
+    void perform(commit, {
+      type: "item.bulkMove",
+      itemIds: activeSelection,
+      destinationId,
+    }, () => setSelected([]));
+  };
   const clearNativeReorder = () => {
     setNativeReorderCue(null);
     setNativeReorderSource(null);
   };
   const startNativeReorder = (event: React.DragEvent, payload: DragPayload) => {
+    nativeReorderHandled.current = false;
     setNativeReorderCue(null);
     setNativeReorderSource(payload);
     writeDrag(event, payload);
+  };
+  const endNativeReorder = (item: ItemRecord) => {
+    if (!nativeReorderHandled.current) {
+      showFeedback(`Choose a different destination for ${item.name}`);
+    }
+    nativeReorderHandled.current = false;
+    clearNativeReorder();
   };
   const canDropItem = (sourceId: string, targetId: string) => {
     if (!canReorder || sourceId === targetId) return false;
@@ -1560,10 +1918,20 @@ function Inventory({ state, commit, editing, editFocus, locationFilter, onEditin
     }
   };
   const moveItemByDrop = (payload: DragPayload | null, target: DropTarget) => {
-    if (payload?.type !== "item" || target.kind !== "item" || !target.id) return;
+    if (payload?.type !== "item" || target.kind !== "item" || !target.id) {
+      showFeedback("Choose another item in this filtered container");
+      return;
+    }
     const source = state.items.find((item) => item.id === payload.id);
     const targetItem = state.items.find((item) => item.id === target.id);
-    if (!source || !targetItem || source.id === targetItem.id) return;
+    if (!source || !targetItem) {
+      showFeedback("That item is no longer available");
+      return;
+    }
+    if (source.id === targetItem.id) {
+      showFeedback(`Choose a different destination for ${source.name}`);
+      return;
+    }
     if (source.locationId !== targetItem.locationId) {
       void perform(commit, { type: "item.move", id: source.id, destinationId: targetItem.locationId, quantity: source.quantity });
       return;
@@ -1579,6 +1947,7 @@ function Inventory({ state, commit, editing, editFocus, locationFilter, onEditin
       nativeReorderSource?.type !== "item" ||
       !canDropItem(nativeReorderSource.id, targetId)
     ) {
+      event.preventDefault();
       event.dataTransfer.dropEffect = "none";
       setNativeReorderCue(null);
       return;
@@ -1592,10 +1961,14 @@ function Inventory({ state, commit, editing, editFocus, locationFilter, onEditin
   const dropOnItem = (event: React.DragEvent<HTMLElement>, target: ItemRecord) => {
     const payload = readDrag(event) ?? nativeReorderSource;
     if (payload?.type !== "item" || !canDropItem(payload.id, target.id)) {
+      event.preventDefault();
+      nativeReorderHandled.current = true;
+      showFeedback("Choose another item in this filtered container");
       clearNativeReorder();
       return;
     }
     event.preventDefault();
+    nativeReorderHandled.current = true;
     moveItemByDrop(
       payload,
       reorderDropTarget(event.currentTarget, event.clientY, "item", target.id),
@@ -1628,7 +2001,7 @@ function Inventory({ state, commit, editing, editFocus, locationFilter, onEditin
       data-item-id={item.id}
       key={item.id}
       draggable={canReorder}
-      onDragEnd={canReorder ? clearNativeReorder : undefined}
+      onDragEnd={canReorder ? () => endNativeReorder(item) : undefined}
       onDragLeave={canReorder ? (event) => leaveNativeReorderTarget(event, item.id) : undefined}
       onDragOver={canReorder ? (event) => dragOverItem(event, item.id) : undefined}
       onDragStart={canReorder ? (event) => startNativeReorder(event, { type: "item", id: item.id }) : undefined}
@@ -1637,7 +2010,7 @@ function Inventory({ state, commit, editing, editFocus, locationFilter, onEditin
       {canReorder ? <TouchDragHandle label={`Drag ${item.name} to reorder`} targetAt={(clientX, clientY) => {
         const target = reorderTargetAt(clientX, clientY, "item");
         return target?.id && canDropItem(item.id, target.id) ? target : null;
-      }} onDrop={(target) => moveItemByDrop({ type: "item", id: item.id }, target)} /> : <span className="inventory-marker" aria-hidden>•</span>}
+      }} onDrop={(target) => moveItemByDrop({ type: "item", id: item.id }, target)} onInvalidDrop={() => showFeedback(`Choose a different destination for ${item.name}`)} /> : <span className="inventory-marker" aria-hidden>•</span>}
       <label className="inventory-select"><input aria-label={`Select ${actionIdentity} in ${locationName.get(item.locationId) ?? "Unknown space"}`} type="checkbox" checked={activeSelection.includes(item.id)} onChange={() => setSelected((current) => { const valid = current.filter((id) => shownIds.has(id)); return valid.includes(item.id) ? valid.filter((id) => id !== item.id) : [...valid, item.id]; })} /></label>
       <button className="item-name" aria-label={`Open ${actionIdentity} in ${locationName.get(item.locationId) ?? "Unknown space"}`} onClick={() => onEditingChange(item.id)}><strong>{item.name}</strong><small>{item.category} · {item.frequency} · {item.tags.join(", ") || "no tags"}</small></button>
       <b>{item.quantity} {item.unit}</b>
@@ -1647,7 +2020,44 @@ function Inventory({ state, commit, editing, editFocus, locationFilter, onEditin
       <button className="row-action" aria-label={`Edit or move ${actionIdentity} in ${locationName.get(item.locationId) ?? "Unknown space"}`} onClick={() => onEditingChange(item.id)}><Edit3 /><span>Edit / move</span></button>
     </div>;
   };
-  return <div className="content inventory-page"><div className="inventory-heading"><div><p className="eyebrow">Everything, regardless of container</p><h2>All item records</h2><p>Search the whole workspace, then select records for an explicit move. Filter to one container only when physical order matters.</p></div><b>{shown.length} records</b></div><div className="toolbar inventory-tools"><label className="search"><Search /><input aria-label="Search inventory" value={query} onChange={(event) => { setQuery(event.target.value); setSelected([]); }} placeholder="Search names, categories, tags, constraints, and notes" /></label><select aria-label="Filter by location" value={locationFilter} onChange={(event) => { onLocationFilterChange(event.target.value); setSelected([]); }}><option value="">Every container</option>{locationOptions.map(({ depth, location }) => <option key={location.id} value={location.id}>{`${"  ".repeat(depth)}${depth ? "↳ " : ""}${location.code} · ${location.name}`}</option>)}</select><select aria-label="Sort inventory" value={sortBy} onChange={(event) => setSortBy(event.target.value as typeof sortBy)} disabled={canReorder}><option value="name">Sort: name</option><option value="location">Sort: location</option><option value="quantity">Sort: quantity</option></select></div><p className="drag-hint">{canReorder ? `Showing one container. Drag handles or arrow buttons reorder ${shown.length} records here; use Edit / move to change containers.` : locationFilter && query.trim() ? "Search results are sorted for review. Clear the search before changing physical order." : "Showing the containerless inventory. Select one or more records to move them, or use Edit / move for details and partial quantities."}</p><section className="panel inventory">{shown.map(inventoryRow)}{shown.length === 0 && <Empty title="No matching records" text="Clear a filter or capture something new." />}</section>{activeSelection.length > 0 && <div className="floating"><b>{activeSelection.length} selected</b><select aria-label="Move selected items" defaultValue="" onChange={(event) => { if (event.target.value) void perform(commit, { type: "item.bulkMove", itemIds: activeSelection, destinationId: event.target.value }, () => setSelected([])); }}><option value="">Move to…</option>{locationOptions.map(({ depth, location }) => <option disabled={selectedItems.length > 0 && selectedItems.every((item) => item.locationId === location.id)} value={location.id} key={location.id}>{`${"  ".repeat(depth)}${depth ? "↳ " : ""}${location.code} · ${location.name}`}</option>)}</select><button onClick={() => setSelected([])}>Clear</button></div>}{editing && state.items.find((item) => item.id === editing) && <ItemEditor item={state.items.find((item) => item.id === editing) as ItemRecord} state={state} commit={commit} close={() => onEditingChange(null)} focus={editFocus} />}</div>;
+  return <div className="content inventory-page">
+    <div className="inventory-heading">
+      <div>
+        <p className="eyebrow">Everything, regardless of container</p>
+        <h2>All item records</h2>
+        <p>Search the whole workspace, then select records for an explicit move. Filter to one container only when physical order matters.</p>
+      </div>
+      <b>{shown.length} records</b>
+    </div>
+    <div className="toolbar inventory-tools">
+      <label className="search"><Search /><input aria-label="Search inventory" value={query} onChange={(event) => { setQuery(event.target.value); setSelected([]); }} placeholder="Search names, categories, tags, constraints, and notes" /></label>
+      <select aria-label="Filter by location" value={locationFilter} onChange={(event) => { onLocationFilterChange(event.target.value); setSelected([]); }}>
+        <option value="">Every container</option>
+        {locationOptions.map(({ depth, location }) => <option key={location.id} value={location.id}>{`${"  ".repeat(depth)}${depth ? "↳ " : ""}${location.code} · ${location.name}`}</option>)}
+      </select>
+      <select aria-label="Sort inventory" value={sortBy} onChange={(event) => setSortBy(event.target.value as typeof sortBy)} disabled={canReorder}>
+        <option value="name">Sort: name</option>
+        <option value="location">Sort: location</option>
+        <option value="quantity">Sort: quantity</option>
+      </select>
+    </div>
+    {filteredCaptureComplete && filteredLocation && <div className="capture-locked capture-locked-action" role="status">
+      <CheckCircle2 />
+      <span><strong>{filteredLocation.name} is read-only</strong><small>Reopen capture before editing, moving, or reordering its item records.</small></span>
+      <button type="button" onClick={reopenFilteredCapture}><RotateCcw /> Reopen capture</button>
+    </div>}
+    <p className="drag-hint">{filteredCaptureComplete ? "This completed container is available for review. Reopen capture to change its records." : canReorder ? `Showing one container. Drag handles or arrow buttons reorder ${shown.length} records here; use Edit / move to change containers.` : locationFilter && query.trim() ? "Search results are sorted for review. Clear the search before changing physical order." : "Showing the containerless inventory. Select one or more records to move them, or use Edit / move for details and partial quantities."}</p>
+    <section className="panel inventory">{shown.map(inventoryRow)}{shown.length === 0 && <Empty title="No matching records" text="Clear a filter or capture something new." />}</section>
+    {activeSelection.length > 0 && <div className="floating">
+      <b>{activeSelection.length} selected</b>
+      <select aria-label="Move selected items" defaultValue="" onChange={(event) => { if (event.target.value) moveSelected(event.target.value); }}>
+        <option value="">Move to…</option>
+        {locationOptions.map(({ depth, location }) => <option disabled={selectedItems.length > 0 && selectedItems.every((item) => item.locationId === location.id)} value={location.id} key={location.id}>{`${"  ".repeat(depth)}${depth ? "↳ " : ""}${location.code} · ${location.name}`}</option>)}
+      </select>
+      <button onClick={() => setSelected([])}>Clear</button>
+    </div>}
+    {editing && state.items.find((item) => item.id === editing) && <ItemEditor item={state.items.find((item) => item.id === editing) as ItemRecord} state={state} commit={commit} close={() => onEditingChange(null)} focus={editFocus} />}
+  </div>;
 }
 
 function ItemEditor({ item, state, commit, close, focus }: { item: ItemRecord; state: WorkspaceState; commit: Commit; close: () => void; focus?: GuidanceFocus }) {
@@ -1658,6 +2068,13 @@ function ItemEditor({ item, state, commit, close, focus }: { item: ItemRecord; s
   const destinationOptions = flattenLocationTree(state.locations.filter((location) => !location.archivedAt && location.id !== item.locationId));
   const currentLocation = locationPath(state.locations, item.locationId);
   const currentLocationLabel = currentLocation.length ? currentLocation.map((location) => location.name).join(" › ") : "Unplaced";
+  const currentLocationRecord = state.locations.find(
+    (location) => location.id === item.locationId,
+  );
+  const captureComplete = Boolean(
+    currentLocationRecord &&
+    COMPLETE_CAPTURE_STATUSES.has(currentLocationRecord.captureStatus),
+  );
   const hasPlacementRules = item.constraints.foodOnly || item.constraints.avoidWarmth || item.constraints.avoidHumidity || Boolean(item.constraints.keepTogether) || item.constraints.requiredTags.length > 0;
   useEffect(() => { closeRef.current = close; }, [close]);
   useEffect(() => {
@@ -1682,6 +2099,12 @@ function ItemEditor({ item, state, commit, close, focus }: { item: ItemRecord; s
       available[nextIndex]?.focus();
     };
     const frame = requestAnimationFrame(() => {
+      if (captureComplete) {
+        dialog.current
+          ?.querySelector<HTMLButtonElement>("[data-reopen-capture]")
+          ?.focus();
+        return;
+      }
       const requestedFocus = initialFocus.current;
       const coarsePointer = matchMedia("(pointer: coarse)").matches;
       if (requestedFocus === "item_details") {
@@ -1713,7 +2136,7 @@ function ItemEditor({ item, state, commit, close, focus }: { item: ItemRecord; s
       document.body.style.overflow = previousBodyOverflow;
       if (previous?.isConnected) previous.focus();
     };
-  }, []);
+  }, [captureComplete]);
   const save = async (data: FormData) => {
     try {
       const dimensions = optionalDimensions(data);
@@ -1739,6 +2162,42 @@ function ItemEditor({ item, state, commit, close, focus }: { item: ItemRecord; s
       return false;
     }
   };
+  const reopenCapture = () => {
+    if (!currentLocationRecord) return;
+    void perform(commit, {
+      type: "capture.status",
+      id: currentLocationRecord.id,
+      status: "in_progress",
+    }, () => {
+      showFeedback(
+        `${currentLocationRecord.name} is open for changes again`,
+        "success",
+      );
+      requestAnimationFrame(() =>
+        dialog.current?.querySelector<HTMLInputElement>('input[name="name"]')
+          ?.focus()
+      );
+    });
+  };
+  if (captureComplete && currentLocationRecord) {
+    return <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
+      <section ref={dialog} tabIndex={-1} className="modal item-editor-modal item-editor-locked" role="dialog" aria-modal="true" aria-labelledby="item-editor-title">
+        <header className="item-editor-header">
+          <div><p className="eyebrow">Item details</p><h2 id="item-editor-title">Review item</h2><p>{item.name}</p></div>
+          <button className="icon" aria-label="Close item editor" onClick={close}><X /></button>
+        </header>
+        <div className="item-editor-context" aria-label="Current item summary">
+          <span><small>Amount</small><strong>{item.quantity} {item.unit}</strong></span>
+          <span><small>Stored in</small><strong>{currentLocationLabel}</strong></span>
+        </div>
+        <div className="capture-locked capture-locked-action" role="status">
+          <CheckCircle2 />
+          <span><strong>{currentLocationRecord.name} is read-only</strong><small>Reopen capture before editing, moving, or deleting this item record.</small></span>
+          <button type="button" data-reopen-capture onClick={reopenCapture}><RotateCcw /> Reopen capture</button>
+        </div>
+      </section>
+    </div>;
+  }
   return <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}><section ref={dialog} tabIndex={-1} className="modal item-editor-modal" role="dialog" aria-modal="true" aria-labelledby="item-editor-title"><header className="item-editor-header"><div><p className="eyebrow">Item details</p><h2 id="item-editor-title">Edit item</h2><p>{item.name}</p></div><button className="icon" aria-label="Close item editor" onClick={close}><X /></button></header><div className="item-editor-context" aria-label="Current item summary"><span><small>Amount</small><strong>{item.quantity} {item.unit}</strong></span><span><small>Stored in</small><strong>{currentLocationLabel}</strong></span></div><div className="item-editor-layout"><form onSubmit={(event) => submitForm(event, save, false)} className="item-editor-form"><section className="item-section item-essential"><div className="item-section-heading"><b>1</b><span><strong>What is it?</strong><small>The everyday details you will use most.</small></span></div><div className="item-core-grid"><label className="item-name-field">Item name<input required name="name" defaultValue={item.name} /></label><label>Quantity<input required name="quantity" type="number" min="0.01" step="any" defaultValue={item.quantity} /></label><label>Unit<input required name="unit" defaultValue={item.unit} /></label></div></section><section className="item-section" data-guidance-section="item_details" tabIndex={-1}><div className="item-section-heading"><b>2</b><span><strong>Organize and find it</strong><small>Structured labels keep search useful without becoming free-form chaos.</small></span></div><div className="item-organize-grid"><label>Category<input name="category" defaultValue={item.category} placeholder="e.g. Baking" /></label><label>How often is it used?<select name="frequency" defaultValue={item.frequency}>{frequencies.map((frequency) => <option key={frequency}>{frequency}</option>)}</select></label><label className="wide">Search tags<input name="tags" defaultValue={item.tags.join(", ")} placeholder="washable, seasonal, breakfast" /><small>Separate tags with commas.</small></label><label className="wide">Notes<textarea name="notes" defaultValue={item.notes} placeholder="Anything useful that does not belong in a structured field." /></label></div></section><details className="item-advanced" open={hasPlacementRules}><summary><span><strong>Placement requirements</strong><small>Only add rules that affect where this item can safely live.</small></span><b>{hasPlacementRules ? "Configured" : "Optional"}</b></summary><div className="item-advanced-body"><div className="constraint-grid"><label><input type="checkbox" name="foodOnly" defaultChecked={item.constraints.foodOnly} /><span><strong>Food-safe only</strong><small>Keep it out of unsuitable spaces.</small></span></label><label><input type="checkbox" name="avoidWarmth" defaultChecked={item.constraints.avoidWarmth} /><span><strong>Avoid warmth</strong><small>Exclude warm cabinets or zones.</small></span></label><label><input type="checkbox" name="avoidHumidity" defaultChecked={item.constraints.avoidHumidity} /><span><strong>Avoid humidity</strong><small>Prefer dry storage.</small></span></label></div><div className="item-organize-grid"><label>Keep-together group<input name="keepTogether" defaultValue={item.constraints.keepTogether ?? ""} placeholder="e.g. Coffee station" /></label><label>Required location tags<input name="requiredTags" defaultValue={item.constraints.requiredTags.join(", ")} placeholder="cool, dark" /></label></div></div></details><details className="item-advanced" data-guidance-section="item_capacity" open={Boolean(item.dimensions)}><summary><span><strong>Size per unit</strong><small>Useful when Stowplan needs to reason about capacity.</small></span><b>{item.dimensions ? "Measured" : "Optional"}</b></summary><div className="item-advanced-body"><div className="dimension-grid"><label>Width<input name="width" type="number" min="0.01" step="any" defaultValue={item.dimensions?.width} /></label><label>Height<input name="height" type="number" min="0.01" step="any" defaultValue={item.dimensions?.height} /></label><label>Depth<input name="depth" type="number" min="0.01" step="any" defaultValue={item.dimensions?.depth} /></label><label>Unit<select name="dimensionUnit" defaultValue={item.dimensions?.unit ?? "in"}><option>in</option><option>cm</option></select></label></div></div></details><footer className="item-save-bar"><span><strong>Changes stay on this device first.</strong><small>Server backup follows when available.</small></span><button className="primary">Save item</button></footer></form><aside className="item-editor-rail"><form onSubmit={(event) => submitForm(event, move, false)} className="move-card"><p className="eyebrow">Placement</p><h3>Move all or part</h3><p>Currently in <strong>{currentLocationLabel}</strong>.</p><label>How many?<input required name="moveQuantity" type="number" min="0.01" max={item.quantity} step="any" defaultValue={item.quantity} /></label><label>Move to<select required name="destination" defaultValue=""><option value="" disabled>Choose a space…</option>{destinationOptions.map(({ depth, location }) => <option key={location.id} value={location.id}>{`${"  ".repeat(depth)}${depth ? "↳ " : ""}${location.code} · ${location.name}`}</option>)}</select></label><button>Move quantity</button><small>Moving fewer than {item.quantity} creates a separate record at the destination.</small></form><details className="item-danger"><summary>More actions</summary><button type="button" className="danger" onClick={() => { if (confirm(`Delete ${item.name}? You can undo this from Activity.`)) void perform(commit, { type: "item.delete", id: item.id }, close); }}><Trash2 /> Delete item record</button><small>Deletion is recorded in Activity and can be undone.</small></details></aside></div>{message && <output className="form-message item-editor-message">{message}</output>}</section></div>;
 }
 
@@ -1939,7 +2398,7 @@ function Planner({ state, commit, openGuidanceTarget }: { state: WorkspaceState;
       <div>
         <p className="eyebrow">Explainable recommendations</p>
         <h2>Fewer moves, better homes.</h2>
-        <p>Balance suitability, access, grouping, capacity, and move effort—including moving a whole nested box when that is simpler. Marking a step moved updates Inventory immediately; Activity can undo it.</p>
+        <p>Balance suitability, access, grouping, capacity, and move effort, including moving a whole nested box when that is simpler. Marking a step moved updates Inventory immediately; Activity can undo it.</p>
       </div>
       <details className="plan-settings">
         <summary>Plan priorities</summary>

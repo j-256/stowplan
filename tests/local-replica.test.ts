@@ -23,6 +23,17 @@ import {
   writeWorkspaceReplicaIfUnchanged,
 } from "../src/client/local-replica";
 
+function reopenFixtureLocation(
+  state: ReturnType<typeof createDemoState>,
+  locationId: string,
+): void {
+  const location = state.locations.find(
+    (candidate) => candidate.id === locationId,
+  );
+  if (!location) throw new Error(`Missing fixture location ${locationId}`);
+  location.captureStatus = "in_progress";
+}
+
 describe("local replica", () => {
   beforeEach(async () => clearReplica());
   it("atomically preserves the workspace and durable outbox", async () => {
@@ -299,6 +310,7 @@ describe("local replica", () => {
 
   it("normalizes missing v1 item order in a pending create command", async () => {
     const initial = createDemoState();
+    reopenFixtureLocation(initial, "loc_food");
     const item = createItem({
       locationId: "loc_food",
       name: "Legacy queued item",
@@ -325,6 +337,7 @@ describe("local replica", () => {
 
   it("normalizes an orderless v1 create after a later queued delete removed the item", async () => {
     const initial = createDemoState();
+    reopenFixtureLocation(initial, "loc_food");
     const item = createItem({
       locationId: "loc_food",
       name: "Legacy create then delete",
@@ -373,6 +386,7 @@ describe("local replica", () => {
 
   it("accepts a legacy pending delete expectation with no item order", async () => {
     const initial = createDemoState();
+    reopenFixtureLocation(initial, "loc_warm");
     const envelope = createEnvelope(initial, {
       type: "item.delete",
       id: "item_pasta",

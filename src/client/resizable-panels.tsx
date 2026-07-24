@@ -11,6 +11,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { readPreference, writePreference } from "./preference-storage";
 
 export type PanelLayout = "side-by-side" | "stacked";
 
@@ -19,6 +20,8 @@ const MIN_PANEL_PERCENT = 28;
 const MAX_PANEL_PERCENT = 62;
 const PANEL_KEYBOARD_STEP = 4;
 const MIN_SIDE_BY_SIDE_WIDTH = 800;
+const SHORT_TOUCH_LAYOUT_QUERY =
+  "(max-height: 520px) and (pointer: coarse) and (min-width: 761px)";
 const PANEL_LAYOUT_STORAGE_PREFIX = "stowplan-panel-layout";
 const PANEL_SIZE_STORAGE_PREFIX = "stowplan-panel-size";
 
@@ -54,13 +57,13 @@ export function ResizablePanels({
 
   useEffect(() => {
     /* eslint-disable react-hooks/set-state-in-effect -- hydrate device-only panel preferences after the server-consistent first render */
-    const savedLayout = localStorage.getItem(
+    const savedLayout = readPreference(
       `${PANEL_LAYOUT_STORAGE_PREFIX}-${storageId}`,
     );
     if (savedLayout === "side-by-side" || savedLayout === "stacked") {
       setLayout(savedLayout);
     }
-    const savedSize = Number(localStorage.getItem(
+    const savedSize = Number(readPreference(
       `${PANEL_SIZE_STORAGE_PREFIX}-${storageId}`,
     ));
     if (Number.isFinite(savedSize) && savedSize > 0) {
@@ -74,7 +77,14 @@ export function ResizablePanels({
     const element = container.current;
     if (!element) return;
     const update = () => {
-      setCanShowSideBySide(element.clientWidth >= MIN_SIDE_BY_SIDE_WIDTH);
+      const styles = getComputedStyle(element);
+      const horizontalPadding =
+        Number.parseFloat(styles.paddingLeft)
+        + Number.parseFloat(styles.paddingRight);
+      setCanShowSideBySide(
+        !matchMedia(SHORT_TOUCH_LAYOUT_QUERY).matches &&
+        element.clientWidth - horizontalPadding >= MIN_SIDE_BY_SIDE_WIDTH,
+      );
     };
     update();
     const observer = new ResizeObserver(update);
@@ -84,11 +94,11 @@ export function ResizablePanels({
 
   useEffect(() => {
     if (!preferencesReady) return;
-    localStorage.setItem(
+    writePreference(
       `${PANEL_LAYOUT_STORAGE_PREFIX}-${storageId}`,
       layout,
     );
-    localStorage.setItem(
+    writePreference(
       `${PANEL_SIZE_STORAGE_PREFIX}-${storageId}`,
       String(panelPercent),
     );

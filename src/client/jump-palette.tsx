@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -33,6 +34,7 @@ type JumpResult = {
 };
 
 const MAX_JUMP_RESULTS = 14;
+const JUMP_SCROLL_MARGIN_PX = 2;
 const jumpViews: {
   icon: typeof Boxes;
   id: WorkspaceView;
@@ -92,20 +94,15 @@ export function JumpPalette({
   const input = useRef<HTMLInputElement | null>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open) return;
-    /* eslint-disable react-hooks/set-state-in-effect -- each palette opening starts with a fresh query and selection */
-    setQuery("");
-    setActiveIndex(0);
-    /* eslint-enable react-hooks/set-state-in-effect */
     previousFocus.current = document.activeElement instanceof HTMLElement
       ? document.activeElement
       : null;
-    const frame = requestAnimationFrame(() => input.current?.focus());
+    input.current?.focus();
     const previousBodyOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
-      cancelAnimationFrame(frame);
       document.body.style.overflow = previousBodyOverflow;
       if (previousFocus.current?.isConnected) previousFocus.current.focus();
     };
@@ -171,6 +168,29 @@ export function JumpPalette({
     ).slice(0, MAX_JUMP_RESULTS);
   }, [openItem, openLocation, openView, query, state]);
 
+  useEffect(() => {
+    if (!open) return;
+    const activeResult = results[activeIndex] ?? results[0];
+    if (!activeResult) return;
+    const option = document.getElementById(`jump-option-${activeResult.id}`);
+    if (option && dialog.current?.contains(option)) {
+      const resultList = option.closest<HTMLElement>(".jump-results");
+      const optionBounds = option.getBoundingClientRect();
+      const listBounds = resultList?.getBoundingClientRect();
+      if (resultList && listBounds) {
+        const visibleTop = listBounds.top + JUMP_SCROLL_MARGIN_PX;
+        const visibleBottom = listBounds.bottom - JUMP_SCROLL_MARGIN_PX;
+        if (optionBounds.top < visibleTop) {
+          resultList.scrollTop -= Math.ceil(visibleTop - optionBounds.top);
+        } else if (optionBounds.bottom > visibleBottom) {
+          resultList.scrollTop += Math.ceil(
+            optionBounds.bottom - visibleBottom,
+          );
+        }
+      }
+    }
+  }, [activeIndex, open, results]);
+
   if (!open) return null;
   const choose = (result: JumpResult | undefined) => {
     if (!result) return;
@@ -192,17 +212,73 @@ export function JumpPalette({
       aria-modal="true"
       aria-labelledby="jump-palette-title"
       onKeyDown={(event) => {
-        if (event.key === "ArrowDown") {
+        if (event.key === "Escape") {
           event.preventDefault();
-          setActiveIndex((index) => results.length
-            ? (index + 1) % results.length
-            : 0);
+          close();
+        } else if (event.key === "Tab") {
+          const focusable = [
+            ...(dialog.current?.querySelectorAll<HTMLElement>(
+              "input:not(:disabled), button:not(:disabled)",
+            ) ?? []),
+          ].filter((element) => element.getClientRects().length > 0);
+          const first = focusable[0];
+          const last = focusable.at(-1);
+          if (
+            event.shiftKey &&
+            (document.activeElement === first ||
+              !dialog.current?.contains(document.activeElement))
+          ) {
+            event.preventDefault();
+            last?.focus();
+          } else if (
+            !event.shiftKey &&
+            (document.activeElement === last ||
+              !dialog.current?.contains(document.activeElement))
+          ) {
+            event.preventDefault();
+            first?.focus();
+          }
+        } else if (event.key === "ArrowDown") {
+          event.preventDefault();
+          const focusedElement = event.target instanceof HTMLElement
+            ? event.target
+            : null;
+          const focusedIndex = focusedElement
+            ? results.findIndex((result) =>
+                focusedElement.id === `jump-option-${result.id}`
+              )
+            : -1;
+          const currentIndex = focusedIndex >= 0 ? focusedIndex : activeIndex;
+          const nextIndex = results.length
+            ? (currentIndex + 1) % results.length
+            : 0;
+          setActiveIndex(nextIndex);
+          if (event.target !== input.current) {
+            document.getElementById(
+              `jump-option-${results[nextIndex]?.id}`,
+            )?.focus();
+          }
         } else if (event.key === "ArrowUp") {
           event.preventDefault();
-          setActiveIndex((index) => results.length
-            ? (index - 1 + results.length) % results.length
-            : 0);
-        } else if (event.key === "Enter") {
+          const focusedElement = event.target instanceof HTMLElement
+            ? event.target
+            : null;
+          const focusedIndex = focusedElement
+            ? results.findIndex((result) =>
+                focusedElement.id === `jump-option-${result.id}`
+              )
+            : -1;
+          const currentIndex = focusedIndex >= 0 ? focusedIndex : activeIndex;
+          const nextIndex = results.length
+            ? (currentIndex - 1 + results.length) % results.length
+            : 0;
+          setActiveIndex(nextIndex);
+          if (event.target !== input.current) {
+            document.getElementById(
+              `jump-option-${results[nextIndex]?.id}`,
+            )?.focus();
+          }
+        } else if (event.key === "Enter" && event.target === input.current) {
           event.preventDefault();
           choose(activeResult);
         }
@@ -245,6 +321,7 @@ export function JumpPalette({
             data-active={index === activeIndex}
             data-kind={result.kind}
             onClick={() => choose(result)}
+            onFocus={() => setActiveIndex(index)}
             onMouseEnter={() => setActiveIndex(index)}
           >
             <span className="jump-result-icon"><Icon /></span>

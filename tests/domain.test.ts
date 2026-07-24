@@ -7,10 +7,41 @@ import {
     createEnvelope,
     createItem,
     createLocation,
+    DomainError,
     generatePlan,
     previewImport,
+    type Command,
+    type WorkspaceState,
     validateSnapshot,
 } from "../src/domain";
+
+function makeLocationsEditable(
+    state: WorkspaceState,
+    ...locationIds: string[]
+): WorkspaceState {
+    for (const locationId of locationIds) {
+        const location = state.locations.find((candidate) => candidate.id === locationId);
+        if (!location) throw new Error(`Missing test location ${locationId}`);
+        location.captureStatus = "in_progress";
+    }
+    return state;
+}
+
+function expectDomainRefusal(
+    state: WorkspaceState,
+    command: Command,
+    code: string,
+    message: RegExp,
+): void {
+    try {
+        applyCommand(state, createEnvelope(state, command));
+        throw new Error(`Expected ${command.type} to be refused`);
+    } catch (error) {
+        expect(error).toBeInstanceOf(DomainError);
+        expect((error as DomainError).code).toBe(code);
+        expect((error as Error).message).toMatch(message);
+    }
+}
 
 describe("organizer command engine", () => {
     it("records an item and distinctly marks the container counted", () => {
@@ -144,7 +175,7 @@ describe("organizer command engine", () => {
     });
 
     it("splits a partial quantity and merges equivalent destination records", () => {
-        let state = createDemoState();
+        let state = makeLocationsEditable(createDemoState(), "loc_warm", "loc_food");
         const destinationPasta = {
             ...structuredClone(state.items.find((item) => item.id === "item_pasta")!),
             id: "item_pasta_food",
@@ -251,7 +282,12 @@ describe("organizer command engine", () => {
     });
 
     it("moves several records atomically", () => {
-        const state = createDemoState();
+        const state = makeLocationsEditable(
+            createDemoState(),
+            "loc_lower",
+            "loc_warm",
+            "loc_food",
+        );
         const result = applyCommand(
             state,
             createEnvelope(
@@ -271,7 +307,7 @@ describe("organizer command engine", () => {
     });
 
     it("leaves already placed records while bulk moving the rest", () => {
-        const state = createDemoState();
+        const state = makeLocationsEditable(createDemoState(), "loc_warm", "loc_food");
         const result = applyCommand(
             state,
             createEnvelope(
@@ -291,7 +327,7 @@ describe("organizer command engine", () => {
     });
 
     it("reorders item records without changing their container", () => {
-        const state = createDemoState();
+        const state = makeLocationsEditable(createDemoState(), "loc_bin");
         const result = applyCommand(
             state,
             createEnvelope(state, { type: "item.reorder", id: "item_sugar", order: -1 }),
@@ -332,7 +368,7 @@ describe("organizer command engine", () => {
     });
 
     it("normalizes a short ID and saves a parent change atomically", () => {
-        const state = createDemoState();
+        const state = makeLocationsEditable(createDemoState(), "loc_lower");
         const result = applyCommand(
             state,
             createEnvelope(state, {
@@ -353,6 +389,253 @@ describe("organizer command engine", () => {
             parentId: "loc_lower",
         });
         expect(result.activities).toHaveLength(1);
+    });
+
+    it("refuses unchanged item and location saves without changing history or plans", () => {
+        const state = createDemoState();
+        state.plans.push(generatePlan(state, { name: "No-op preservation" }));
+        const item = state.items.find((candidate) => candidate.id === "item_pasta")!;
+        const location = state.locations.find((candidate) => candidate.id === "loc_bin")!;
+        const before = structuredClone(state);
+
+        expect(() =>
+            applyCommand(
+                state,
+                createEnvelope(state, {
+                    type: "item.update",
+                    id: item.id,
+                    changes: {
+                        category: item.category,
+                        constraints: item.constraints,
+                        dimensions: item.dimensions,
+                        frequency: item.frequency,
+                        name: ` ${item.name} `,
+                        notes: item.notes,
+                        quantity: item.quantity,
+                        tags: item.tags,
+                        unit: ` ${item.unit} `,
+                    },
+                }),
+            ),
+        ).toThrow(/No changes to save/);
+        expect(() =>
+            applyCommand(
+                state,
+                createEnvelope(state, {
+                    type: "location.update",
+                    id: location.id,
+                    changes: {
+                        code: ` ${location.code.toLocaleLowerCase()} `,
+                        conditions: location.conditions,
+                        description: location.description,
+                        dimensions: location.dimensions,
+                        kind: location.kind,
+                        name: ` ${location.name} `,
+                        parentId: location.parentId,
+                        tags: location.tags,
+                    },
+                }),
+            ),
+        ).toThrow(/No changes to save/);
+        expect(state).toEqual(before);
+    });
+
+    it("requires reopening completed spaces before direct item content changes", () => {
+        const state = createDemoState();
+        const before = structuredClone(state);
+        const newItem = createItem({
+            locationId: "loc_bin",
+            name: "Baking paper",
+        });
+
+        expectDomainRefusal(
+            state,
+            { type: "item.create", item: newItem },
+            "CAPTURE_COMPLETE",
+            /Reopen Baking bin before adding an item/,
+        );
+        expectDomainRefusal(
+            state,
+            {
+                type: "item.update",
+                id: "item_flour",
+                changes: { notes: "Nearly empty" },
+            },
+            "CAPTURE_COMPLETE",
+            /Reopen Baking bin before editing an item/,
+        );
+        expectDomainRefusal(
+            state,
+            { type: "item.reorder", id: "item_sugar", order: -1 },
+            "CAPTURE_COMPLETE",
+            /Reopen Baking bin before reordering its items/,
+        );
+        expectDomainRefusal(
+            state,
+            { type: "item.delete", id: "item_flour" },
+            "CAPTURE_COMPLETE",
+            /Reopen Baking bin before deleting an item/,
+        );
+        expectDomainRefusal(
+            state,
+            {
+                type: "item.move",
+                destinationId: "loc_unknown",
+                id: "item_flour",
+                quantity: 1,
+            },
+            "CAPTURE_COMPLETE",
+            /Reopen Baking bin before moving an item out of it/,
+        );
+        expectDomainRefusal(
+            state,
+            {
+                type: "item.move",
+                destinationId: "loc_food",
+                id: "item_lids",
+                quantity: 1,
+            },
+            "CAPTURE_COMPLETE",
+            /Reopen Food cabinet before moving an item into it/,
+        );
+        expectDomainRefusal(
+            state,
+            {
+                type: "item.bulkMove",
+                destinationId: "loc_food",
+                itemIds: ["item_lids", "item_manuals"],
+            },
+            "CAPTURE_COMPLETE",
+            /Reopen Food cabinet before moving an item into it/,
+        );
+        expectDomainRefusal(
+            state,
+            {
+                type: "item.update",
+                id: "item_flour",
+                changes: { archivedAt: "2026-07-22T13:00:00.000Z" },
+            },
+            "INVALID_CHANGES",
+            /archivedAt cannot be changed/,
+        );
+        expect(state).toEqual(before);
+    });
+
+    it("requires reopening completed parents before nested-space content changes", () => {
+        const state = createDemoState();
+        const before = structuredClone(state);
+        const nested = createLocation({
+            code: "BIN-NEW",
+            kind: "bin",
+            name: "New baking bin",
+            parentId: "loc_bin",
+        });
+
+        expectDomainRefusal(
+            state,
+            { type: "location.create", location: nested },
+            "CAPTURE_COMPLETE",
+            /Reopen Baking bin before adding a nested space/,
+        );
+        expectDomainRefusal(
+            state,
+            {
+                type: "location.update",
+                id: "loc_box",
+                changes: { parentId: "loc_bin" },
+            },
+            "CAPTURE_COMPLETE",
+            /Reopen Baking bin before moving a nested space into it/,
+        );
+        expectDomainRefusal(
+            state,
+            {
+                type: "location.move",
+                id: "loc_food",
+                parentId: "loc_unknown",
+            },
+            "CAPTURE_COMPLETE",
+            /Reopen Left side before moving a nested space out of it/,
+        );
+        expectDomainRefusal(
+            state,
+            { type: "location.reorder", id: "loc_food", order: -1 },
+            "CAPTURE_COMPLETE",
+            /Reopen Left side before reordering its nested spaces/,
+        );
+        expectDomainRefusal(
+            state,
+            { type: "location.archive", id: "loc_counter", archived: true },
+            "CAPTURE_COMPLETE",
+            /Reopen Right side before archiving a nested space/,
+        );
+        expectDomainRefusal(
+            state,
+            {
+                type: "location.delete",
+                descendantIds: [],
+                id: "loc_counter",
+                itemIds: [],
+            },
+            "CAPTURE_COMPLETE",
+            /Reopen Right side before deleting a nested space/,
+        );
+
+        const metadataEdit = applyCommand(
+            state,
+            createEnvelope(state, {
+                type: "location.update",
+                id: "loc_bin",
+                changes: { description: "Keep sealed" },
+            }),
+        ).state;
+        expect(metadataEdit.locations.find((location) => location.id === "loc_bin")?.description)
+            .toBe("Keep sealed");
+        expect(state).toEqual(before);
+    });
+
+    it("refuses unchanged reorder and placement commands without changing state", () => {
+        const state = createDemoState();
+        state.plans.push(generatePlan(state, { name: "No-op ordering" }));
+        const before = structuredClone(state);
+
+        expectDomainRefusal(
+            state,
+            { type: "workspace.rename", name: ` ${state.workspace.name} ` },
+            "NO_CHANGES",
+            /Workspace is already named Kitchen reset/,
+        );
+        expectDomainRefusal(
+            state,
+            { type: "location.archive", id: "loc_box", archived: false },
+            "NO_CHANGES",
+            /Appliance parts is already available/,
+        );
+        expectDomainRefusal(
+            state,
+            {
+                type: "plan.status",
+                planId: state.plans[0]!.id,
+                status: "active",
+            },
+            "NO_CHANGES",
+            /No-op ordering is already marked active/,
+        );
+        for (const command of [
+            { type: "item.reorder", id: "item_sugar", order: 1 },
+            { type: "location.reorder", id: "loc_food", order: 0 },
+            { type: "location.move", id: "loc_food", parentId: "loc_left" },
+            { type: "location.move", id: "loc_food", parentId: "loc_left", order: 0 },
+        ] satisfies Command[]) {
+            expectDomainRefusal(
+                state,
+                command,
+                "NO_CHANGES",
+                /already in that position/,
+            );
+        }
+
+        expect(state).toEqual(before);
     });
 
     it("rejects runtime-only structural and unsafe update keys", () => {
@@ -526,7 +809,7 @@ describe("organizer command engine", () => {
 
 describe("field-aware history", () => {
     it("plucks one change for undo and safely reapplies it", () => {
-        let state = createDemoState();
+        let state = makeLocationsEditable(createDemoState(), "loc_warm");
         state = applyCommand(
             state,
             createEnvelope(
@@ -551,7 +834,7 @@ describe("field-aware history", () => {
     });
 
     it("supports undo N and redo N in dependency-safe order", () => {
-        let state = createDemoState();
+        let state = makeLocationsEditable(createDemoState(), "loc_warm");
         for (const [id, quantity] of [["cmd_a", 7], ["cmd_b", 8], ["cmd_c", 9]] as const) {
             state = applyCommand(
                 state,
@@ -575,7 +858,7 @@ describe("field-aware history", () => {
     });
 
     it("undoes and reapplies a bulk move that repeatedly merges one destination", () => {
-        const state = createDemoState();
+        const state = makeLocationsEditable(createDemoState(), "loc_warm", "loc_food");
         const first = state.items.find((item) => item.id === "item_pasta")!;
         const second = {
             ...structuredClone(first),
@@ -629,7 +912,7 @@ describe("field-aware history", () => {
     });
 
     it("refuses an undo that would overwrite a later same-field edit", () => {
-        let state = createDemoState();
+        let state = makeLocationsEditable(createDemoState(), "loc_warm");
         state = applyCommand(
             state,
             createEnvelope(
@@ -698,7 +981,7 @@ describe("field-aware history", () => {
     });
 
     it("undoes and reapplies same-millisecond changes in dependency order", () => {
-        let state = createDemoState();
+        let state = makeLocationsEditable(createDemoState(), "loc_warm");
         const timestamp = "2026-07-22T12:10:00.000Z";
         state = applyCommand(
             state,
@@ -739,7 +1022,7 @@ describe("field-aware history", () => {
     });
 
     it("uses applied order when client clocks are skewed", () => {
-        let state = createDemoState();
+        let state = makeLocationsEditable(createDemoState(), "loc_warm");
         state = applyCommand(
             state,
             createEnvelope(
@@ -905,6 +1188,132 @@ describe("planner and backup validation", () => {
                 }),
             ),
         ).toThrow(/earlier plan moves/);
+    });
+
+    it("reopens counted and known-empty spaces when a plan moves an item", () => {
+        const initial = createDemoState();
+        const generated = generatePlan(initial, { name: "Item capture execution" });
+        const sourceStep = generated.steps.find((step) => step.type === "item")!;
+        const destination = initial.locations.find((location) => location.id === "loc_counter")!;
+        destination.captureStatus = "known_empty";
+        const step = {
+            ...sourceStep,
+            destinationId: destination.id,
+            id: "step_item_capture_execution",
+        };
+        const plan = {
+            ...generated,
+            id: "plan_item_capture_execution",
+            steps: [step],
+        };
+        expect(
+            initial.locations.find((location) => location.id === step.sourceId)?.captureStatus,
+        ).toBe("counted");
+        expect(destination.captureStatus).toBe("known_empty");
+        expectDomainRefusal(
+            initial,
+            {
+                type: "item.move",
+                destinationId: destination.id,
+                id: "item_lids",
+                quantity: 1,
+            },
+            "CAPTURE_COMPLETE",
+            /Reopen Counter before moving an item into it/,
+        );
+        const created = applyCommand(
+            initial,
+            createEnvelope(initial, { type: "plan.create", plan }),
+        ).state;
+
+        const result = applyCommand(
+            created,
+            createEnvelope(created, {
+                type: "plan.step.complete",
+                planId: plan.id,
+                stepId: step.id,
+            }),
+        );
+        const affectedLocationIds = [step.sourceId, step.destinationId].sort();
+
+        expect(
+            result.state.locations
+                .filter((location) => affectedLocationIds.includes(location.id))
+                .map((location) => location.captureStatus),
+        ).toEqual(["in_progress", "in_progress"]);
+        expect(
+            result.state.plans
+                .find((candidate) => candidate.id === plan.id)
+                ?.steps.find((candidate) => candidate.id === step.id)
+                ?.completedAt,
+        ).toBeTruthy();
+        expect(
+            result.activity?.patches
+                .filter((candidate) => candidate.path === "captureStatus")
+                .map((candidate) => candidate.id)
+                .sort(),
+        ).toEqual(affectedLocationIds);
+    });
+
+    it("reopens counted and known-empty parents when a plan moves a nested space", () => {
+        const initial = createDemoState();
+        const generated = generatePlan(initial, { name: "Nested capture execution" });
+        const sourceStep = generated.steps.find((step) => step.type === "location")!;
+        const destination = initial.locations.find((location) => location.id === "loc_counter")!;
+        destination.captureStatus = "known_empty";
+        const step = {
+            ...sourceStep,
+            destinationId: destination.id,
+            id: "step_location_capture_execution",
+        };
+        const plan = {
+            ...generated,
+            id: "plan_location_capture_execution",
+            steps: [step],
+        };
+        expect(
+            initial.locations.find((location) => location.id === step.sourceId)?.captureStatus,
+        ).toBe("counted");
+        expect(destination.captureStatus).toBe("known_empty");
+        expectDomainRefusal(
+            initial,
+            {
+                type: "location.move",
+                id: step.locationId as string,
+                parentId: destination.id,
+            },
+            "CAPTURE_COMPLETE",
+            /Reopen Lower cabinet before moving a nested space out of it/,
+        );
+        const created = applyCommand(
+            initial,
+            createEnvelope(initial, { type: "plan.create", plan }),
+        ).state;
+
+        const result = applyCommand(
+            created,
+            createEnvelope(created, {
+                type: "plan.step.complete",
+                planId: plan.id,
+                stepId: step.id,
+            }),
+        );
+        const affectedLocationIds = [step.sourceId, step.destinationId].sort();
+
+        expect(
+            result.state.locations
+                .filter((location) => affectedLocationIds.includes(location.id))
+                .map((location) => location.captureStatus),
+        ).toEqual(["in_progress", "in_progress"]);
+        expect(
+            result.state.locations.find((location) => location.id === step.locationId)?.parentId,
+        ).toBe(destination.id);
+        expect(
+            result.activity?.patches
+                .filter((candidate) => candidate.path === "captureStatus")
+                .map((candidate) => candidate.id)
+                .sort(),
+        ).toEqual(affectedLocationIds);
     });
 
     it("blocks execution until compatible legacy active plans are resolved", () => {
@@ -1095,6 +1504,10 @@ describe("planner and backup validation", () => {
         const plan = generatePlan(state);
         const plannedItemId = plan.steps.find((step) => step.itemId)?.itemId;
         expect(plannedItemId).toBeTruthy();
+        makeLocationsEditable(
+            state,
+            state.items.find((item) => item.id === plannedItemId)!.locationId,
+        );
         state = applyCommand(
             state,
             createEnvelope(state, { type: "plan.create", plan }),
@@ -1109,7 +1522,7 @@ describe("planner and backup validation", () => {
     });
 
     it("creates cycle-safe new locations", () => {
-        const state = createDemoState();
+        const state = makeLocationsEditable(createDemoState(), "loc_lower");
         const next = createLocation({ code: "B-18", name: "Cleaning bin", parentId: "loc_lower" });
         const result = applyCommand(
             state,

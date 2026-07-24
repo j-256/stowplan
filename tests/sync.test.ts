@@ -7,9 +7,16 @@ import {
 } from "../src/domain";
 import { MemorySnapshotStore, synchronize } from "../src/server";
 
+function editableDemoState() {
+    const state = createDemoState();
+    state.locations.find((location) => location.id === "loc_warm")!.captureStatus =
+        "in_progress";
+    return state;
+}
+
 describe("synchronization", () => {
     it("deduplicates retries by command id", async () => {
-        const initial = createDemoState();
+        const initial = editableDemoState();
         const store = new MemorySnapshotStore([initial]);
         const command = createEnvelope(
             initial,
@@ -73,7 +80,7 @@ describe("synchronization", () => {
     });
 
     it("merges stale edits to unrelated fields", async () => {
-        const initial = createDemoState();
+        const initial = editableDemoState();
         const store = new MemorySnapshotStore([initial]);
         const remote = createEnvelope(
             initial,
@@ -94,7 +101,7 @@ describe("synchronization", () => {
     });
 
     it("pauses stale same-field edits for review", async () => {
-        const initial = createDemoState();
+        const initial = editableDemoState();
         const store = new MemorySnapshotStore([initial]);
         const first = createEnvelope(
             initial,
@@ -147,7 +154,7 @@ describe("synchronization", () => {
     });
 
     it("does not let a later command in a divergent batch bypass field expectations", async () => {
-        const initial = createDemoState();
+        const initial = editableDemoState();
         const store = new MemorySnapshotStore([initial]);
         const remote = createEnvelope(
             initial,
@@ -181,7 +188,7 @@ describe("synchronization", () => {
     });
 
     it("applies an independent queued command after an earlier optimistic command is rejected", async () => {
-        const initial = createDemoState();
+        const initial = editableDemoState();
         const store = new MemorySnapshotStore([initial]);
         const rejected = createEnvelope(
             initial,
@@ -279,7 +286,7 @@ describe("synchronization", () => {
     });
 
     it("serializes concurrent batches with optimistic retries", async () => {
-        const initial = createDemoState();
+        const initial = editableDemoState();
         const store = new MemorySnapshotStore([initial]);
         const note = createEnvelope(
             initial,

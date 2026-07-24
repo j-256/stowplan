@@ -11,6 +11,8 @@ The command is durable on the device before the network is contacted. Closing th
 
 Tap an existing row to edit every structured attribute, move all or part of its quantity, or delete the record with confirmation. Drag the visible handle to reorder rows inside the current container; the handle supports pointer and touch input, while the adjacent up/down controls provide the keyboard and assistive-technology fallback. A mouse drag keeps the source muted and highlights the exact before-or-after destination until you release it. Item names wrap at compact desktop widths so the identity remains readable while the reorder controls stay available.
 
+After a space is marked **Counted** or **Known empty**, its recorded contents become read-only in Capture, Spaces, and Inventory. Choose **Reopen capture** before adding or moving a nested container, adding, editing, moving, or deleting an item, or changing content order. You can still edit the space's own label and suitability details or add an unrelated top-level space. This keeps the completion marker trustworthy instead of allowing later content changes to leave a completed space with unreviewed contents.
+
 ## Nested containers
 
 Use **Add space** while looking at the parent. It nests there by default; check **Add as another top-level space** for another room, storage area, or other root. Enter the friendly name first and Stowplan suggests a unique Short ID that you can edit before saving. A Short ID you type yourself is never replaced when the name or type changes. Every new container can have its own label and capture status. Moving that physical container later can replace many item-by-item plan steps.

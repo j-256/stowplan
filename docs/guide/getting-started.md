@@ -1,6 +1,6 @@
 # Getting started
 
-Stowplan’s first job is to help you finish a trustworthy first pass. You do **not** need a perfect taxonomy or cabinet plan before beginning.
+Stowplan's first job is to help you finish a trustworthy first pass. You do **not** need a perfect taxonomy or cabinet plan before beginning.
 
 1. Open Stowplan on the phone you will carry while organizing.
 2. Choose **Start my workspace**, or use the kitchen demo to learn without entering real data.
@@ -11,7 +11,7 @@ Stowplan’s first job is to help you finish a trustworthy first pass. You do **
 
 The distinction between *uncounted* and *known empty* matters: plans must never assume an unopened box has free capacity.
 
-If a space already contains recorded items, **Known empty & next** names what will be removed and asks for confirmation. Confirming removes those items and marks the space known empty as one history action, so a single **Undo** restores the items and the earlier capture status. A space with nested spaces cannot be marked empty; Stowplan leaves it unchanged and explains why. Choose **Reopen capture** to make a completed space editable again. It returns to in progress when it contains items or nested spaces, and to uncounted when it is empty.
+If a space already contains recorded items, **Known empty & next** names what will be removed and asks for confirmation. Confirming removes those items and marks the space known empty as one history action, so a single **Undo** restores the items and the earlier capture status. A space with nested spaces cannot be marked empty; Stowplan leaves it unchanged and explains why. Contents are read-only after a space is counted or marked known empty, including from Spaces and Inventory. Choose **Reopen capture** before changing them. It returns to in progress when it contains items or nested spaces, and to uncounted when it is empty.
 
 ## Link to a workspace view
 
@@ -35,4 +35,4 @@ Choose the house icon in the page header, or open **Settings → Open workspace 
 
 **Remove from this device** is deliberately literal. If a server copy exists, it remains available to reopen; the confirmation names the last backup. If the workspace was never backed up, the confirmation warns that the device holds the only copy. Any unsynced changes are counted before removal.
 
-When the kitchen demo is active, the main menu also shows **Reset kitchen demo**. Reset requires confirmation, discards only that demo’s changes and queued backup commands, and creates a fresh demo. It does not touch any other workspace on the device.
+When the kitchen demo is active, the main menu also shows **Reset kitchen demo**. Reset requires confirmation, discards only that demo's changes and queued backup commands, and creates a fresh demo. It does not touch any other workspace on the device.
