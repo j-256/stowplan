@@ -2,6 +2,8 @@
 
 This is the reference deployment. Commands below are intentionally explicit; run them from the repository root.
 
+The production application is deployed through Sites, whose artifact contains `.openai/hosting.json` plus generated Drizzle migrations. The direct Wrangler instructions remain the self-hosted Cloudflare composition root. Each database belongs to one deployment runtime and migration ledger: Sites applies the generated `drizzle/` stream, direct Wrangler applies numbered files from `migrations/` through its D1 ledger, and Node applies those numbered files through its Node ledger. Both streams satisfy the same runtime compatibility contract for application tables, columns, foreign keys, and named indexes, but their physical SQLite representations intentionally differ because the numbered stream retains legacy `STRICT` tables and inline constraints. Each stream writes an explicit durable marker, and the Node runtime refuses a Sites marker, a numbered marker without its Node ledger, or an unmarked non-`STRICT` Stowplan schema. Never apply multiple streams or ledgers to one database binding.
+
 ## 1. Local bootstrap
 
 ```bash
@@ -70,6 +72,32 @@ Inspect secret **names** (values remain hidden):
 npx wrangler secret list
 ```
 
+### Cloudflare Access identity and admin gate
+
+Stowplan includes an idempotent Access reconciler and parameterized JSON configuration. It protects `/account*`, `/api/auth/access*`, `/admin*`, and `/api/admin/*` in one self-hosted application, leaving the rest of the local-first app public:
+
+```bash
+bash scripts/cloudflare-access.sh check
+STOWPLAN_ACCESS_EMAILS=owner@example.com bash scripts/cloudflare-access.sh plan
+STOWPLAN_ACCESS_EMAILS=owner@example.com bash scripts/cloudflare-access.sh apply
+```
+
+The apply command prints the resulting `AUTH_CLOUDFLARE_ACCESS_TEAM_DOMAIN` and `AUTH_CLOUDFLARE_ACCESS_AUD` exports. Add them to the Sites runtime environment together with `AUTH_ADMIN_REQUIRE_ACCESS=true`, then save and deploy a new Sites version. A direct Wrangler deployment can store the same values with `wrangler secret put`. Keep actual allowlist addresses out of `cloudflare/access.json`; provide them through `STOWPLAN_ACCESS_EMAILS` or a private config passed with `--config`. The API token needs `Access: Apps and Policies Write` plus `Access: Organizations, Identity Providers, and Groups Read`.
+
+### Edge rate limits and WAF rules
+
+The edge reconciler owns only descriptions beginning with `[stowplan]` and preserves unrelated zone rules:
+
+```bash
+bash scripts/cloudflare-edge.sh check
+bash scripts/cloudflare-edge.sh plan --profile free
+bash scripts/cloudflare-edge.sh apply --profile free
+```
+
+Profiles in `cloudflare/edge-rules.json` reflect Cloudflare plan capabilities. The Free profile uses a host-aware custom skip rule before the zone's single path-only rate rule, so Stowplan's rule applies only to `stowplan.jklein.dev`. The skip bypasses the entire rate-limit phase on other hosts, which dedicates the zone's only rate-rule slot to Stowplan; the reconciler refuses this profile if unrelated zone rate rules exist. Pro adds a separate host-scoped data-plane allowance. Business separates sensitive paths and gives sync/snapshot a higher burst budget. The Enterprise Advanced profile also limits authenticated sessions, rejects duplicate application session cookies, and applies edge body-size rules aligned with Stowplan's server limits. Cloudflare's API remains the final entitlement check because Enterprise contracts vary.
+
+Use `plan --prune` to preview removal of stale `[stowplan]` rules after switching profiles, then `apply --prune` only after reviewing those deletions. A transition to Free prunes stale managed rate rules before creating its single allowed rule. A transition away from Free is refused without `--prune` so its phase-wide sibling-host skip cannot remain active. The script never deletes unrelated rules. Set `CLOUDFLARE_ACCOUNT_ID` and a `CLOUDFLARE_API_TOKEN` with zone read and WAF edit permissions.
+
 ## 5. Back up, migrate remotely, deploy
 
 For an existing installation, export before migration:
@@ -86,7 +114,16 @@ npx wrangler d1 migrations list stowplan --remote
 npx wrangler d1 migrations apply stowplan --remote
 ```
 
-Build and deploy:
+Run those commands only for a direct Wrangler database. For Sites, build and validate the production artifact:
+
+```bash
+npm run build
+npm run validate:artifact
+```
+
+`npm run build` requires GNU `timeout`, available as `timeout` on Linux and commonly installed through GNU coreutils on macOS. Push the exact source commit used for that build to the Sites source repository, archive the validated `dist/` tree without ignored machine metadata, save a Sites version against that commit and archive, then deploy only the saved version. Sites applies the packaged Drizzle migration stream to its bound D1 database. Source push, environment updates, version saves, and deployments are connector-owned operations rather than public repository CLI commands.
+
+For a direct Wrangler deployment, build and deploy:
 
 ```bash
 NEXT_PUBLIC_REPOSITORY_URL=https://github.com/YOUR_ACCOUNT/stowplan \
@@ -102,11 +139,11 @@ npx wrangler deployments list
 npx wrangler tail --status error
 ```
 
-In another terminal, request `https://YOUR_ORIGIN/api/health`, sign in, create one local item, wait for “Up to date,” reload, and inspect `/admin`.
+In another terminal, request `https://YOUR_ORIGIN/api/health`, sign in, create one local item, wait for "Up to date," reload, and inspect `/admin`.
 
 ## Preview and production origins
 
-OAuth callbacks must be registered per origin. Use separate provider clients for localhost, preview/custom staging, and production where the provider requires one callback. Set `AUTH_BASE_URL` to the externally visible origin; do not rely on a proxy’s internal hostname.
+OAuth callbacks must be registered per origin. Use separate provider clients for localhost, preview/custom staging, and production where the provider requires one callback. Set `AUTH_BASE_URL` to the externally visible origin; do not rely on a proxy's internal hostname.
 
 ## Backup, restore, and rollback
 

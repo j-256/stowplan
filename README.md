@@ -11,13 +11,13 @@ A mobile-first, local-first organizer for rooms, cabinets, drawers, boxes, bins,
 ## Why Stowplan
 
 - Container-first onboarding distinguishes uncounted, in-progress, known-empty, and counted spaces.
-- Quantity + unit + item capture, nested-container creation, and “mark counted & next” are optimized for a phone in one hand.
+- Quantity + unit + item capture, nested-container creation, and "mark counted & next" are optimized for a phone in one hand.
 - IndexedDB is the immediate source of truth; a durable outbox batches and retries authenticated server backups.
 - Multiple local workspaces are preserved; scanner-safe guest links open shared workspaces without erasing the current one.
 - Hierarchical moves are cycle-safe; partial quantities split/merge; bulk moves are atomic.
 - Item and space editors expose structured attributes, conditions, dimensions, partial moves, archive/delete review, drag-and-drop, and equivalent touch/keyboard controls.
 - Plans account for warmth, humidity, food safety, dimensions, grouping, access, distance, and whole-container moves.
-- Field-level history supports selected undo/reapply (“plucking”) and batch undo/redo without overwriting newer same-field edits.
+- Field-level history supports selected undo/reapply ("plucking") and batch undo/redo without overwriting newer same-field edits.
 - Blocked offline work remains inspectable and exportable; an explicit recovery flow can rebase unresolved commands or reset to an authorized server copy.
 - Google, GitHub, Cloudflare Access, short one-time guest URLs, opaque revocable sessions, workspace roles, and an audited admin panel are built in.
 - Cloudflare Workers + D1 is the reference deployment; Node 24 + SQLite and containers are supported composition roots.
@@ -49,6 +49,8 @@ src/server/          Persistence/auth/admin ports and services
 src/adapters/        D1 and Node SQLite adapters
 migrations/          Ordered durable schema migrations
 docs/                VitePress user, operator, maintainer, and agent docs
+cloudflare/          Parameterized Access, WAF, and rate-limit desired state
+scripts/             Build, smoke, deployment, and reconciliation automation
 tests/               Domain, sync, adapter, offline, and auth tests
 ```
 
@@ -68,10 +70,12 @@ npm run build:next
 npm run test:node-smoke
 npm run build:cloudflare
 npx wrangler deploy --dry-run --config wrangler.jsonc
+bash scripts/cloudflare-access.sh check
+bash scripts/cloudflare-edge.sh check
 npm sbom --omit=dev --sbom-format cyclonedx > stowplan-sbom.cdx.json
 ```
 
-The GitHub Pages workflow deliberately builds and link-checks under `/stowplan/`; root-hosted docs receive the same validation. Exact `npx wrangler` bootstrap, migration, secret, deploy, backup, and recovery commands are in the [Cloudflare runbook](https://j-256.github.io/stowplan/deploy/cloudflare).
+The GitHub Pages workflow deliberately builds and link-checks the docs under `/stowplan/`; root-hosted docs receive the same validation. The application production deployment is Sites, while GitHub Pages is the canonical documentation host. The [Cloudflare runbook](https://j-256.github.io/stowplan/deploy/cloudflare) separates reproducible Sites artifact preparation and connector handoff from direct Cloudflare bootstrap, Access, WAF, rate-limit, migration, secret, deploy, backup, and recovery commands.
 
 ## Security and privacy
 

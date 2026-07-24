@@ -28,6 +28,9 @@ jobs:
       - run: npm run test:next-dev-smoke
       - run: npm run build:cloudflare
       - run: npx wrangler deploy --dry-run --config wrangler.jsonc
+      - run: bash -n scripts/cloudflare-access.sh scripts/cloudflare-edge.sh scripts/github-pages.sh
+      - run: bash scripts/cloudflare-access.sh check
+      - run: bash scripts/cloudflare-edge.sh check
       - name: Generate CycloneDX SBOM
         run: npm sbom --omit=dev --sbom-format cyclonedx > stowplan-sbom.cdx.json
       - name: Create GitHub release

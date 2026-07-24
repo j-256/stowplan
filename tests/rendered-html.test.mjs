@@ -1,10 +1,21 @@
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
 
 const developmentPreviewMeta =
   /<meta(?=[^>]*\bname=["']codex-preview["'])(?=[^>]*\bcontent=["']development["'])[^>]*>/i;
+
+function filesBelow(directory, prefix = "") {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const relativePath = join(prefix, entry.name);
+    return entry.isDirectory()
+      ? filesBelow(join(directory, entry.name), relativePath)
+      : [relativePath];
+  }).sort();
+}
 
 test("renders development preview metadata", async () => {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
@@ -70,6 +81,7 @@ test("passes the Sites D1 binding from the Worker environment to server routes",
   workerUrl.searchParams.set("sites-binding-test", `${process.pid}-${Date.now()}`);
   const { default: worker } = await import(workerUrl.href);
   const runtimeGlobal = globalThis;
+  let schemaProbed = false;
 
   try {
     const response = await worker.fetch(
@@ -78,7 +90,15 @@ test("passes the Sites D1 binding from the Worker environment to server routes",
         ASSETS: {
           fetch: async () => new Response("Not found", { status: 404 }),
         },
-        DB: {},
+        DB: {
+          prepare(query) {
+            assert.match(query, /workspace_snapshots/);
+            schemaProbed = true;
+            return {
+              first: async () => ({ has_snapshots: 0 }),
+            };
+          },
+        },
       },
       {
         waitUntil() {},
@@ -89,8 +109,10 @@ test("passes the Sites D1 binding from the Worker environment to server routes",
     assert.equal(response.status, 200);
     const body = await response.json();
     assert.equal(body.ok, true);
+    assert.equal(body.schema, "ready");
     assert.equal(body.storage, "configured");
     assert.match(body.time, /^\d{4}-\d{2}-\d{2}T/);
+    assert.equal(schemaProbed, true);
   } finally {
     delete runtimeGlobal.__STOWPLAN_ENV;
   }
@@ -210,10 +232,24 @@ test("initializes OpenNext bindings for next dev and awaits runtime context fail
     readFileSync(new URL("../dist/.openai/hosting.json", import.meta.url), "utf8"),
   );
   assert.equal(packagedHosting.d1, "DB");
-  const packagedMigrations = readdirSync(
+  const sourceMigrationDirectory = fileURLToPath(
+    new URL("../drizzle/", import.meta.url),
+  );
+  const packagedMigrationDirectory = fileURLToPath(
     new URL("../dist/.openai/drizzle/", import.meta.url),
-  ).filter((name) => name.endsWith(".sql"));
-  assert.ok(packagedMigrations.length > 0);
+  );
+  const sourceMigrations = filesBelow(sourceMigrationDirectory)
+    .filter((name) => !name.endsWith(".DS_Store"));
+  const packagedMigrations = filesBelow(packagedMigrationDirectory);
+  assert.ok(sourceMigrations.some((name) => name.endsWith(".sql")));
+  assert.equal(packagedMigrations.includes(".DS_Store"), false);
+  assert.deepEqual(packagedMigrations, sourceMigrations);
+  for (const migration of sourceMigrations) {
+    assert.deepEqual(
+      readFileSync(join(packagedMigrationDirectory, migration)),
+      readFileSync(join(sourceMigrationDirectory, migration)),
+    );
+  }
   const config = readFileSync(new URL("../next.config.ts", import.meta.url), "utf8");
   assert.match(config, /initOpenNextCloudflareForDev\(\)/);
   const runtime = readFileSync(new URL("../src/server/runtime.ts", import.meta.url), "utf8");
@@ -227,7 +263,10 @@ test("keeps hierarchy and touch drag affordances in the shipped organizer", () =
   assert.match(application, /reorder within/);
   assert.match(application, /onPointerDown=/);
   assert.match(application, /"before" \| "inside" \| "after"/);
-  assert.match(application, /const canReorder = Boolean\(locationFilter\) && !query\.trim\(\)/);
+  assert.match(
+    application,
+    /const canReorder = Boolean\(locationFilter\) &&\s+!query\.trim\(\) &&\s+!filteredCaptureComplete/,
+  );
   assert.match(application, /scrollContainer\.current = event\.currentTarget\.closest<HTMLElement>\("\.capture-tree"\)/);
   assert.match(application, /activeSubmitControl\.focus\(\)/);
   assert.match(application, /Select \$\{actionIdentity\} in/);

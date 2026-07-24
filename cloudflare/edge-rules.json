@@ -1,0 +1,346 @@
+{
+  "zone_name": "jklein.dev",
+  "managed_description_prefix": "[stowplan]",
+  "default_profile": "free",
+  "data_request_body_limit_bytes": 8388608,
+  "profiles": {
+    "free": {
+      "phases": {
+        "http_request_firewall_custom": [
+          {
+            "description": "[stowplan] Skip zone rate limits on other hosts",
+            "expression": "http.host ne \"stowplan.jklein.dev\"",
+            "action": "skip",
+            "action_parameters": {
+              "phases": [
+                "http_ratelimit"
+              ]
+            },
+            "logging": {
+              "enabled": false
+            },
+            "enabled": true,
+            "position": {
+              "index": 1
+            }
+          }
+        ],
+        "http_ratelimit": [
+          {
+            "description": "[stowplan] Limit sensitive API requests by source",
+            "expression": "(http.request.uri.path eq \"/api/auth\" or starts_with(http.request.uri.path, \"/api/auth/\") or http.request.uri.path eq \"/api/admin\" or starts_with(http.request.uri.path, \"/api/admin/\"))",
+            "action": "block",
+            "action_parameters": {
+              "response": {
+                "status_code": 429,
+                "content_type": "application/json",
+                "content": "{\"error\":\"Too many requests\"}"
+              }
+            },
+            "ratelimit": {
+              "characteristics": [
+                "cf.colo.id",
+                "ip.src"
+              ],
+              "period": 10,
+              "requests_per_period": 20,
+              "mitigation_timeout": 10
+            },
+            "enabled": true
+          }
+        ]
+      }
+    },
+    "pro": {
+      "phases": {
+        "http_request_firewall_custom": [],
+        "http_ratelimit": [
+          {
+            "description": "[stowplan] Limit sensitive API requests by source",
+            "expression": "http.host eq \"stowplan.jklein.dev\" and (http.request.uri.path eq \"/api/auth\" or starts_with(http.request.uri.path, \"/api/auth/\") or http.request.uri.path eq \"/api/admin\" or starts_with(http.request.uri.path, \"/api/admin/\"))",
+            "action": "block",
+            "action_parameters": {
+              "response": {
+                "status_code": 429,
+                "content_type": "application/json",
+                "content": "{\"error\":\"Too many requests\"}"
+              }
+            },
+            "ratelimit": {
+              "characteristics": [
+                "cf.colo.id",
+                "ip.src"
+              ],
+              "period": 60,
+              "requests_per_period": 60,
+              "mitigation_timeout": 60
+            },
+            "enabled": true
+          },
+          {
+            "description": "[stowplan] Limit data API requests by source",
+            "expression": "http.host eq \"stowplan.jklein.dev\" and (http.request.uri.path eq \"/api/sync\" or http.request.uri.path eq \"/api/snapshot\")",
+            "action": "block",
+            "action_parameters": {
+              "response": {
+                "status_code": 429,
+                "content_type": "application/json",
+                "content": "{\"error\":\"Too many requests\"}"
+              }
+            },
+            "ratelimit": {
+              "characteristics": [
+                "cf.colo.id",
+                "ip.src"
+              ],
+              "period": 60,
+              "requests_per_period": 240,
+              "mitigation_timeout": 60
+            },
+            "enabled": true
+          }
+        ]
+      }
+    },
+    "business": {
+      "phases": {
+        "http_request_firewall_custom": [],
+        "http_ratelimit": [
+          {
+            "description": "[stowplan] Limit authentication requests by source",
+            "expression": "http.host eq \"stowplan.jklein.dev\" and (http.request.uri.path eq \"/api/auth\" or starts_with(http.request.uri.path, \"/api/auth/\"))",
+            "action": "block",
+            "action_parameters": {
+              "response": {
+                "status_code": 429,
+                "content_type": "application/json",
+                "content": "{\"error\":\"Too many requests\"}"
+              }
+            },
+            "ratelimit": {
+              "characteristics": [
+                "cf.colo.id",
+                "ip.src"
+              ],
+              "period": 60,
+              "requests_per_period": 60,
+              "mitigation_timeout": 60
+            },
+            "enabled": true
+          },
+          {
+            "description": "[stowplan] Limit guest redemption requests by source",
+            "expression": "http.host eq \"stowplan.jklein.dev\" and starts_with(http.request.uri.path, \"/api/auth/guest/\")",
+            "action": "block",
+            "action_parameters": {
+              "response": {
+                "status_code": 429,
+                "content_type": "application/json",
+                "content": "{\"error\":\"Too many requests\"}"
+              }
+            },
+            "ratelimit": {
+              "characteristics": [
+                "cf.colo.id",
+                "ip.src"
+              ],
+              "period": 60,
+              "requests_per_period": 15,
+              "mitigation_timeout": 60
+            },
+            "enabled": true
+          },
+          {
+            "description": "[stowplan] Limit administration requests by source",
+            "expression": "http.host eq \"stowplan.jklein.dev\" and (http.request.uri.path eq \"/api/admin\" or starts_with(http.request.uri.path, \"/api/admin/\"))",
+            "action": "block",
+            "action_parameters": {
+              "response": {
+                "status_code": 429,
+                "content_type": "application/json",
+                "content": "{\"error\":\"Too many requests\"}"
+              }
+            },
+            "ratelimit": {
+              "characteristics": [
+                "cf.colo.id",
+                "ip.src"
+              ],
+              "period": 60,
+              "requests_per_period": 60,
+              "mitigation_timeout": 60
+            },
+            "enabled": true
+          },
+          {
+            "description": "[stowplan] Limit data API requests by source",
+            "expression": "http.host eq \"stowplan.jklein.dev\" and (http.request.uri.path eq \"/api/sync\" or http.request.uri.path eq \"/api/snapshot\")",
+            "action": "block",
+            "action_parameters": {
+              "response": {
+                "status_code": 429,
+                "content_type": "application/json",
+                "content": "{\"error\":\"Too many requests\"}"
+              }
+            },
+            "ratelimit": {
+              "characteristics": [
+                "cf.colo.id",
+                "cf.unique_visitor_id"
+              ],
+              "period": 60,
+              "requests_per_period": 240,
+              "mitigation_timeout": 60
+            },
+            "enabled": true
+          }
+        ]
+      }
+    },
+    "enterprise_advanced": {
+      "phases": {
+        "http_request_firewall_custom": [
+          {
+            "description": "[stowplan] Block duplicate application session cookies",
+            "expression": "http.host eq \"stowplan.jklein.dev\" and starts_with(http.request.uri.path, \"/api/\") and len(http.request.cookies[\"stowplan_session\"]) gt 1",
+            "action": "block",
+            "enabled": true,
+            "position": {
+              "index": 1
+            }
+          },
+          {
+            "description": "[stowplan] Block oversized data API request bodies",
+            "expression": "http.host eq \"stowplan.jklein.dev\" and (http.request.uri.path eq \"/api/sync\" or http.request.uri.path eq \"/api/snapshot\") and http.request.body.size gt 8388608",
+            "action": "block",
+            "enabled": true,
+            "position": {
+              "index": 1
+            }
+          },
+          {
+            "description": "[stowplan] Block oversized control API request bodies",
+            "expression": "http.host eq \"stowplan.jklein.dev\" and starts_with(http.request.uri.path, \"/api/\") and http.request.uri.path ne \"/api/sync\" and http.request.uri.path ne \"/api/snapshot\" and http.request.body.size gt 262144",
+            "action": "block",
+            "enabled": true,
+            "position": {
+              "index": 1
+            }
+          }
+        ],
+        "http_ratelimit": [
+          {
+            "description": "[stowplan] Limit authentication requests by source",
+            "expression": "http.host eq \"stowplan.jklein.dev\" and (http.request.uri.path eq \"/api/auth\" or starts_with(http.request.uri.path, \"/api/auth/\"))",
+            "action": "block",
+            "action_parameters": {
+              "response": {
+                "status_code": 429,
+                "content_type": "application/json",
+                "content": "{\"error\":\"Too many requests\"}"
+              }
+            },
+            "ratelimit": {
+              "characteristics": [
+                "cf.colo.id",
+                "ip.src"
+              ],
+              "period": 60,
+              "requests_per_period": 60,
+              "mitigation_timeout": 60
+            },
+            "enabled": true
+          },
+          {
+            "description": "[stowplan] Limit guest redemption requests by source",
+            "expression": "http.host eq \"stowplan.jklein.dev\" and starts_with(http.request.uri.path, \"/api/auth/guest/\")",
+            "action": "block",
+            "action_parameters": {
+              "response": {
+                "status_code": 429,
+                "content_type": "application/json",
+                "content": "{\"error\":\"Too many requests\"}"
+              }
+            },
+            "ratelimit": {
+              "characteristics": [
+                "cf.colo.id",
+                "ip.src"
+              ],
+              "period": 60,
+              "requests_per_period": 15,
+              "mitigation_timeout": 60
+            },
+            "enabled": true
+          },
+          {
+            "description": "[stowplan] Limit administration requests by source",
+            "expression": "http.host eq \"stowplan.jklein.dev\" and (http.request.uri.path eq \"/api/admin\" or starts_with(http.request.uri.path, \"/api/admin/\"))",
+            "action": "block",
+            "action_parameters": {
+              "response": {
+                "status_code": 429,
+                "content_type": "application/json",
+                "content": "{\"error\":\"Too many requests\"}"
+              }
+            },
+            "ratelimit": {
+              "characteristics": [
+                "cf.colo.id",
+                "ip.src"
+              ],
+              "period": 60,
+              "requests_per_period": 60,
+              "mitigation_timeout": 60
+            },
+            "enabled": true
+          },
+          {
+            "description": "[stowplan] Limit data API requests by source",
+            "expression": "http.host eq \"stowplan.jklein.dev\" and (http.request.uri.path eq \"/api/sync\" or http.request.uri.path eq \"/api/snapshot\")",
+            "action": "block",
+            "action_parameters": {
+              "response": {
+                "status_code": 429,
+                "content_type": "application/json",
+                "content": "{\"error\":\"Too many requests\"}"
+              }
+            },
+            "ratelimit": {
+              "characteristics": [
+                "cf.colo.id",
+                "cf.unique_visitor_id"
+              ],
+              "period": 60,
+              "requests_per_period": 240,
+              "mitigation_timeout": 60
+            },
+            "enabled": true
+          },
+          {
+            "description": "[stowplan] Limit authenticated API requests by session",
+            "expression": "http.host eq \"stowplan.jklein.dev\" and starts_with(http.request.uri.path, \"/api/\") and len(http.request.cookies[\"stowplan_session\"]) gt 0",
+            "action": "block",
+            "action_parameters": {
+              "response": {
+                "status_code": 429,
+                "content_type": "application/json",
+                "content": "{\"error\":\"Too many requests\"}"
+              }
+            },
+            "ratelimit": {
+              "characteristics": [
+                "cf.colo.id",
+                "http.request.cookies[\"stowplan_session\"]"
+              ],
+              "period": 60,
+              "requests_per_period": 300,
+              "mitigation_timeout": 60
+            },
+            "enabled": true
+          }
+        ]
+      }
+    }
+  }
+}
