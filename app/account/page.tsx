@@ -252,6 +252,7 @@ export default function Account() {
       setMessage("Create a guest link before sharing it.");
       return;
     }
+    setMessage("");
     try {
       await navigator.share({
         text: "Open this shared Stowplan workspace",
@@ -261,7 +262,6 @@ export default function Account() {
       setMessage("Guest link shared.");
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
-        setMessage("Sharing was canceled.");
         return;
       }
       setMessage("Could not open the share sheet. Copy the guest link instead.");
@@ -362,16 +362,16 @@ export default function Account() {
               {providers.includes("development") && <form action={developmentSignIn} className="dev-signin">
                 <h2>Local development sign-in</h2>
                 <label>Name<input name="name" defaultValue="Local Owner" required /></label>
-                <label>Admin email<input name="email" type="email" defaultValue="owner@example.test" required /></label>
+                <label>Email<input name="email" type="email" defaultValue="owner@example.test" required /></label>
                 <button className="primary">Sign in locally</button>
-                <small>Shown only when <code>AUTH_DEV_ENABLED=true</code>. Never enable it on a public deployment.</small>
+                <small>Use <code>owner@example.test</code> for deterministic local admin access, or add another address to <code>AUTH_ADMIN_EMAILS</code> before starting the server. Sign-in is immediate and does not send a code. Never enable this provider on a public deployment.</small>
               </form>}
               {providers.includes("google") &&
                 <a className="auth-button" href={`/api/auth/google/start?returnTo=${oauthReturn}`}>Continue with Google</a>}
               {providers.includes("github") &&
                 <a className="auth-button" href={`/api/auth/github/start?returnTo=${oauthReturn}`}>Continue with GitHub</a>}
               {configured && !providers.length &&
-                <p className="muted">The database is ready, but no sign-in provider is enabled.</p>}
+                <p className="muted">The database is ready, but no sign-in provider is enabled. Local development sign-in requires <code>AUTH_DEV_ENABLED=true</code>; it creates a session immediately and never sends an email code.</p>}
               <p className="muted">Cloudflare Access can sign you in automatically when enabled by the operator. Guest links are one-time and short-lived.</p>
             </>}
       {message && <output aria-live="polite">{message}</output>}

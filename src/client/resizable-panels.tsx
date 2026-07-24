@@ -19,7 +19,7 @@ const DEFAULT_PANEL_PERCENT = 38;
 const MIN_PANEL_PERCENT = 28;
 const MAX_PANEL_PERCENT = 62;
 const PANEL_KEYBOARD_STEP = 4;
-const MIN_SIDE_BY_SIDE_WIDTH = 800;
+const DEFAULT_MIN_SIDE_BY_SIDE_WIDTH = 800;
 const SHORT_TOUCH_LAYOUT_QUERY =
   "(max-height: 520px) and (pointer: coarse) and (min-width: 761px)";
 const PANEL_LAYOUT_STORAGE_PREFIX = "stowplan-panel-layout";
@@ -33,6 +33,7 @@ export function ResizablePanels({
   className,
   defaultPanelPercent = DEFAULT_PANEL_PERCENT,
   label,
+  minSideBySideWidth = DEFAULT_MIN_SIDE_BY_SIDE_WIDTH,
   primary,
   primaryLabel,
   secondary,
@@ -41,6 +42,7 @@ export function ResizablePanels({
   className: string;
   defaultPanelPercent?: number;
   label: string;
+  minSideBySideWidth?: number;
   primary: ReactNode;
   primaryLabel: string;
   secondary: ReactNode;
@@ -83,14 +85,14 @@ export function ResizablePanels({
         + Number.parseFloat(styles.paddingRight);
       setCanShowSideBySide(
         !matchMedia(SHORT_TOUCH_LAYOUT_QUERY).matches &&
-        element.clientWidth - horizontalPadding >= MIN_SIDE_BY_SIDE_WIDTH,
+        element.clientWidth - horizontalPadding >= minSideBySideWidth,
       );
     };
     update();
     const observer = new ResizeObserver(update);
     observer.observe(element);
     return () => observer.disconnect();
-  }, []);
+  }, [minSideBySideWidth]);
 
   useEffect(() => {
     if (!preferencesReady) return;
@@ -106,10 +108,26 @@ export function ResizablePanels({
 
   const effectiveLayout = canShowSideBySide ? layout : "stacked";
   const resizeTo = (clientX: number) => {
-    const bounds = container.current?.getBoundingClientRect();
-    if (!bounds?.width) return;
+    const element = container.current;
+    const bounds = element?.getBoundingClientRect();
+    if (!element || !bounds?.width) return;
+    const styles = getComputedStyle(element);
+    const paddingLeft = Number.parseFloat(styles.paddingLeft);
+    const paddingRight = Number.parseFloat(styles.paddingRight);
+    const gutter = Number.parseFloat(
+      styles.getPropertyValue("--pane-gutter"),
+    );
+    const contentWidth = element.clientWidth - paddingLeft - paddingRight;
+    const resizableWidth = contentWidth - gutter;
+    if (resizableWidth <= 0) return;
     setPanelPercent(clampPanelPercent(
-      (clientX - bounds.left) / bounds.width * 100,
+      (
+        clientX
+        - bounds.left
+        - element.clientLeft
+        - paddingLeft
+        - gutter / 2
+      ) / resizableWidth * 100,
     ));
   };
   const changePanelPercent = (value: number) => {

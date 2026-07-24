@@ -28,6 +28,35 @@ describe("workspace URLs", () => {
     expect(WORKSPACE_LIST_PATH).toBe("/workspaces");
   });
 
+  it("pairs readable labels with stable identifiers", () => {
+    const path = workspacePath({
+      locationId: "loc_corner",
+      locationLabel: "C-04 · Corner cabinet",
+      view: "capture",
+      workspaceId: "ws_demo_123",
+      workspaceLabel: "Kitchen reset",
+    });
+    expect(path).toBe(
+      "/workspaces/kitchen-reset@ws_demo_123/capture/locations/c-04-corner-cabinet@loc_corner",
+    );
+    expect(parseAppUrl(path)).toEqual({
+      itemId: null,
+      kind: "workspace",
+      locationId: "loc_corner",
+      view: "capture",
+      workspaceId: "ws_demo_123",
+    });
+    expect(workspacePath({
+      itemId: "item_flour",
+      itemLabel: "All-purpose flour",
+      view: "inventory",
+      workspaceId: "ws_home",
+      workspaceLabel: "My Home",
+    })).toBe(
+      "/workspaces/my-home@ws_home/inventory/items/all-purpose-flour@item_flour",
+    );
+  });
+
   it("parses canonical workspace, location, item, and workspace-list routes", () => {
     expect(parseAppUrl("/workspaces/ws_home/plan")).toEqual({
       kind: "workspace",
@@ -96,7 +125,35 @@ describe("workspace URLs", () => {
     expect(parseAppUrl("/account")).toEqual({ kind: "home" });
   });
 
+  it("keeps label separators unambiguous for imported identifiers", () => {
+    const path = workspacePath({
+      locationId: "loc/@tea shelf",
+      locationLabel: "Crème & 茶",
+      view: "spaces",
+      workspaceId: "ws/@home",
+      workspaceLabel: "",
+    });
+    expect(path).toBe(
+      "/workspaces/workspace@ws%2F%40home/spaces/locations/creme-%E8%8C%B6@loc%2F%40tea%20shelf",
+    );
+    expect(parseAppUrl(path)).toEqual({
+      itemId: null,
+      kind: "workspace",
+      locationId: "loc/@tea shelf",
+      view: "spaces",
+      workspaceId: "ws/@home",
+    });
+  });
+
   it("keeps guest and sign-in returns inside the authorized workspace", () => {
+    const readableSettingsPath =
+      "/workspaces/my-home@ws_home/settings";
+    expect(workspaceReturnTo(readableSettingsPath, "ws_home"))
+      .toBe(readableSettingsPath);
+    const readableItemPath =
+      "/workspaces/my-home@ws_home/inventory/items/all-purpose-flour@item_flour";
+    expect(workspaceReturnTo(readableItemPath, "ws_home"))
+      .toBe(readableItemPath);
     expect(workspaceReturnTo(
       "/workspaces/ws_home/inventory/items/item_flour",
       "ws_home",

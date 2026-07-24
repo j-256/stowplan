@@ -1,5 +1,11 @@
 import { defineConfig, devices } from "@playwright/test";
+
+const TEST_OUTPUT_DIRECTORY = "test-results";
+const E2E_DATABASE_PATH =
+  `${TEST_OUTPUT_DIRECTORY}/stowplan-e2e.sqlite`;
+
 export default defineConfig({
+  outputDir: TEST_OUTPUT_DIRECTORY,
   testDir: "tests/e2e",
   fullyParallel: false,
   retries: process.env.CI ? 2 : 0,
@@ -8,9 +14,9 @@ export default defineConfig({
   webServer: {
     command: "npm run build:next && npm run start:node",
     url: "http://127.0.0.1:3100/api/health",
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: false,
     timeout: 120_000,
-    env: { ...process.env, AUTH_BASE_URL:"http://127.0.0.1:3100", AUTH_DEV_ENABLED:"true", HOST:"127.0.0.1", PORT:"3100", STOWPLAN_SQLITE_PATH:"/tmp/stowplan-e2e.sqlite" },
+    env: { ...process.env, AUTH_BASE_URL:"http://127.0.0.1:3100", AUTH_DEV_ENABLED:"true", HOST:"127.0.0.1", PORT:"3100", STOWPLAN_SQLITE_PATH:E2E_DATABASE_PATH },
   },
   projects: [
     { name:"mobile-chromium", use:{ ...devices["Pixel 7"] } },

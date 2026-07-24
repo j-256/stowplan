@@ -1,6 +1,6 @@
 # Cloudflare Workers + D1
 
-This is the reference deployment. Commands below are intentionally explicit; run them from the repository root.
+This is the reference deployment. Run commands from the repository root. Wrangler commands that support both local and remote D1 target the local database when neither flag is present; every remote `execute`, `export`, or `migrations` example below uses `--remote`. Resource-management commands such as `d1 create`, `d1 list`, and `d1 info`, plus `d1 time-travel`, are remote-only commands and do not accept a `--remote` flag.
 
 The production application is deployed through Sites, whose artifact contains `.openai/hosting.json` plus generated Drizzle migrations. The direct Wrangler instructions remain the self-hosted Cloudflare composition root. Each database belongs to one deployment runtime and migration ledger: Sites applies the generated `drizzle/` stream, direct Wrangler applies numbered files from `migrations/` through its D1 ledger, and Node applies those numbered files through its Node ledger. Both streams satisfy the same runtime compatibility contract for application tables, columns, foreign keys, and named indexes, but their physical SQLite representations intentionally differ because the numbered stream retains legacy `STRICT` tables and inline constraints. Each stream writes an explicit durable marker, and the Node runtime refuses a Sites marker, a numbered marker without its Node ledger, or an unmarked non-`STRICT` Stowplan schema. Never apply multiple streams or ledgers to one database binding.
 
@@ -30,8 +30,8 @@ npx wrangler d1 info stowplan
 ## 3. Apply schema locally
 
 ```bash
-npx wrangler d1 migrations list stowplan --local
-npx wrangler d1 migrations apply stowplan --local
+npx wrangler d1 migrations list stowplan
+npx wrangler d1 migrations apply stowplan
 ```
 
 The apply command is safe to repeat; applied files are skipped. Start a production-like local Worker:
@@ -119,9 +119,10 @@ Run those commands only for a direct Wrangler database. For Sites, build and val
 ```bash
 npm run build
 npm run validate:artifact
+npm run archive:sites
 ```
 
-`npm run build` requires GNU `timeout`, available as `timeout` on Linux and commonly installed through GNU coreutils on macOS. Push the exact source commit used for that build to the Sites source repository, archive the validated `dist/` tree without ignored machine metadata, save a Sites version against that commit and archive, then deploy only the saved version. Sites applies the packaged Drizzle migration stream to its bound D1 database. Source push, environment updates, version saves, and deployments are connector-owned operations rather than public repository CLI commands.
+`npm run build` requires GNU `timeout`, available as `timeout` on Linux and commonly installed through GNU coreutils on macOS. `npm run archive:sites` writes the validated, portable tar archive to `work/stowplan-sites.tar.gz` and excludes local environment and Finder metadata. Push the exact source commit used for that build to the Sites source repository, save a Sites version against that commit and archive, then deploy only the saved version. Sites applies the packaged Drizzle migration stream to its bound D1 database. Source push, environment updates, version saves, and deployments are connector-owned operations rather than public repository CLI commands.
 
 For a direct Wrangler deployment, build and deploy:
 

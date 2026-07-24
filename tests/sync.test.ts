@@ -4,14 +4,46 @@ import {
     createDemoState,
     createEnvelope,
     generatePlan,
+    type ActivityRecord,
+    type AuditEvent,
 } from "../src/domain";
-import { MemorySnapshotStore, synchronize } from "../src/server";
+import {
+    MemorySnapshotStore,
+    synchronize,
+} from "../src/server";
+import { serializedJsonBytes } from "../src/server/quotas";
+import { API_QUOTAS } from "../src/shared/api-quotas";
 
 function editableDemoState() {
     const state = createDemoState();
     state.locations.find((location) => location.id === "loc_warm")!.captureStatus =
         "in_progress";
     return state;
+}
+
+function retainedActivity(index: number): ActivityRecord {
+    return {
+        actorId: "u",
+        commandId: `c${index}`,
+        id: `a${index}`,
+        label: "",
+        patches: [],
+        status: "applied",
+        subjectIds: [],
+        timestamp: "t",
+        undoneAt: null,
+    };
+}
+
+function retainedAudit(index: number, activityId: string): AuditEvent {
+    return {
+        actorId: "u",
+        id: `audit_h${index}`,
+        label: "Undid 1 change",
+        targetActivityIds: [activityId],
+        timestamp: "t",
+        type: "undo",
+    };
 }
 
 describe("synchronization", () => {
@@ -308,5 +340,310 @@ describe("synchronization", () => {
             notes: "A",
             quantity: 11,
         });
+    });
+
+    it("applies commands through the snapshot limit and rejects the overage", async () => {
+        const initial = createDemoState();
+        const template = initial.items[0]!;
+        initial.locations.find(
+            (location) => location.id === template.locationId,
+        )!.captureStatus = "in_progress";
+        initial.items = Array.from(
+            { length: API_QUOTAS.itemsPerSnapshot - 1 },
+            (_, index) => ({
+                ...template,
+                constraints: {
+                    ...template.constraints,
+                    requiredTags: [],
+                },
+                id: `item_quota_${index}`,
+                name: "Stored item",
+                notes: "",
+                tags: [],
+            }),
+        );
+        initial.activities = [];
+        initial.audit = [];
+        initial.plans = [];
+        const first = {
+            ...template,
+            id: "item_quota_first",
+            name: "First item",
+        };
+        const overage = {
+            ...template,
+            id: "item_quota_overage",
+            name: "Overage item",
+        };
+        const store = new MemorySnapshotStore([initial]);
+
+        const result = await synchronize(store, initial.workspace.id, [
+            createEnvelope(
+                initial,
+                { type: "item.create", item: first },
+                { id: "cmd_quota_first" },
+            ),
+            createEnvelope(
+                initial,
+                { type: "item.create", item: overage },
+                { id: "cmd_quota_overage" },
+            ),
+        ]);
+
+        expect(result.receipts).toEqual([
+            {
+                commandId: "cmd_quota_first",
+                revision: initial.workspace.revision + 1,
+                status: "applied",
+            },
+            {
+                actual: API_QUOTAS.itemsPerSnapshot + 1,
+                code: "QUOTA_EXCEEDED",
+                commandId: "cmd_quota_overage",
+                limit: API_QUOTAS.itemsPerSnapshot,
+                message: "This workspace has reached its item record limit",
+                quota: "itemsPerSnapshot",
+                revision: initial.workspace.revision + 1,
+                status: "rejected",
+            },
+        ]);
+        expect(result.snapshot.items).toHaveLength(
+            API_QUOTAS.itemsPerSnapshot,
+        );
+        expect(result.snapshot.items.some(
+            (item) => item.id === "item_quota_first",
+        )).toBe(true);
+        expect(result.snapshot.items.some(
+            (item) => item.id === "item_quota_overage",
+        )).toBe(false);
+    });
+
+    it("retires old activities at the cap while keeping cleanup undoable", async () => {
+        const initial = editableDemoState();
+        initial.activities = Array.from(
+            { length: API_QUOTAS.activitiesPerSnapshot },
+            (_, index) => retainedActivity(index),
+        );
+        const store = new MemorySnapshotStore([initial]);
+        const deleted = await synchronize(store, initial.workspace.id, [
+            createEnvelope(
+                initial,
+                { type: "item.delete", id: "item_pasta" },
+                { id: "command_retained_delete" },
+            ),
+        ]);
+
+        expect(deleted.receipts[0]).toMatchObject({ status: "applied" });
+        expect(deleted.snapshot.items.some(
+            (item) => item.id === "item_pasta",
+        )).toBe(false);
+        expect(deleted.snapshot.activities).toHaveLength(
+            API_QUOTAS.activitiesPerSnapshot,
+        );
+        expect(deleted.snapshot.activities.some(
+            (activity) => activity.id === "a0",
+        )).toBe(false);
+        expect(deleted.snapshot.commandReceipts).toContain("c0");
+        const deletion = deleted.snapshot.activities.find(
+            (activity) => activity.commandId === "command_retained_delete",
+        );
+        expect(deletion).toBeDefined();
+
+        const restored = await synchronize(store, initial.workspace.id, [
+            createEnvelope(
+                deleted.snapshot,
+                { type: "history.undo", activityId: deletion!.id },
+                { id: "command_retained_undo" },
+            ),
+        ]);
+
+        expect(restored.receipts[0]).toMatchObject({ status: "applied" });
+        expect(restored.snapshot.items.some(
+            (item) => item.id === "item_pasta",
+        )).toBe(true);
+
+        const replayed = await synchronize(store, initial.workspace.id, [
+            createEnvelope(
+                restored.snapshot,
+                { type: "workspace.rename", name: "Must not replay" },
+                { id: "c0" },
+            ),
+        ]);
+        expect(replayed.receipts[0]).toMatchObject({ status: "duplicate" });
+        expect(replayed.snapshot.workspace.name).toBe(initial.workspace.name);
+    });
+
+    it("retires old audit events while retaining the current history action", async () => {
+        const initial = createDemoState();
+        const renamed = applyCommand(
+            initial,
+            createEnvelope(
+                initial,
+                { type: "workspace.rename", name: "Retained workspace" },
+                { id: "command_audited_rename" },
+            ),
+        ).state;
+        const activityId = renamed.activities[0]!.id;
+        renamed.audit = Array.from(
+            { length: API_QUOTAS.auditEventsPerSnapshot },
+            (_, index) => retainedAudit(index, activityId),
+        );
+        const store = new MemorySnapshotStore([renamed]);
+
+        const undone = await synchronize(store, renamed.workspace.id, [
+            createEnvelope(
+                renamed,
+                { type: "history.undo", activityId },
+                { id: "command_retained_audit" },
+            ),
+        ]);
+
+        expect(undone.receipts[0]).toMatchObject({ status: "applied" });
+        expect(undone.snapshot.workspace.name).toBe("Kitchen reset");
+        expect(undone.snapshot.audit).toHaveLength(
+            API_QUOTAS.auditEventsPerSnapshot,
+        );
+        expect(undone.snapshot.audit.some(
+            (event) => event.id === "audit_h0",
+        )).toBe(false);
+        expect(undone.snapshot.commandReceipts).toContain("h0");
+        expect(undone.snapshot.audit.some(
+            (event) => event.id === "audit_command_retained_audit",
+        )).toBe(true);
+    });
+
+    it("compacts old history at the byte cap while keeping cleanup undoable", async () => {
+        const initial = editableDemoState();
+        const oldActivity = retainedActivity(0);
+        initial.activities = [oldActivity];
+        const padding =
+            API_QUOTAS.storedSnapshotBytes - serializedJsonBytes(initial);
+        expect(padding).toBeGreaterThan(0);
+        oldActivity.label = "x".repeat(padding);
+        expect(serializedJsonBytes(initial)).toBe(
+            API_QUOTAS.storedSnapshotBytes,
+        );
+        const store = new MemorySnapshotStore([initial]);
+
+        const deleted = await synchronize(store, initial.workspace.id, [
+            createEnvelope(
+                initial,
+                { type: "item.delete", id: "item_pasta" },
+                { id: "command_byte_cleanup" },
+            ),
+        ]);
+
+        expect(deleted.receipts[0]).toMatchObject({ status: "applied" });
+        expect(serializedJsonBytes(deleted.snapshot)).toBeLessThanOrEqual(
+            API_QUOTAS.storedSnapshotBytes,
+        );
+        expect(deleted.snapshot.activities.some(
+            (activity) => activity.id === oldActivity.id,
+        )).toBe(false);
+        expect(deleted.snapshot.commandReceipts).toContain(
+            oldActivity.commandId,
+        );
+        const deletion = deleted.snapshot.activities.find(
+            (activity) => activity.commandId === "command_byte_cleanup",
+        );
+        expect(deletion).toBeDefined();
+
+        const restored = await synchronize(store, initial.workspace.id, [
+            createEnvelope(
+                deleted.snapshot,
+                { type: "history.undo", activityId: deletion!.id },
+                { id: "command_byte_cleanup_undo" },
+            ),
+        ]);
+        expect(restored.receipts[0]).toMatchObject({ status: "applied" });
+        expect(restored.snapshot.items.some(
+            (item) => item.id === "item_pasta",
+        )).toBe(true);
+    });
+
+    it("rejects legacy overage growth before and after an accepted shrink", async () => {
+        const initial = createDemoState();
+        const template = initial.items[0]!;
+        initial.locations.find(
+            (location) => location.id === template.locationId,
+        )!.captureStatus = "in_progress";
+        initial.items = Array.from(
+            { length: API_QUOTAS.itemsPerSnapshot + 1 },
+            (_, index) => ({
+                ...template,
+                constraints: {
+                    ...template.constraints,
+                    requiredTags: [],
+                },
+                id: `item_legacy_${index}`,
+                name: "Stored item",
+                notes: "",
+                tags: [],
+            }),
+        );
+        initial.activities = [];
+        initial.audit = [];
+        initial.plans = [];
+        const store = new MemorySnapshotStore([initial]);
+        const rejectedGrowth = {
+            ...template,
+            id: "item_legacy_growth",
+            name: "Rejected growth",
+        };
+        const rejectedRegrowth = {
+            ...template,
+            id: "item_legacy_regrowth",
+            name: "Rejected regrowth",
+        };
+
+        const result = await synchronize(store, initial.workspace.id, [
+            createEnvelope(
+                initial,
+                { type: "item.create", item: rejectedGrowth },
+                { id: "cmd_legacy_growth" },
+            ),
+            createEnvelope(
+                initial,
+                { type: "item.delete", id: "item_legacy_0" },
+                { id: "cmd_legacy_shrink" },
+            ),
+            createEnvelope(
+                initial,
+                { type: "item.create", item: rejectedRegrowth },
+                { id: "cmd_legacy_regrowth" },
+            ),
+        ]);
+
+        expect(result.receipts).toMatchObject([
+            {
+                actual: API_QUOTAS.itemsPerSnapshot + 2,
+                commandId: "cmd_legacy_growth",
+                quota: "itemsPerSnapshot",
+                revision: initial.workspace.revision,
+                status: "rejected",
+            },
+            {
+                commandId: "cmd_legacy_shrink",
+                revision: initial.workspace.revision + 1,
+                status: "applied",
+            },
+            {
+                actual: API_QUOTAS.itemsPerSnapshot + 1,
+                commandId: "cmd_legacy_regrowth",
+                quota: "itemsPerSnapshot",
+                revision: initial.workspace.revision + 1,
+                status: "rejected",
+            },
+        ]);
+        expect(result.snapshot.items).toHaveLength(
+            API_QUOTAS.itemsPerSnapshot,
+        );
+        expect(result.snapshot.items.some(
+            (item) => item.id === "item_legacy_0",
+        )).toBe(false);
+        expect(result.snapshot.items.some(
+            (item) => item.id === rejectedGrowth.id ||
+                item.id === rejectedRegrowth.id,
+        )).toBe(false);
     });
 });

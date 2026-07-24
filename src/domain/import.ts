@@ -234,6 +234,8 @@ function requireString(record: Record<string, unknown>, field: string, path: str
 }
 
 export function normalizeWorkspaceState(state: WorkspaceState): WorkspaceState {
+    if (!Array.isArray(state.commandReceipts)) state.commandReceipts = [];
+    else state.commandReceipts = [...new Set(state.commandReceipts)];
     if (!Array.isArray(state.items)) return state;
     const nextOrder = new Map<string, number>();
     const orderByItemId = new Map<string, number>();
@@ -361,6 +363,36 @@ export function validateSnapshot(value: unknown): ValidationIssue[] {
     const plans = value.plans as unknown[];
     const activities = value.activities as unknown[];
     const audit = value.audit as unknown[];
+    if (value.commandReceipts !== undefined) {
+        if (!isStringArray(value.commandReceipts)) {
+            issue(
+                issues,
+                "COMMAND_RECEIPTS",
+                "Command receipts must be strings",
+                "$.commandReceipts",
+            );
+        } else {
+            const receiptIds = new Set<string>();
+            value.commandReceipts.forEach((commandId, index) => {
+                if (!commandId.trim()) {
+                    issue(
+                        issues,
+                        "COMMAND_RECEIPTS",
+                        "Command receipt IDs cannot be blank",
+                        `$.commandReceipts[${index}]`,
+                    );
+                } else if (receiptIds.has(commandId)) {
+                    issue(
+                        issues,
+                        "DUPLICATE_ID",
+                        "Duplicate command receipt ID",
+                        `$.commandReceipts[${index}]`,
+                    );
+                }
+                receiptIds.add(commandId);
+            });
+        }
+    }
     const locationIds = new Set<string>();
     const activeCodes = new Set<string>();
     locations.forEach((candidate, index) => {

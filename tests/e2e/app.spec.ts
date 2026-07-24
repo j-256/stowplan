@@ -2,6 +2,12 @@ import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { projectContextOptions } from "./project-context";
 
+const MAX_FACING_CONTENT_GAP = 54;
+const MAX_PANEL_GUTTER = 16;
+const MAX_PANEL_PADDING = 18;
+const MAX_PANEL_SHELL_PADDING = 22;
+const MIN_RESIZE_TARGET = 32;
+
 async function localReplica(page: Page) {
   return page.evaluate(() => new Promise<Record<string, unknown>>((resolve, reject) => {
     const open = indexedDB.open("stowplan-v1", 1);
@@ -12,6 +18,85 @@ async function localReplica(page: Page) {
       request.onsuccess = () => resolve(request.result as Record<string, unknown>);
     };
   }));
+}
+
+async function expectCompactPanelSpacing(panel: Locator): Promise<void> {
+  const spacing = await panel.evaluate((element) => {
+    const sections = [
+      ...element.querySelectorAll<HTMLElement>(":scope > section"),
+    ];
+    const primary = sections[0];
+    const secondary = sections[1];
+    const measure = (section: HTMLElement) => {
+      const bounds = section.getBoundingClientRect();
+      const styles = getComputedStyle(section);
+      const borderBottom = Number.parseFloat(styles.borderBottomWidth);
+      const borderLeft = Number.parseFloat(styles.borderLeftWidth);
+      const borderRight = Number.parseFloat(styles.borderRightWidth);
+      const borderTop = Number.parseFloat(styles.borderTopWidth);
+      const paddingBottom = Number.parseFloat(styles.paddingBottom);
+      const paddingLeft = Number.parseFloat(styles.paddingLeft);
+      const paddingRight = Number.parseFloat(styles.paddingRight);
+      const paddingTop = Number.parseFloat(styles.paddingTop);
+      return {
+        bounds,
+        contentBottom: bounds.bottom - borderBottom - paddingBottom,
+        contentLeft: bounds.left + borderLeft + paddingLeft,
+        contentRight: bounds.right - borderRight - paddingRight,
+        contentTop: bounds.top + borderTop + paddingTop,
+        paddings: [paddingTop, paddingRight, paddingBottom, paddingLeft],
+      };
+    };
+    const primaryBox = primary ? measure(primary) : undefined;
+    const secondaryBox = secondary ? measure(secondary) : undefined;
+    const layout = element.dataset.panelLayout;
+    const resizerBounds = element.querySelector<HTMLElement>(".pane-resizer")
+      ?.getBoundingClientRect();
+    const styles = getComputedStyle(element);
+    const sideBySide = layout === "side-by-side";
+    return {
+      facingContentGap: primaryBox && secondaryBox
+        ? sideBySide
+          ? secondaryBox.contentLeft - primaryBox.contentRight
+          : secondaryBox.contentTop - primaryBox.contentBottom
+        : Number.POSITIVE_INFINITY,
+      innerPaddings: sections.flatMap((section) => measure(section).paddings),
+      layout,
+      resizeContentClearance: sideBySide
+        && primaryBox
+        && secondaryBox
+        && resizerBounds
+        ? Math.min(
+          resizerBounds.left - primaryBox.contentRight,
+          secondaryBox.contentLeft - resizerBounds.right,
+        )
+        : null,
+      resizeTarget: resizerBounds?.width ?? 0,
+      separation: primaryBox && secondaryBox
+        ? sideBySide
+          ? secondaryBox.bounds.left - primaryBox.bounds.right
+          : secondaryBox.bounds.top - primaryBox.bounds.bottom
+        : Number.POSITIVE_INFINITY,
+      shellPadding: Math.max(
+        Number.parseFloat(styles.paddingLeft),
+        Number.parseFloat(styles.paddingRight),
+      ),
+    };
+  });
+
+  expect(spacing.shellPadding).toBeLessThanOrEqual(MAX_PANEL_SHELL_PADDING);
+  expect(Math.max(...spacing.innerPaddings)).toBeLessThanOrEqual(
+    MAX_PANEL_PADDING,
+  );
+  expect(spacing.facingContentGap).toBeLessThanOrEqual(
+    MAX_FACING_CONTENT_GAP,
+  );
+  expect(spacing.separation).toBeGreaterThanOrEqual(0);
+  expect(spacing.separation).toBeLessThanOrEqual(MAX_PANEL_GUTTER);
+  if (spacing.layout === "side-by-side") {
+    expect(spacing.resizeContentClearance).toBeGreaterThanOrEqual(0);
+    expect(spacing.resizeTarget).toBeGreaterThanOrEqual(MIN_RESIZE_TARGET);
+  }
 }
 
 async function holdNativeDrag(
@@ -65,6 +150,20 @@ async function dispatchNativeDrop(
       clientY,
       dataTransfer,
     });
+    await source.dispatchEvent("dragend", { dataTransfer });
+  } finally {
+    await dataTransfer.dispose();
+  }
+}
+
+async function dispatchNativeCancel(
+  page: Page,
+  source: Locator,
+): Promise<void> {
+  await source.scrollIntoViewIfNeeded();
+  const dataTransfer = await page.evaluateHandle(() => new DataTransfer());
+  try {
+    await source.dispatchEvent("dragstart", { dataTransfer });
     await source.dispatchEvent("dragend", { dataTransfer });
   } finally {
     await dataTransfer.dispose();
@@ -126,10 +225,11 @@ test("gives tabs, spaces, filters, and item editors restorable URLs", async ({ p
   const replica = await localReplica(page) as {
     state: { workspace: { id: string } };
   };
-  const workspacePrefix = `/workspaces/${encodeURIComponent(replica.state.workspace.id)}`;
+  const workspacePrefix =
+    `/workspaces/kitchen-reset@${encodeURIComponent(replica.state.workspace.id)}`;
 
   await expect(page).toHaveURL(
-    new RegExp(`${workspacePrefix}/capture/locations/loc_kitchen$`),
+    new RegExp(`${workspacePrefix}/capture/locations/kit-kitchen@loc_kitchen$`),
   );
   const plan = page.locator(".nav:visible", { hasText: "Plan" });
   await expect(plan).toHaveAttribute("href", `${workspacePrefix}/plan`);
@@ -142,28 +242,135 @@ test("gives tabs, spaces, filters, and item editors restorable URLs", async ({ p
   await page.goBack();
   await expect(page.getByRole("heading", { name: "Capture", exact: true })).toBeVisible();
   await expect(page).toHaveURL(
-    new RegExp(`${workspacePrefix}/capture/locations/loc_kitchen$`),
+    new RegExp(`${workspacePrefix}/capture/locations/kit-kitchen@loc_kitchen$`),
   );
   await page.locator(
     '.capture-location-row[data-location-id="loc_bin"] .queue-row',
   ).click();
   await expect(page).toHaveURL(
-    new RegExp(`${workspacePrefix}/capture/locations/loc_bin$`),
+    new RegExp(`${workspacePrefix}/capture/locations/b-17-baking-bin@loc_bin$`),
   );
 
   await page.locator(".nav:visible", { hasText: "Inventory" }).click();
   await page.getByLabel("Filter by location").selectOption("loc_bin");
   await expect(page).toHaveURL(
-    new RegExp(`${workspacePrefix}/inventory/locations/loc_bin$`),
+    new RegExp(`${workspacePrefix}/inventory/locations/b-17-baking-bin@loc_bin$`),
   );
   await page.locator('[data-item-id="item_flour"] .item-name').click();
   await expect(page).toHaveURL(
-    new RegExp(`${workspacePrefix}/inventory/items/item_flour$`),
+    new RegExp(`${workspacePrefix}/inventory/items/all-purpose-flour@item_flour$`),
   );
   await page.reload();
   await expect(page.getByRole("dialog", { name: "Review item" })).toBeVisible();
   await page.getByRole("button", { name: "Close item editor" }).click();
+  await expect(page).toHaveURL(
+    new RegExp(
+      `${workspacePrefix}/inventory/locations/b-17-baking-bin@loc_bin$`,
+    ),
+  );
+  await expect(page.locator(".inventory-marker")).toHaveCount(0);
+  await expect(page.locator(".inventory-row .reorder-drop-copy:visible"))
+    .toHaveCount(0);
+  const locationLink = page.locator(
+    '.inventory-row[data-item-id="item_flour"] .location-path',
+  );
+  await expect(locationLink).toHaveAttribute(
+    "href",
+    `${workspacePrefix}/spaces/locations/b-17-baking-bin@loc_bin`,
+  );
+  await locationLink.click();
+  await expect(page.getByRole("heading", {
+    name: "Spaces",
+    exact: true,
+  })).toBeVisible();
+  await expect(page).toHaveURL(
+    new RegExp(`${workspacePrefix}/spaces/locations/b-17-baking-bin@loc_bin$`),
+  );
+});
+
+test("closes item routes without duplicating Inventory history", async ({
+  page,
+}) => {
+  await page.getByRole("button", {
+    name: "Explore the kitchen demo instead",
+  }).click();
+  await expect(page).toHaveURL(/\/capture\/locations\//);
+  const captureUrl = page.url();
+  await page.locator(".nav:visible", { hasText: "Inventory" }).click();
+  const inventoryUrl = page.url();
+  const itemLink = page.locator(
+    '[data-item-id="item_flour"] .item-name',
+  );
+  await itemLink.click();
+  const itemUrl = page.url();
+  expect(await page.evaluate(() => history.state?.itemModal)).toBe(true);
+
+  await page.getByRole("button", { name: "Close item editor" }).click();
+  await expect(page).toHaveURL(inventoryUrl);
+  await page.goBack();
+  await expect(page).toHaveURL(captureUrl);
+
+  await page.goto(itemUrl);
+  await expect(page.getByRole("dialog", { name: "Review item" })).toBeVisible();
+  await page.getByRole("button", { name: "Close item editor" }).click();
+  await expect(page).toHaveURL(inventoryUrl);
+  await page.goBack();
+  await expect(page).toHaveURL(captureUrl);
+});
+
+test("refuses stale item and space targets without rewriting their URLs", async ({
+  page,
+}) => {
+  await page.getByRole("button", {
+    name: "Explore the kitchen demo instead",
+  }).click();
+  const replica = await localReplica(page) as {
+    state: { workspace: { id: string } };
+  };
+  const workspacePrefix =
+    `/workspaces/kitchen-reset@${encodeURIComponent(replica.state.workspace.id)}`;
+
+  await page.locator(
+    '.capture-location-row[data-location-id="loc_bin"] .queue-row',
+  ).click();
+  await page.getByRole("button", { name: "Reopen capture" }).click();
+  await page.locator(".nav:visible", { hasText: "Inventory" }).click();
+  await page.locator('[data-item-id="item_flour"] .item-name').click();
+  const moreActions = page.getByText("More actions", { exact: true });
+  await moreActions.focus();
+  await page.keyboard.press("Enter");
+  const deleteItem = page.getByRole("button", {
+    name: "Delete item record",
+  });
+  await deleteItem.focus();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("dialog", { name: /item/i })).toHaveCount(0);
   await expect(page).toHaveURL(new RegExp(`${workspacePrefix}/inventory$`));
+
+  const archivedItemUrl =
+    `${workspacePrefix}/inventory/items/all-purpose-flour@item_flour`;
+  await page.goto(archivedItemUrl);
+  await expect(page.locator(".workspace-notice")).toContainText(
+    "This item link is stale. The item is missing or archived",
+  );
+  await expect(page.locator(".workspace-notice")).toBeVisible();
+  await expect(page.locator(".feedback-toast")).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: /item/i })).toHaveCount(0);
+  await expect(page).toHaveURL(new RegExp(`${archivedItemUrl}$`));
+
+  const missingSpaceUrl =
+    `${workspacePrefix}/spaces/locations/missing-space@loc_missing`;
+  await page.goto(missingSpaceUrl);
+  await expect(page.locator(".workspace-notice")).toContainText(
+    "This space link is stale. The space is missing or archived",
+  );
+  await expect(page.locator(".workspace-notice")).toBeVisible();
+  await expect(page.locator(".feedback-toast")).toHaveCount(0);
+  await expect(page).toHaveURL(new RegExp(`${missingSpaceUrl}$`));
+  await page.locator(".nav:visible", { hasText: "Inventory" }).click();
+  await expect(page).toHaveURL(new RegExp(`${workspacePrefix}/inventory$`));
+  await expect(page.locator(".workspace-notice")).toHaveCount(0);
 });
 
 test("opens a shared workspace URL on a clean collaborator device", async ({ page, browser }, testInfo) => {
@@ -206,7 +413,7 @@ test("opens a shared workspace URL on a clean collaborator device", async ({ pag
   }
 });
 
-test("announces share success and failure in the visible feedback toast", async ({ page }) => {
+test("announces share outcomes without reporting an ordinary cancel", async ({ page }) => {
   await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
   await page.evaluate(() => {
     Object.defineProperty(navigator, "share", {
@@ -256,9 +463,7 @@ test("announces share success and failure in the visible feedback toast", async 
     });
   });
   await page.getByLabel("Share this view").click();
-  await expect(page.locator(".feedback-toast[role='status']")).toContainText(
-    "Sharing was canceled",
-  );
+  await expect(page.locator(".feedback-toast")).toHaveCount(0);
 });
 
 test("collapses the desktop sidebar and persists the icon-only preference", async ({ page }, testInfo) => {
@@ -367,11 +572,14 @@ test("switches, resizes, and persists responsive panel layouts", async ({ page }
     await expect(capture).toHaveAttribute("data-panel-layout", "stacked");
     await expect(page.getByRole("separator", { name: "Resize capture queue" }))
       .toBeHidden();
+    await expectCompactPanelSpacing(capture);
   } else {
     await stacked.click();
     await expect(capture).toHaveAttribute("data-panel-layout", "stacked");
+    await expectCompactPanelSpacing(capture);
     await sideBySide.click();
     await expect(capture).toHaveAttribute("data-panel-layout", "side-by-side");
+    await expectCompactPanelSpacing(capture);
     const separator = page.getByRole("separator", { name: "Resize capture queue" });
     await expect(separator).toBeVisible();
     await separator.focus();
@@ -409,11 +617,14 @@ test("switches, resizes, and persists responsive panel layouts", async ({ page }
   const spacesSideBySide = spacesLayout.getByRole("button", { name: "Side by side" });
   if (await spacesSideBySide.isDisabled()) {
     await expect(spaces).toHaveAttribute("data-panel-layout", "stacked");
+    await expectCompactPanelSpacing(spaces);
   } else {
     await spacesLayout.getByRole("button", { name: "Stacked" }).click();
     await expect(spaces).toHaveAttribute("data-panel-layout", "stacked");
+    await expectCompactPanelSpacing(spaces);
     await spacesSideBySide.click();
     await expect(spaces).toHaveAttribute("data-panel-layout", "side-by-side");
+    await expectCompactPanelSpacing(spaces);
   }
 
   expect(await page.evaluate(() => ({
@@ -421,6 +632,75 @@ test("switches, resizes, and persists responsive panel layouts", async ({ page }
     document: document.documentElement.scrollWidth <=
       document.documentElement.clientWidth + 1,
   }))).toEqual({ body: true, document: true });
+});
+
+test("keeps the Spaces tree and editor dense at compact desktop widths", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "desktop-chromium",
+    "The wide desktop project probes compact and full desktop widths",
+  );
+  await page.getByRole("button", {
+    name: "Explore the kitchen demo instead",
+  }).click();
+  await page.locator(".nav:visible", { hasText: "Spaces" }).click();
+
+  const spaces = page.locator(".split.resizable-panels");
+  const layout = page.getByRole("group", { name: "Space panels layout" });
+  const sideBySide = layout.getByRole("button", { name: "Side by side" });
+  await page.setViewportSize({ width: 1133, height: 744 });
+  await expect(sideBySide).toBeDisabled();
+  await expect(spaces).toHaveAttribute("data-panel-layout", "stacked");
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(sideBySide).toBeEnabled();
+  await sideBySide.click();
+  await expect(spaces).toHaveAttribute("data-panel-layout", "side-by-side");
+  await expect(page.locator(".tree-panel > .root-drop")).toBeHidden();
+
+  const density = await spaces.evaluate((element) => {
+    const treePanel = element.querySelector<HTMLElement>(".tree-panel");
+    const firstRow = treePanel?.querySelector<HTMLElement>(".tree-row");
+    const rows = [...element.querySelectorAll<HTMLElement>(".tree-row")];
+    const controls = [...element.querySelectorAll<HTMLElement>(
+      ".tree-row button, .tree-row .drag-handle",
+    )].filter((control) => {
+      const styles = getComputedStyle(control);
+      const bounds = control.getBoundingClientRect();
+      return styles.display !== "none" &&
+        styles.visibility !== "hidden" &&
+        bounds.width > 0 &&
+        bounds.height > 0;
+    });
+    const labels = [...element.querySelectorAll<HTMLElement>(
+      ".inspector .editor-form label",
+    )];
+    return {
+      controlsMeetTarget: controls.every((control) => {
+        const bounds = control.getBoundingClientRect();
+        return bounds.width >= 44 && bounds.height >= 44;
+      }),
+      firstRowOffset: treePanel && firstRow
+        ? firstRow.getBoundingClientRect().top -
+          treePanel.getBoundingClientRect().top
+        : Number.POSITIVE_INFINITY,
+      labelMarginsReset: labels.every((label) => {
+        const styles = getComputedStyle(label);
+        return styles.marginTop === "0px" && styles.marginBottom === "0px";
+      }),
+      maxRowHeight: Math.max(
+        0,
+        ...rows.map((row) => row.getBoundingClientRect().height),
+      ),
+      noHorizontalOverflow: element.scrollWidth <= element.clientWidth + 1,
+    };
+  });
+  expect(density.controlsMeetTarget).toBe(true);
+  expect(density.firstRowOffset).toBeLessThanOrEqual(140);
+  expect(density.labelMarginsReset).toBe(true);
+  expect(density.maxRowHeight).toBeLessThanOrEqual(80);
+  expect(density.noHorizontalOverflow).toBe(true);
 });
 
 test("keeps preferences usable when browser storage is unavailable", async ({ page }, testInfo) => {
@@ -480,7 +760,7 @@ test("aligns header controls and immediately toggles the applied system theme", 
   const search = page.getByRole("button", {
     name: "Search and jump, Command or Control K",
   });
-  const home = page.getByRole("link", { name: "Open main menu" });
+  const home = page.getByRole("link", { name: "Workspaces and backup status" });
   const settings = page.getByRole("link", { name: "Open settings" });
   const share = page.getByRole("button", { name: "Share this view" });
   const controlBounds = await Promise.all(
@@ -542,6 +822,123 @@ test("aligns header controls and immediately toggles the applied system theme", 
   await expect(root).toHaveAttribute("data-theme", "dark");
   await themeChoices.getByRole("button", { name: "light" }).click();
   await expect(root).toHaveAttribute("data-theme", "light");
+  const workspaceStatusLink = page.locator(".settings-workspaces-link");
+  await expect(workspaceStatusLink).toHaveAttribute("href", "/workspaces");
+  await workspaceStatusLink.click();
+  await expect(page.getByRole("heading", { name: "Workspaces" })).toBeFocused();
+});
+
+test("navigates every active surface with arrow keys while preserving native controls", async ({
+  page,
+}) => {
+  await page.getByRole("button", {
+    name: "Explore the kitchen demo instead",
+  }).click();
+
+  const jump = page.getByRole("button", {
+    name: "Search and jump, Command or Control K",
+  });
+  await jump.focus();
+  await page.keyboard.press("ArrowDown");
+  await expect(page.getByRole("link", { name: "Workspaces and backup status" })).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await expect(jump).toBeFocused();
+  await page.keyboard.press("Control+ArrowDown");
+  await expect(jump).toBeFocused();
+
+  await page.locator(
+    '.capture-location-row[data-location-id="loc_corner"] .queue-row',
+  ).click();
+  const quantity = page.getByLabel("Qty");
+  await quantity.focus();
+  await expect(quantity).toHaveValue("1");
+  await page.keyboard.press("ArrowUp");
+  await expect(quantity).toBeFocused();
+  await expect(quantity).toHaveValue("2");
+
+  await page.locator(".nav:visible", { hasText: "Inventory" }).click();
+  const inventorySearch = page.getByLabel("Search inventory");
+  await inventorySearch.focus();
+  await page.keyboard.press("ArrowDown");
+  await expect(inventorySearch).toBeFocused();
+  const inventorySort = page.getByLabel("Sort inventory");
+  await inventorySort.focus();
+  await page.keyboard.press("ArrowDown");
+  await expect(inventorySort).toBeFocused();
+  const firstInventoryRow = page.locator(".inventory-row").first();
+  const rowCheckbox = firstInventoryRow.getByRole("checkbox");
+  const rowName = firstInventoryRow.locator(".item-name");
+  await rowCheckbox.focus();
+  await page.keyboard.press("ArrowDown");
+  await expect(rowName).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await expect(rowCheckbox).toBeFocused();
+  await page.locator('[data-item-id="item_flour"] .item-name').click();
+  const dialog = page.getByRole("dialog", { name: "Review item" });
+  const close = page.getByRole("button", { name: "Close item editor" });
+  await expect(dialog).toBeVisible();
+  await expect.poll(() => dialog.evaluate((element) =>
+    element.contains(document.activeElement)
+  )).toBe(true);
+  await close.focus();
+  await expect(close).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  expect(await dialog.evaluate((element) =>
+    element.contains(document.activeElement)
+  )).toBe(true);
+  await page.keyboard.press("ArrowDown");
+  await expect(close).toBeFocused();
+  await close.click();
+  await expect(dialog).toBeHidden();
+
+  await page.locator(".nav:visible", { hasText: "Plan" }).click();
+  await page.getByText("Plan priorities", { exact: true }).click();
+  const range = page.getByLabel("Accessibility weight");
+  await range.focus();
+  const rangeValue = Number(await range.inputValue());
+  await page.keyboard.press("ArrowDown");
+  await expect(range).toBeFocused();
+  expect(Number(await range.inputValue())).toBeLessThan(rangeValue);
+  const radios = page.locator("[data-keyboard-radio-test] input");
+  await page.evaluate(() => {
+    const fixture = document.createElement("div");
+    fixture.dataset.keyboardRadioTest = "";
+    fixture.innerHTML = [
+      '<input aria-label="First test choice" name="keyboard-test" type="radio" checked>',
+      '<input aria-label="Second test choice" name="keyboard-test" type="radio">',
+    ].join("");
+    document.querySelector("main")?.appendChild(fixture);
+  });
+  await radios.first().focus();
+  await page.keyboard.press("ArrowDown");
+  await expect(radios.nth(1)).toBeFocused();
+  await expect(radios.nth(1)).toBeChecked();
+
+  await page.goto("/docs/");
+  await page.evaluate(() => {
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+    window.scrollTo(0, 0);
+  });
+  await page.keyboard.press("ArrowDown");
+  const back = page.getByRole("link", { name: "Back to organizer" });
+  await expect(back).toBeFocused();
+  expect(await back.evaluate((element) => {
+    const styles = getComputedStyle(element);
+    return Number.parseFloat(styles.outlineWidth) > 0 &&
+      styles.outlineStyle !== "none";
+  })).toBe(true);
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+  await page.keyboard.press("ArrowDown");
+  const adminGuide = page.getByRole("link", {
+    name: "Open the admin testing guide",
+  });
+  await expect(adminGuide).toBeFocused();
+  expect(await adminGuide.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    return bounds.top >= 0 && bounds.bottom <= innerHeight;
+  })).toBe(true);
 });
 
 test("searches and jumps with Control or Command K", async ({ page }, testInfo) => {
@@ -598,7 +995,9 @@ test("searches and jumps with Control or Command K", async ({ page }, testInfo) 
   await search.fill("Brown sugar");
   await page.locator('[role="option"][data-kind="item"]', { hasText: "Brown sugar" }).click();
   await expect(page.getByRole("dialog", { name: "Review item" })).toBeVisible();
-  await expect(page).toHaveURL(/\/inventory\/items\/item_sugar$/);
+  await expect(page).toHaveURL(
+    /\/inventory\/items\/brown-sugar@item_sugar$/,
+  );
   expect(await page.evaluate(() => {
     const close = document.querySelector<HTMLElement>(
       '[aria-label="Close item editor"]',
@@ -611,12 +1010,19 @@ test("searches and jumps with Control or Command K", async ({ page }, testInfo) 
     };
   })).toEqual({ closeVisible: true, noOverflow: true });
   await page.getByRole("button", { name: "Close item editor" }).click();
+  await expect(
+    page.getByRole("dialog", { name: "Review item" }),
+  ).toBeHidden();
+  await expect(page).toHaveURL(/\/spaces(?:\/locations\/[^/]+)?$/);
+  await expect(page.locator(".loading")).toHaveCount(0);
 
   await page.keyboard.press("Meta+KeyK");
   await search.fill("Baking bin");
   await page.locator('[role="option"][data-kind="space"]', { hasText: "Baking bin" }).click();
   await expect(page.getByRole("heading", { name: "Spaces", exact: true })).toBeVisible();
-  await expect(page).toHaveURL(/\/spaces\/locations\/loc_bin$/);
+  await expect(page).toHaveURL(
+    /\/spaces\/locations\/b-17-baking-bin@loc_bin$/,
+  );
 
   await page.keyboard.press("Control+KeyK");
   await expect(palette).toBeVisible();
@@ -643,7 +1049,7 @@ test("keeps known empty separate from an undoable empty-container action", async
   await expect(page.getByRole("button", { name: "Add top-level space" }))
     .toBeVisible();
   await page.getByRole("button", { name: "Reopen capture" }).click();
-  await expect(page.getByRole("status")).toContainText("open for capture again");
+  await expect(page.locator(".feedback-toast")).toBeHidden();
   await expect(page.getByRole("button", { name: "Counted & next" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Empty container" })).toBeVisible();
 
@@ -726,10 +1132,7 @@ test("keeps known empty separate from an undoable empty-container action", async
   });
   await keepCounting.click();
   await expect(knownEmptyReview).toBeHidden();
-  await expect(page.getByRole("status")).toContainText(
-    "No changes were made to Baking bin",
-  );
-  await page.getByRole("button", { name: "Dismiss message" }).click();
+  await expect(page.locator(".feedback-toast")).toHaveCount(0);
 
   await page.getByRole("button", { name: "Empty container" }).click();
   const emptyContainerReview = page.getByRole("dialog", {
@@ -854,7 +1257,7 @@ test("visibly refuses unchanged item and space saves", async ({ page }) => {
 test("visibly refuses known-empty capture while nested spaces remain", async ({ page }) => {
   await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
   await page.locator(
-    '.capture-location-row[data-location-id="loc_unknown"] .queue-row',
+    '.capture-location-row[data-location-id="loc_corner"] .queue-row',
   ).click();
   await page.getByRole("button", { name: "Known empty & next" }).click();
   await expect(page.locator(".feedback-toast[role='alert']")).toContainText(
@@ -864,7 +1267,7 @@ test("visibly refuses known-empty capture while nested spaces remain", async ({ 
     state: { locations: { captureStatus: string; id: string }[] };
   };
   expect(replica.state.locations
-    .find((location) => location.id === "loc_unknown")?.captureStatus)
+    .find((location) => location.id === "loc_corner")?.captureStatus)
     .toBe("in_progress");
 });
 
@@ -886,8 +1289,8 @@ test("onboards, captures, edits, searches, plans, rolls back, and persists local
   await page.getByRole("button", { name: "Save & add next" }).click();
   await expect(page.getByText("Test tea towels", { exact: true })).toBeVisible();
 
-  await page.getByLabel("Open main menu").click();
-  await expect(page.getByRole("heading", { name: "Where to next?" })).toBeVisible();
+  await page.getByLabel("Workspaces and backup status").click();
+  await expect(page.getByRole("heading", { name: "Workspaces" })).toBeVisible();
   await page.getByRole("button", { name: "Continue current workspace" }).click();
   await expect(page.getByText("Test tea towels", { exact: true })).toBeVisible();
 
@@ -953,7 +1356,7 @@ test("resets the active demo from the main menu", async ({ page }) => {
   await page.getByLabel("Qty").fill("1");
   await page.getByLabel("What is it?").fill("Temporary demo item");
   await page.getByRole("button", { name: "Save & add next" }).click();
-  await page.getByLabel("Open main menu").click();
+  await page.getByLabel("Workspaces and backup status").click();
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Reset kitchen demo" }).click();
   await expect(page.getByRole("heading", { name: "Capture" })).toBeVisible();
@@ -1043,6 +1446,12 @@ test("previews desktop reorder destinations before committing them", async ({ pa
 
   await holdNativeDrag(page, left.locator(".drag-handle"), differentParent);
   await page.mouse.up();
+  await expect(page.locator(".feedback-toast")).toBeHidden();
+  await dispatchNativeDrop(
+    page,
+    left.locator(".drag-handle"),
+    differentParent,
+  );
   await expect(page.locator(".feedback-toast[role='alert']")).toContainText(
     "Capture only reorders sibling spaces",
   );
@@ -1075,14 +1484,15 @@ test("previews desktop reorder destinations before committing them", async ({ pa
 
   await page.locator(".nav:visible", { hasText: "Spaces" }).click();
   const spacesBin = page.locator('.tree-row[data-location-id="loc_bin"]');
-  await holdNativeDrag(
+  await dispatchNativeCancel(page, spacesBin.locator(".drag-handle"));
+  await expect(page.locator(".feedback-toast")).toBeHidden();
+  await dispatchNativeDrop(
     page,
     spacesBin.locator(".drag-handle"),
-    page.locator(".app-shell > main > header"),
+    spacesBin,
   );
-  await page.mouse.up();
   await expect(page.locator(".feedback-toast[role='alert']")).toContainText(
-    "Choose a valid destination for Baking bin",
+    /Reopen Lower cabinet before changing its contents|Choose a different destination for Baking bin/,
   );
   await page.getByRole("button", { name: "Dismiss message" }).click();
 
@@ -1104,14 +1514,15 @@ test("previews desktop reorder destinations before committing them", async ({ pa
       (items.find((item) => item.id === "item_sugar")?.order ?? 0);
   }).toBe(true);
 
-  await holdNativeDrag(
+  await dispatchNativeCancel(page, inventoryFlour.locator(".drag-handle"));
+  await expect(page.locator(".feedback-toast")).toBeHidden();
+  await dispatchNativeDrop(
     page,
     inventoryFlour.locator(".drag-handle"),
-    page.locator(".app-shell > main > header"),
+    inventoryFlour,
   );
-  await page.mouse.up();
   await expect(page.locator(".feedback-toast[role='alert']")).toContainText(
-    "Choose a different destination for All-purpose flour",
+    "Choose another item in this filtered container",
   );
 });
 
@@ -1286,8 +1697,8 @@ test("guides incomplete evidence into a reviewable plan", async ({ page }) => {
   }).click();
   await expect(page.getByRole("heading", { name: "BX-09 · Appliance parts" })).toBeVisible();
   const afterAdvance = await localReplica(page) as typeof beforeAdvance;
-  expect(afterAdvance.state.locations.find((location) => location.id === "loc_unknown")?.captureStatus)
-    .toBe(beforeAdvance.state.locations.find((location) => location.id === "loc_unknown")?.captureStatus);
+  expect(afterAdvance.state.locations.find((location) => location.id === "loc_corner")?.captureStatus)
+    .toBe(beforeAdvance.state.locations.find((location) => location.id === "loc_corner")?.captureStatus);
   expect(afterAdvance.state.locations.find((location) => location.id === "loc_box")?.captureStatus)
     .toBe(beforeAdvance.state.locations.find((location) => location.id === "loc_box")?.captureStatus);
 
@@ -1724,6 +2135,11 @@ test("supports drag organization and the partial-move fallback", async ({ page }
   await page.getByLabel("How many?").fill("2");
   await page.getByLabel("Move to").selectOption("loc_food");
   await page.getByRole("button", { name: "Move quantity" }).click();
+  await expect(
+    page.getByRole("dialog", { name: "Review item" }),
+  ).toBeHidden();
+  await expect(page).toHaveURL(/\/inventory$/);
+  await expect(page.locator(".loading")).toHaveCount(0);
   await expect.poll(async () => {
     const replica = await localReplica(page) as { state: { items: { id: string; locationId: string; name: string; quantity: number }[] } };
     return replica.state.items.filter((item) => item.name === "Pasta").map((item) => [item.locationId, item.quantity]).sort();
@@ -1738,17 +2154,156 @@ test("shows workspace backup state and removes only the device copy", async ({ p
   await page.getByLabel("Qty").fill("1");
   await page.getByLabel("What is it?").fill("Waiting to sync");
   await page.getByRole("button", { name: "Save & add next" }).click();
-  await page.getByLabel("Open main menu").click();
+  const statusLink = page.locator(
+    ".sync:visible, .mobile-sync-status:visible, .sync-error-banner a:visible",
+  ).first();
+  await expect(statusLink).toBeVisible();
+  await statusLink.click();
+  await expect(page).toHaveURL(/\/workspaces$/);
+  await expect(page).toHaveTitle("Workspaces · Stowplan");
+  await expect(page.getByLabel("Workspace backup status summary")).toBeVisible();
   const card = page.locator(".workspace-card", { hasText: "Kitchen reset" });
-  await expect(card.getByText(/pending upload/)).toBeVisible();
+  await expect(card.getByText(/not backed up/)).toBeVisible();
   await card.getByText(/Queued changes/).click();
   await expect(card.getByText(/Recorded 1 each Waiting to sync/)).toBeVisible();
   page.once("dialog", (dialog) => {
     expect(dialog.message()).toContain("This does not delete any server copy");
     dialog.accept();
   });
+  await card.getByText("Manage", { exact: true }).click();
   await card.getByRole("button", { name: /Remove Kitchen reset from this device/ }).click();
   await expect(page.getByRole("heading", { name: /Label it/ })).toBeVisible();
+});
+
+test("presents unavailable backup as device storage without crushing workspace actions", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "desktop-compact",
+    "The compact desktop project covers the constrained two-column action row",
+  );
+  await page.route("**/api/auth/me", (route) => route.fulfill({
+    body: JSON.stringify({ configured: false, user: null }),
+    contentType: "application/json",
+    status: 200,
+  }));
+  await page.evaluate(() => sessionStorage.clear());
+  await page.reload();
+
+  await page.getByLabel("Workspace name").fill("Device home");
+  await page.getByRole("button", { name: "Start my workspace" }).click();
+  await page.getByLabel("Short ID").fill("HOME");
+  await page.getByLabel("Friendly name").fill("Home");
+  await page.getByRole("button", { name: "Add first space" }).click();
+
+  const statusLink = page.locator(".sync:visible");
+  await expect(statusLink).toContainText("saved on device");
+  await expect(statusLink.locator("svg.lucide-hard-drive")).toBeVisible();
+  await expect(statusLink.locator("svg.lucide-wifi-off")).toHaveCount(0);
+  await statusLink.click();
+
+  const card = page.locator(".workspace-card", { hasText: "Device home" });
+  await expect(card.getByText(/saved on device/)).toBeVisible();
+  await card.getByText(/Queued changes/).click();
+  await expect(card.getByText("Saved locally")).toBeVisible();
+  await expect(page.locator(
+    '.workspace-status-summary [data-state="local"] svg.lucide-hard-drive',
+  )).toBeVisible();
+
+  const actions = page.locator(".workspace-home-actions");
+  const createBounds = await actions.locator(":scope > .workspace-create").boundingBox();
+  const demoBounds = await actions.locator(":scope > .linkish").boundingBox();
+  if (!createBounds || !demoBounds) {
+    throw new Error("Workspace actions are not visible");
+  }
+  expect(Math.abs(createBounds.width - demoBounds.width)).toBeLessThanOrEqual(2);
+  expect(demoBounds.width).toBeGreaterThan(250);
+});
+
+test("does not label the active workspace as backing up while another workspace syncs", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "desktop-chromium",
+    "One desktop project covers concurrent background sync presentation",
+  );
+  let delayedWorkspaceId: string | null = null;
+  let inactiveSyncObserved = false;
+  let inactiveSyncReleased = false;
+  let releaseInactiveSync!: () => void;
+  const inactiveSyncGate = new Promise<void>((resolve) => {
+    releaseInactiveSync = resolve;
+  });
+  await page.route("**/api/auth/me", (route) => route.fulfill({
+    body: JSON.stringify({
+      configured: true,
+      user: { id: "user_test" },
+    }),
+    contentType: "application/json",
+    status: 200,
+  }));
+  await page.route("**/api/sync", async (route) => {
+    const body = route.request().postDataJSON() as {
+      commands: { id: string }[];
+      snapshot: { workspace: { revision: number } };
+      workspaceId: string;
+    };
+    if (
+      body.workspaceId === delayedWorkspaceId &&
+      body.commands.length > 0
+    ) {
+      inactiveSyncObserved = true;
+      await inactiveSyncGate;
+    }
+    await route.fulfill({
+      body: JSON.stringify({
+        receipts: body.commands.map((command) => ({
+          commandId: command.id,
+          revision: body.snapshot.workspace.revision,
+          status: "applied",
+        })),
+        state: body.snapshot,
+      }),
+      contentType: "application/json",
+      status: 200,
+    });
+  });
+  await page.evaluate(() => sessionStorage.clear());
+  await page.reload();
+
+  try {
+    await page.getByRole("button", {
+      name: "Explore the kitchen demo instead",
+    }).click();
+    await expect(page.locator(".sync")).toContainText("Backed up online");
+    const firstReplica = await localReplica(page) as {
+      state: { workspace: { id: string } };
+    };
+    delayedWorkspaceId = firstReplica.state.workspace.id;
+
+    await reopenCurrentCapture(page);
+    await page.getByLabel("What is it?").fill("Background backup");
+    await page.getByRole("button", { name: "Save & add next" }).click();
+    await page.getByLabel("Workspaces and backup status").click();
+    await page.getByText("Start a new workspace", { exact: true }).click();
+    const create = page.locator(".workspace-create");
+    await create.getByLabel("Workspace name").fill("Active workspace");
+    await create.getByRole("button", { name: "Create workspace" }).click();
+
+    await expect.poll(() => inactiveSyncObserved).toBe(true);
+    await expect(page.locator(".sync")).toContainText("Backed up online");
+    await expect(page.locator(".sync")).not.toContainText("Backing up");
+    await page.getByLabel("Workspaces and backup status").click();
+    const inactiveCard = page.locator(".workspace-card", {
+      hasText: "Kitchen reset",
+    });
+    await expect(inactiveCard).toContainText("pending upload");
+    inactiveSyncReleased = true;
+    releaseInactiveSync();
+    await expect(inactiveCard).toContainText("Backed up online");
+  } finally {
+    if (!inactiveSyncReleased) releaseInactiveSync();
+  }
 });
 
 test("surfaces a background backup failure on mobile", async ({ page }, testInfo) => {
@@ -1772,12 +2327,269 @@ test("surfaces a background backup failure on mobile", async ({ page }, testInfo
 
   const alert = page.getByRole("alert", { name: "" })
     .filter({ hasText: "Backup needs attention" });
-  await expect(alert).toContainText("Sync failed (500)");
+  await expect(alert).toContainText("Backup service unavailable");
   await expect(alert).toBeVisible();
   await alert.getByRole("link", { name: "Review backup" }).click();
   await expect(page).toHaveURL(/\/workspaces$/);
-  await expect(page.locator(".workspace-card", { hasText: "Kitchen reset" }))
-    .toBeVisible();
+  const card = page.locator(".workspace-card", { hasText: "Kitchen reset" });
+  await expect(card).toBeVisible();
+  const status = card.locator("header > b");
+  await expect(status).toContainText(/changes? not backed up/);
+  await expect(status).not.toContainText("pending upload");
+});
+
+test("surfaces transport failures from admin mutations", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "desktop-chromium",
+    "One desktop project covers admin transport feedback",
+  );
+  await page.route("**/api/admin/overview", (route) => route.fulfill({
+    body: JSON.stringify({
+      audit: [],
+      guestLinks: [],
+      identities: [],
+      memberships: [],
+      sessions: [{
+        email: "owner@example.test",
+        expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+        revoked_at: null,
+        session_id: "session_test",
+      }],
+      users: [],
+    }),
+    contentType: "application/json",
+    status: 200,
+  }));
+  await page.route("**/api/admin/mutate", (route) =>
+    route.abort("connectionfailed")
+  );
+
+  await page.goto("/admin");
+  await page.getByRole("button", { name: "Revoke" }).click();
+
+  await expect(page.locator(".admin-error strong")).toContainText(
+    "Failed to fetch",
+  );
+});
+
+test("keeps server administration searchable and responsive", async ({
+  page,
+}) => {
+  await page.route("**/api/admin/overview*", (route) => route.fulfill({
+    body: JSON.stringify({
+      audit: [{
+        action: "user.role",
+        actor_email: "owner@example.test",
+        created_at: new Date().toISOString(),
+        detail_json: JSON.stringify({ role: "admin" }),
+        event_id: "audit_capacity",
+        target_id: "usr_capacity",
+        target_type: "user",
+      }],
+      guestLinks: [],
+      identities: [],
+      listInfo: {
+        audit: { hasMore: false, limit: 250 },
+        guestLinks: { hasMore: false, limit: 250 },
+        identities: { hasMore: false, limit: 500 },
+        memberships: { hasMore: false, limit: 500 },
+        sessions: { hasMore: false, limit: 250 },
+        users: { hasMore: false, limit: 250 },
+        workspaces: { hasMore: false, limit: 250 },
+      },
+      memberships: [],
+      sessions: [],
+      users: [],
+      workspaces: [{
+        active_guest_link_count: 2,
+        activity_count: 5,
+        activity_patch_count: 12,
+        audit_event_count: 3,
+        command_receipt_count: 2,
+        item_count: 3_200,
+        location_count: 12,
+        member_count: 3,
+        owner_count: 1,
+        plan_count: 1,
+        plan_step_count: 4,
+        retained_guest_link_count: 5,
+        revision: 8,
+        snapshot_bytes: 42_000,
+        updated_at: new Date().toISOString(),
+        viewer_is_member: 1,
+        workspace_id: "ws_capacity",
+        workspace_name: "Capacity workspace",
+      }],
+    }),
+    contentType: "application/json",
+    status: 200,
+  }));
+
+  await page.goto("/admin");
+  await expect(page.getByRole("heading", {
+    name: "Stowplan administration",
+  })).toBeVisible();
+  await expect(page.getByRole("link", {
+    name: "Open settings",
+  })).toHaveAttribute(
+    "href",
+    "/workspaces/capacity-workspace@ws_capacity/settings",
+  );
+  const workspaceCapacity = page.locator(".admin-workspaces", {
+    hasText: "Capacity workspace",
+  });
+  await expect(workspaceCapacity).toContainText("12/1000 spaces");
+  await expect(workspaceCapacity).toContainText("3200/4000 items");
+  await expect(workspaceCapacity).toContainText("4/5000 plan steps");
+  await expect(workspaceCapacity).toContainText("5/10000 activities");
+  await expect(workspaceCapacity).toContainText("12/50000 patches");
+  await expect(workspaceCapacity).toContainText("3/10000 audit events");
+  await expect(workspaceCapacity).toContainText("2/20000 compact receipts");
+  await expect(workspaceCapacity.locator(
+    'small[data-near-limit="true"]',
+  )).toContainText("3200/4000 items");
+  const dimensions = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+  }));
+  expect(dimensions.scrollWidth).toBeLessThanOrEqual(
+    dimensions.clientWidth + 1,
+  );
+
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("link", {
+    name: "Back to organizer",
+  })).toBeFocused();
+  await page.keyboard.press("Tab");
+  const search = page.getByLabel("Search server records");
+  await expect(search).toBeFocused();
+  await expect.poll(() => search.locator("..").evaluate(element => {
+    const style = getComputedStyle(element);
+    return `${style.outlineStyle}:${style.outlineWidth}`;
+  })).toBe("solid:3px");
+  await search.fill("capacity");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".admin-filter-note"))
+    .toContainText("capacity");
+  await page.getByText("Details", { exact: true }).click();
+  await expect(page.locator(".admin-audit pre")).toContainText(
+    '"role": "admin"',
+  );
+});
+
+test("keeps the newest admin search response", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "desktop-chromium",
+    "One desktop project covers request ordering",
+  );
+  let initialStarted = false;
+  let initialFinished = false;
+  let releaseInitial = () => {};
+  const initialGate = new Promise<void>((resolve) => {
+    releaseInitial = resolve;
+  });
+  const body = (workspaceName: string, workspaceId: string) => JSON.stringify({
+    audit: [],
+    guestLinks: [],
+    identities: [],
+    memberships: [],
+    sessions: [],
+    users: [],
+    workspaces: [{
+      updated_at: new Date().toISOString(),
+      viewer_is_member: 0,
+      workspace_id: workspaceId,
+      workspace_name: workspaceName,
+    }],
+  });
+  await page.route("**/api/admin/overview*", async (route) => {
+    const search = new URL(route.request().url()).searchParams.get("q");
+    if (!search) {
+      initialStarted = true;
+      await initialGate;
+      await route.fulfill({
+        body: body("Older unfiltered workspace", "ws_older"),
+        contentType: "application/json",
+        status: 200,
+      });
+      initialFinished = true;
+      return;
+    }
+    await route.fulfill({
+      body: body("Newest filtered workspace", "ws_newest"),
+      contentType: "application/json",
+      status: 200,
+    });
+  });
+
+  try {
+    await page.goto("/admin");
+    await expect.poll(() => initialStarted).toBe(true);
+    const search = page.getByLabel("Search server records");
+    await search.fill("newest");
+    await page.keyboard.press("Enter");
+    await expect(page.getByText("Newest filtered workspace")).toBeVisible();
+
+    releaseInitial();
+    await expect.poll(() => initialFinished).toBe(true);
+    await expect(page.getByText("Newest filtered workspace")).toBeVisible();
+    await expect(page.getByText("Older unfiltered workspace")).toHaveCount(0);
+  } finally {
+    releaseInitial();
+  }
+});
+
+test("reports blocked safety and workspace downloads", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "desktop-chromium",
+    "One desktop project covers download failure feedback",
+  );
+  await page.getByRole("button", {
+    name: "Explore the kitchen demo instead",
+  }).click();
+  await expect(page.getByRole("heading", {
+    name: "Capture",
+    exact: true,
+  })).toBeVisible();
+  await page.goto("/recovery");
+  await page.evaluate(() => {
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: () => {
+        throw new Error("Downloads unavailable");
+      },
+    });
+  });
+  await page.getByRole("button", {
+    name: "Export full recovery bundle",
+  }).click();
+  await expect(page.locator("output")).toContainText(
+    "Could not start the download: Downloads unavailable",
+  );
+  await expect(page.getByText(
+    "I saved this recovery file somewhere I can reopen it.",
+  )).toHaveCount(0);
+
+  await page.goBack();
+  await page.evaluate(() => {
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: () => {
+        throw new Error("Downloads unavailable");
+      },
+    });
+  });
+  await page.locator(".nav:visible", { hasText: "Settings" }).click();
+  await page.getByRole("button", { name: "Export JSON backup" }).click();
+  await expect(page.locator(".feedback-toast[role='alert']")).toContainText(
+    "Could not export this workspace: Downloads unavailable",
+  );
 });
 
 test("has no serious accessibility violations and reloads offline", async ({ page, context }) => {

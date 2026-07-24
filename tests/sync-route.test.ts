@@ -1,11 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createEmptyState } from "../src/domain/factories";
+import { QuotaExceededError } from "../src/server/quotas";
 import { SYNC_REQUEST_MAX_BYTES } from "../src/server/request-body";
+import { API_QUOTAS } from "../src/shared/api-quotas";
 
 const mocks = vi.hoisted(() => ({
   authenticate: vi.fn(),
+  canOwnWorkspace: vi.fn(),
   canReadWorkspace: vi.fn(),
   canWriteWorkspace: vi.fn(),
+  claimWorkspace: vi.fn(),
+  deleteIfUnclaimed: vi.fn(),
   initialize: vi.fn(),
   load: vi.fn(),
   synchronize: vi.fn(),
@@ -15,16 +20,16 @@ vi.mock("../src/adapters/d1-snapshot-store", () => ({
   D1SnapshotStore: class {
     load = mocks.load;
     initialize = mocks.initialize;
-    deleteIfUnclaimed = vi.fn();
+    deleteIfUnclaimed = mocks.deleteIfUnclaimed;
   },
 }));
 
 vi.mock("../src/server/auth", () => ({
   authenticate: mocks.authenticate,
-  canOwnWorkspace: vi.fn(),
+  canOwnWorkspace: mocks.canOwnWorkspace,
   canReadWorkspace: mocks.canReadWorkspace,
   canWriteWorkspace: mocks.canWriteWorkspace,
-  claimWorkspace: vi.fn(),
+  claimWorkspace: mocks.claimWorkspace,
   isTrustedMutation: vi.fn(() => true),
 }));
 
@@ -52,6 +57,9 @@ describe("sync route authorization", () => {
     });
     mocks.load.mockResolvedValue(null);
     mocks.initialize.mockResolvedValue("exists");
+    mocks.claimWorkspace.mockResolvedValue(undefined);
+    mocks.canOwnWorkspace.mockResolvedValue(true);
+    mocks.deleteIfUnclaimed.mockResolvedValue(true);
     mocks.canReadWorkspace.mockResolvedValue(true);
     mocks.canWriteWorkspace.mockResolvedValue(false);
   });
@@ -107,6 +115,154 @@ describe("sync route authorization", () => {
       error: expect.stringContaining("byte limit"),
     });
     expect(mocks.load).not.toHaveBeenCalled();
+    expect(mocks.synchronize).not.toHaveBeenCalled();
+  });
+
+  it("rejects an oversized command batch before storage work", async () => {
+    const state = createEmptyState("Oversized batch");
+    const commands = Array.from(
+      { length: API_QUOTAS.commandsPerSyncRequest + 1 },
+      (_, index) => ({
+        actorId: "spoofed-user",
+        baseRevision: 0,
+        command: { type: "workspace.rename", name: `Name ${index}` },
+        deviceId: "device_test",
+        expectations: [],
+        id: `cmd_${index}`,
+        timestamp: "2026-07-24T00:00:00.000Z",
+        workspaceId: state.workspace.id,
+      }),
+    );
+    const response = await POST(new Request(
+      "https://stowplan.test/api/sync",
+      {
+        body: JSON.stringify({
+          commands,
+          workspaceId: state.workspace.id,
+        }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      },
+    ));
+
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toEqual({
+      actual: API_QUOTAS.commandsPerSyncRequest + 1,
+      code: "QUOTA_EXCEEDED",
+      error: "This sync request contains too many commands",
+      limit: API_QUOTAS.commandsPerSyncRequest,
+      quota: "commandsPerSyncRequest",
+    });
+    expect(mocks.load).not.toHaveBeenCalled();
+    expect(mocks.synchronize).not.toHaveBeenCalled();
+  });
+
+  it("rejects an oversized initial snapshot before initialization", async () => {
+    const state = createEmptyState("Oversized snapshot");
+    state.locations = Array.from(
+      { length: API_QUOTAS.locationsPerSnapshot + 1 },
+      (_, index) => ({ id: `loc_${index}` }) as never,
+    );
+    const response = await POST(new Request(
+      "https://stowplan.test/api/sync",
+      {
+        body: JSON.stringify({
+          commands: [],
+          snapshot: state,
+          workspaceId: state.workspace.id,
+        }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      },
+    ));
+
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toMatchObject({
+      actual: API_QUOTAS.locationsPerSnapshot + 1,
+      code: "QUOTA_EXCEEDED",
+      limit: API_QUOTAS.locationsPerSnapshot,
+      quota: "locationsPerSnapshot",
+    });
+    expect(mocks.initialize).not.toHaveBeenCalled();
+    expect(mocks.synchronize).not.toHaveBeenCalled();
+  });
+
+  it("attributes commands to the authenticated user without changing their order", async () => {
+    const state = createEmptyState("Attribution");
+    const commands = ["cmd_second", "cmd_first"].map((id, index) => ({
+      actorId: `spoofed-user-${index}`,
+      baseRevision: state.workspace.revision,
+      command: { type: "workspace.rename" as const, name: `Name ${index}` },
+      deviceId: "device_test",
+      expectations: [],
+      id,
+      timestamp: "2026-07-24T00:00:00.000Z",
+      workspaceId: state.workspace.id,
+    }));
+    mocks.load.mockResolvedValue(state);
+    mocks.canWriteWorkspace.mockResolvedValue(true);
+    mocks.synchronize.mockResolvedValue({
+      receipts: [],
+      snapshot: state,
+    });
+
+    const response = await POST(new Request(
+      "https://stowplan.test/api/sync",
+      {
+        body: JSON.stringify({
+          commands,
+          workspaceId: state.workspace.id,
+        }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      },
+    ));
+
+    expect(response.status).toBe(200);
+    expect(mocks.synchronize).toHaveBeenCalledTimes(1);
+    const synchronized = mocks.synchronize.mock.calls[0]?.[2];
+    expect(synchronized.map((command: { id: string }) => command.id)).toEqual([
+      "cmd_second",
+      "cmd_first",
+    ]);
+    expect(synchronized.map((command: { actorId: string }) => command.actorId))
+      .toEqual(["usr_viewer", "usr_viewer"]);
+    expect(commands.map((command) => command.actorId)).toEqual([
+      "spoofed-user-0",
+      "spoofed-user-1",
+    ]);
+  });
+
+  it("removes a new snapshot when the owner workspace quota is full", async () => {
+    const state = createEmptyState("Owner quota");
+    mocks.initialize.mockResolvedValue("created");
+    mocks.claimWorkspace.mockRejectedValue(new QuotaExceededError(
+      "ownedWorkspacesPerUser",
+      API_QUOTAS.ownedWorkspacesPerUser + 1,
+    ));
+
+    const response = await POST(new Request(
+      "https://stowplan.test/api/sync",
+      {
+        body: JSON.stringify({
+          commands: [],
+          snapshot: state,
+          workspaceId: state.workspace.id,
+        }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      },
+    ));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "QUOTA_EXCEEDED",
+      quota: "ownedWorkspacesPerUser",
+    });
+    expect(mocks.deleteIfUnclaimed).toHaveBeenCalledWith(
+      state.workspace.id,
+      state.workspace.revision,
+    );
     expect(mocks.synchronize).not.toHaveBeenCalled();
   });
 });

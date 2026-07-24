@@ -24,11 +24,16 @@ export type AppRoute =
 
 interface WorkspacePathInput {
   itemId?: string | null;
+  itemLabel?: string | null;
   locationId?: string | null;
+  locationLabel?: string | null;
   view: WorkspaceView;
   workspaceId: string;
+  workspaceLabel?: string | null;
 }
 
+const IDENTIFIER_SEPARATOR = "@";
+const MAX_ROUTE_SLUG_LENGTH = 64;
 const WORKSPACE_PATH_SEGMENT = "workspaces";
 const LOCATION_PATH_SEGMENT = "locations";
 const ITEM_PATH_SEGMENT = "items";
@@ -50,6 +55,50 @@ function encodedSegment(segment: string, label: string): string {
   return encodeURIComponent(segment);
 }
 
+function identifierSegment(segment: string | undefined): string | null {
+  if (!segment) return null;
+  const separator = segment.indexOf(IDENTIFIER_SEPARATOR);
+  return decodedSegment(
+    separator >= 0 ? segment.slice(separator + 1) : segment,
+  );
+}
+
+function identifierLabel(
+  segment: string | undefined,
+): string | null | undefined {
+  if (!segment) return undefined;
+  const separator = segment.indexOf(IDENTIFIER_SEPARATOR);
+  return separator >= 0
+    ? decodedSegment(segment.slice(0, separator))
+    : undefined;
+}
+
+function readableSlug(value: string, fallback: string): string {
+  const normalized = value
+    .normalize("NFKD")
+    .toLowerCase()
+    .replace(/\p{Mark}/gu, "")
+    .replace(/[^\p{Letter}\p{Number}]+/gu, "-")
+    .replace(/^-+|-+$/gu, "");
+  const shortened = [...normalized]
+    .slice(0, MAX_ROUTE_SLUG_LENGTH)
+    .join("")
+    .replace(/-+$/u, "");
+  return shortened || fallback;
+}
+
+function labeledSegment(
+  id: string,
+  label: string | null | undefined,
+  fallback: string,
+): string {
+  const encodedId = encodedSegment(id, `${fallback} ID`);
+  if (label === undefined) return encodedId;
+  return `${
+    encodeURIComponent(readableSlug(label ?? "", fallback))
+  }${IDENTIFIER_SEPARATOR}${encodedId}`;
+}
+
 function workspaceView(value: string | null | undefined): WorkspaceView {
   return value && WORKSPACE_VIEW_SET.has(value)
     ? value as WorkspaceView
@@ -62,7 +111,7 @@ function workspaceRoute(
   detailType?: string,
   detailId?: string,
 ): AppRoute {
-  const decodedDetail = decodedSegment(detailId);
+  const decodedDetail = identifierSegment(detailId);
   const locationId =
     decodedDetail &&
     detailType === LOCATION_PATH_SEGMENT &&
@@ -86,20 +135,29 @@ function workspaceRoute(
 
 export function workspacePath({
   itemId,
+  itemLabel,
   locationId,
+  locationLabel,
   view,
   workspaceId,
+  workspaceLabel,
 }: WorkspacePathInput): string {
   const base =
-    `${WORKSPACE_LIST_PATH}/${encodedSegment(workspaceId, "Workspace ID")}/${view}`;
+    `${WORKSPACE_LIST_PATH}/${
+      labeledSegment(workspaceId, workspaceLabel, "workspace")
+    }/${view}`;
   if (view === "inventory" && itemId) {
-    return `${base}/${ITEM_PATH_SEGMENT}/${encodedSegment(itemId, "Item ID")}`;
+    return `${base}/${ITEM_PATH_SEGMENT}/${
+      labeledSegment(itemId, itemLabel, "item")
+    }`;
   }
   if (
     locationId &&
     (view === "capture" || view === "spaces" || view === "inventory")
   ) {
-    return `${base}/${LOCATION_PATH_SEGMENT}/${encodedSegment(locationId, "Location ID")}`;
+    return `${base}/${LOCATION_PATH_SEGMENT}/${
+      labeledSegment(locationId, locationLabel, "location")
+    }`;
   }
   return base;
 }
@@ -113,7 +171,7 @@ export function parseAppUrl(input: string | URL): AppRoute {
   }
 
   if (segments[0] === WORKSPACE_PATH_SEGMENT) {
-    const workspaceId = decodedSegment(segments[1]);
+    const workspaceId = identifierSegment(segments[1]);
     if (!workspaceId) return { kind: "workspace-list" };
     return workspaceRoute(
       workspaceId,
@@ -159,11 +217,21 @@ export function workspaceReturnTo(
     if (route.kind !== "workspace" || route.workspaceId !== workspaceId) {
       return fallback;
     }
+    const segments = url.pathname.split("/").filter(Boolean);
+    const readablePath = segments[0] === WORKSPACE_PATH_SEGMENT;
+    const detailLabel = readablePath
+      ? identifierLabel(segments[4])
+      : undefined;
     return workspacePath({
       itemId: route.itemId,
+      itemLabel: route.itemId ? detailLabel : undefined,
       locationId: route.locationId,
+      locationLabel: route.locationId ? detailLabel : undefined,
       view: route.view,
       workspaceId,
+      workspaceLabel: readablePath
+        ? identifierLabel(segments[1])
+        : undefined,
     });
   } catch {
     return fallback;

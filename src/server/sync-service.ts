@@ -1,5 +1,17 @@
-import { applyCommand, ConflictError, DomainError } from "../domain";
+import {
+    applyCommand,
+    compactWorkspaceHistory,
+    ConflictError,
+    DomainError,
+} from "../domain";
 import type { CommandEnvelope, SyncReceipt, SyncResponse, WorkspaceState } from "../domain";
+import {
+    assertSnapshotWithinQuotas,
+    QuotaExceededError,
+    quotaDetails,
+    snapshotQuotaUsage,
+} from "./quotas";
+import { API_QUOTAS } from "../shared/api-quotas";
 import type { SnapshotStore } from "./storage";
 
 export class WorkspaceNotFoundError extends Error {
@@ -10,7 +22,8 @@ export class WorkspaceNotFoundError extends Error {
 }
 
 function wasApplied(state: WorkspaceState, commandId: string): boolean {
-    return state.activities.some((activity) => activity.commandId === commandId) ||
+    return state.commandReceipts?.includes(commandId) ||
+        state.activities.some((activity) => activity.commandId === commandId) ||
         state.audit.some((event) => event.id === `audit_${commandId}`);
 }
 
@@ -35,6 +48,7 @@ export async function synchronize(
         const initial = await store.load(workspaceId);
         if (!initial) throw new WorkspaceNotFoundError(workspaceId);
         let state = initial;
+        let quotaUsage = snapshotQuotaUsage(initial);
         const receipts: SyncReceipt[] = [];
         let applied = false;
 
@@ -59,7 +73,28 @@ export async function synchronize(
                         ? { ...envelope, baseRevision: state.workspace.revision }
                         : envelope;
                 const result = applyCommand(state, command);
-                state = result.state;
+                const compactedState = compactWorkspaceHistory(
+                    result.state,
+                    {
+                        activities: API_QUOTAS.activitiesPerSnapshot,
+                        activityPatches: API_QUOTAS.activityPatchesPerSnapshot,
+                        auditEvents: API_QUOTAS.auditEventsPerSnapshot,
+                        commandReceipts: API_QUOTAS.commandReceiptsPerSnapshot,
+                        serializedBytes: API_QUOTAS.storedSnapshotBytes,
+                    },
+                    {
+                        activityIds: [
+                            ...(result.activity ? [result.activity.id] : []),
+                            ...(result.audit?.targetActivityIds ?? []),
+                        ],
+                        auditIds: result.audit ? [result.audit.id] : [],
+                    },
+                );
+                const nextQuotaUsage = assertSnapshotWithinQuotas(compactedState, {
+                    previousUsage: quotaUsage,
+                });
+                state = compactedState;
+                quotaUsage = nextQuotaUsage;
                 applied = true;
                 receipts.push({
                     commandId,
@@ -67,6 +102,16 @@ export async function synchronize(
                     status: "applied",
                 });
             } catch (error) {
+                if (error instanceof QuotaExceededError) {
+                    receipts.push({
+                        commandId,
+                        message: error.message,
+                        revision: state.workspace.revision,
+                        status: "rejected",
+                        ...quotaDetails(error),
+                    });
+                    continue;
+                }
                 if (error instanceof ConflictError) {
                     receipts.push({
                         commandId,

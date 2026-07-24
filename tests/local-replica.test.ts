@@ -19,6 +19,7 @@ import {
   replicaVersionMatches,
   replaceReplica,
   replaceReplicaIfUnchanged,
+  selectPendingSyncBatch,
   writeReplica,
   writeWorkspaceReplicaIfUnchanged,
 } from "../src/client/local-replica";
@@ -41,6 +42,23 @@ describe("local replica", () => {
     await writeReplica({ state, outbox: [], updatedAt: state.workspace.updatedAt });
     expect((await readReplica())?.state.workspace.name).toBe("Offline home");
     expect((await readWorkspaceReplica(state.workspace.id))?.state.workspace.name).toBe("Offline home");
+  });
+  it("selects pending sync work in bounded original-order batches", () => {
+    const state = createEmptyState("Batching");
+    const outbox = Array.from({ length: 102 }, (_, index) => ({
+      envelope: createEnvelope(state, {
+        type: "workspace.rename" as const,
+        name: `Name ${index}`,
+      }, { id: `cmd_${String(index).padStart(3, "0")}` }),
+      status: index === 50 ? "blocked" as const : "pending" as const,
+    }));
+
+    const batch = selectPendingSyncBatch(outbox);
+
+    expect(batch).toHaveLength(100);
+    expect(batch[0]?.envelope.id).toBe("cmd_000");
+    expect(batch.at(-1)?.envelope.id).toBe("cmd_100");
+    expect(batch.some((entry) => entry.status === "blocked")).toBe(false);
   });
   it("keeps inactive local workspaces available for switching",async()=>{const first=createEmptyState("First"),second=createEmptyState("Second");await writeReplica({state:first,outbox:[],updatedAt:"2026-07-22T00:00:00.000Z"});await writeReplica({state:second,outbox:[],updatedAt:"2026-07-22T01:00:00.000Z"});expect((await readReplica())?.state.workspace.id).toBe(second.workspace.id);expect((await readWorkspaceReplica(first.workspace.id))?.state.workspace.name).toBe("First");expect((await listWorkspaceReplicas()).map(workspace=>workspace.name)).toEqual(["Second","First"])});
   it("reconciles inactive workspaces that still have pending changes", () => {

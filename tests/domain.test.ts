@@ -47,7 +47,7 @@ describe("organizer command engine", () => {
     it("records an item and distinctly marks the container counted", () => {
         let state = createDemoState();
         const newItem = createItem(
-            { locationId: "loc_unknown", name: "Tea towels", quantity: 6, unit: "each" },
+            { locationId: "loc_corner", name: "Tea towels", quantity: 6, unit: "each" },
             "2026-07-22T12:01:00.000Z",
         );
         state = applyCommand(
@@ -58,13 +58,13 @@ describe("organizer command engine", () => {
             state,
             createEnvelope(
                 state,
-                { type: "capture.status", id: "loc_unknown", status: "counted" },
+                { type: "capture.status", id: "loc_corner", status: "counted" },
                 { id: "cmd_counted" },
             ),
         ).state;
 
         expect(state.items.find((item) => item.id === newItem.id)?.quantity).toBe(6);
-        expect(state.locations.find((location) => location.id === "loc_unknown")?.captureStatus).toBe(
+        expect(state.locations.find((location) => location.id === "loc_corner")?.captureStatus).toBe(
             "counted",
         );
         expect(state.workspace.revision).toBe(2);
@@ -346,7 +346,7 @@ describe("organizer command engine", () => {
                 createEnvelope(state, {
                     type: "location.delete",
                     descendantIds: [],
-                    id: "loc_unknown",
+                    id: "loc_corner",
                     itemIds: [],
                 }),
             ),
@@ -480,7 +480,7 @@ describe("organizer command engine", () => {
             state,
             {
                 type: "item.move",
-                destinationId: "loc_unknown",
+                destinationId: "loc_corner",
                 id: "item_flour",
                 quantity: 1,
             },
@@ -552,7 +552,7 @@ describe("organizer command engine", () => {
             {
                 type: "location.move",
                 id: "loc_food",
-                parentId: "loc_unknown",
+                parentId: "loc_corner",
             },
             "CAPTURE_COMPLETE",
             /Reopen Left side before moving a nested space out of it/,
@@ -737,7 +737,7 @@ describe("organizer command engine", () => {
     it("does not restore a space beneath an archived parent", () => {
         const state = createDemoState();
         const parent = state.locations.find((location) => location.id === "loc_right")!;
-        const child = state.locations.find((location) => location.id === "loc_unknown")!;
+        const child = state.locations.find((location) => location.id === "loc_corner")!;
         parent.archivedAt = "2026-07-22T12:00:00.000Z";
         child.archivedAt = "2026-07-22T12:00:00.000Z";
 
@@ -770,7 +770,7 @@ describe("organizer command engine", () => {
                 state,
                 createEnvelope(state, {
                     type: "location.archive",
-                    id: "loc_unknown",
+                    id: "loc_corner",
                     archived: true,
                 }),
             ),
@@ -799,7 +799,7 @@ describe("organizer command engine", () => {
                 state,
                 createEnvelope(state, {
                     type: "capture.status",
-                    id: "loc_unknown",
+                    id: "loc_corner",
                     status: "known_empty",
                 }),
             ),
@@ -863,7 +863,7 @@ describe("field-aware history", () => {
         const second = {
             ...structuredClone(first),
             id: "item_pasta_second_source",
-            locationId: "loc_unknown",
+            locationId: "loc_corner",
             quantity: 2,
         };
         const destination = {

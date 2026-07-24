@@ -22,6 +22,7 @@ import {
   ClipboardList,
   Edit3,
   GripVertical,
+  HardDrive,
   Home,
   Info,
   Map as MapIcon,
@@ -30,6 +31,7 @@ import {
   PackageX,
   PanelLeftClose,
   PanelLeftOpen,
+  Plus,
   RotateCcw,
   Search,
   Settings,
@@ -101,6 +103,12 @@ type FeedbackDetail = {
   message: string;
   tone: "error" | "info" | "success";
 };
+type BackupPresentation = {
+  deviceOnly?: boolean;
+  label: string;
+  offline?: boolean;
+  state: "blocked" | "local" | "pending" | "synced";
+};
 const CONTAINER_REVIEW_KIND = Object.freeze({
   EMPTY: "empty",
   KNOWN_EMPTY: "known-empty",
@@ -156,6 +164,10 @@ const COMPLETE_CAPTURE_STATUSES = new Set<CaptureStatus>([
   "known_empty",
 ]);
 const BROWSER_HISTORY_STATE = Object.freeze({ stowplan: true });
+const ITEM_MODAL_HISTORY_STATE = Object.freeze({
+  ...BROWSER_HISTORY_STATE,
+  itemModal: true,
+});
 const DISMISS_FEEDBACK_EVENT = "stowplan:feedback-dismiss";
 const FEEDBACK_EVENT = "stowplan:feedback";
 const SEARCH_BLOCKED_EVENT = "stowplan:search-blocked";
@@ -374,6 +386,111 @@ function formatTimestamp(value: string | null): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "Unknown" : date.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
 }
+function backupPresentation({
+  backupConfigured,
+  blocked,
+  lastSyncError,
+  lastSyncedAt,
+  online,
+  pending,
+  syncing,
+}: {
+  backupConfigured?: boolean | null;
+  blocked: number;
+  lastSyncError: string | null;
+  lastSyncedAt: string | null;
+  online?: boolean;
+  pending: number;
+  syncing?: boolean;
+}): BackupPresentation {
+  if (blocked) {
+    return {
+      label: `${blocked} change${blocked === 1 ? "" : "s"} need review`,
+      state: "blocked",
+    };
+  }
+  const deviceOnly = backupConfigured === false ||
+    lastSyncError === DEVICE_ONLY_BACKUP_ERROR;
+  if (deviceOnly) {
+    return {
+      deviceOnly: true,
+      label: pending
+        ? `${pending} change${pending === 1 ? "" : "s"} saved on device`
+        : "Device only",
+      state: pending ? "pending" : "local",
+    };
+  }
+  if (syncing) return { label: "Backing up…", state: "pending" };
+  if (lastSyncError) {
+    return {
+      label: pending
+        ? `${pending} change${pending === 1 ? "" : "s"} not backed up`
+        : "Backup failed",
+      state: "blocked",
+    };
+  }
+  if (pending) {
+    return {
+      label: `${pending} change${pending === 1 ? "" : "s"} pending upload`,
+      state: "pending",
+    };
+  }
+  if (online === false) {
+    return { label: "Working offline", offline: true, state: "local" };
+  }
+  if (lastSyncedAt) {
+    return { label: "Backed up online", state: "synced" };
+  }
+  return { label: "Device only", state: "local" };
+}
+function BackupStatusIcon({
+  presentation,
+}: {
+  presentation: BackupPresentation;
+}) {
+  const Icon = presentation.offline
+    ? WifiOff
+    : presentation.deviceOnly
+      ? HardDrive
+      : presentation.state === "blocked"
+        ? AlertCircle
+        : presentation.state === "pending"
+          ? CircleDashed
+          : presentation.state === "synced"
+            ? CheckCircle2
+            : HardDrive;
+  return <Icon />;
+}
+function stateWorkspacePath(
+  state: WorkspaceState,
+  {
+    itemId = null,
+    locationId = null,
+    view,
+  }: {
+    itemId?: string | null;
+    locationId?: string | null;
+    view: View;
+  },
+): string {
+  const item = itemId
+    ? state.items.find((candidate) => candidate.id === itemId)
+    : undefined;
+  const location = locationId
+    ? state.locations.find((candidate) => candidate.id === locationId)
+    : undefined;
+  return workspacePath({
+    itemId,
+    itemLabel: item?.name,
+    locationId,
+    locationLabel: location
+      ? `${location.code} ${location.name}`
+      : undefined,
+    view,
+    workspaceId: state.workspace.id,
+    workspaceLabel: state.workspace.name,
+  });
+}
 async function perform(commit: Commit, command: Command, after?: () => void): Promise<boolean> {
   try {
     await commit(command);
@@ -530,7 +647,7 @@ export function StowplanApp() {
 }
 
 function Application() {
-  const { state, initialize, dispatch, backupConfigured, lastSyncAttemptAt, lastSyncError, lastSyncedAt, localUpdatedAt, openWorkspace, online, pending, blocked, removeWorkspace, replace, syncing } = useStowplan();
+  const { state, initialize, dispatch, backupConfigured, lastSyncAttemptAt, lastSyncError, lastSyncedAt, localUpdatedAt, openWorkspace, online, pending, blocked, removeWorkspace, replace, syncing, workspaceStatusRevision } = useStowplan();
   const activeWorkspaceId = state?.workspace.id;
   const [view, setView] = useState<View>("capture");
   const [selected, setSelected] = useState<string | null>(null);
@@ -622,8 +739,7 @@ function Application() {
   useEffect(() => {
     if (
       !activeWorkspaceId ||
-      showWelcome ||
-      routeStatus !== "ready"
+      showWelcome
     ) return;
     const shortcut = (event: KeyboardEvent) => {
       if (
@@ -635,12 +751,21 @@ function Application() {
           !jumpPaletteOpen &&
           document.querySelector('[aria-modal="true"]')
         ) {
-          const blocked = new Event(SEARCH_BLOCKED_EVENT, {
-            cancelable: true,
+          requestAnimationFrame(() => {
+            if (!document.querySelector('[aria-modal="true"]')) {
+              setJumpPaletteOpen(true);
+              return;
+            }
+            const blocked = new Event(SEARCH_BLOCKED_EVENT, {
+              cancelable: true,
+            });
+            if (dispatchEvent(blocked)) {
+              showFeedback(
+                "Close the open dialog before searching",
+                "info",
+              );
+            }
           });
-          if (dispatchEvent(blocked)) {
-            showFeedback("Close the open dialog before searching", "info");
-          }
           return;
         }
         setJumpPaletteOpen((open) => !open);
@@ -650,7 +775,7 @@ function Application() {
     };
     addEventListener("keydown", shortcut, true);
     return () => removeEventListener("keydown", shortcut, true);
-  }, [activeWorkspaceId, jumpPaletteOpen, routeStatus, showWelcome]);
+  }, [activeWorkspaceId, jumpPaletteOpen, showWelcome]);
 
   const applyBrowserRoute = useCallback(async (route: AppRoute) => {
     const request = routeRequest.current + 1;
@@ -670,26 +795,56 @@ function Application() {
     try {
       const existing = await readWorkspaceReplica(route.workspaceId);
       await openWorkspace(route.workspaceId);
+      const opened = await readWorkspaceReplica(route.workspaceId);
       if (routeRequest.current !== request) return;
+      if (!opened) {
+        throw new Error("Could not read the requested workspace from this device");
+      }
+      const staleItem = Boolean(
+        route.itemId &&
+        !opened.state.items.some(
+          (item) => item.id === route.itemId && !item.archivedAt,
+        ),
+      );
+      const staleLocation = Boolean(
+        route.locationId &&
+        !opened.state.locations.some(
+          (candidate) =>
+            candidate.id === route.locationId && !candidate.archivedAt,
+        ),
+      );
       setView(route.view);
       setSelected(
-        route.view === "capture" || route.view === "spaces"
+        !staleLocation &&
+          (route.view === "capture" || route.view === "spaces")
           ? route.locationId
           : null,
       );
       setInventoryLocationId(
-        route.view === "inventory" ? route.locationId : null,
+        route.view === "inventory" && !staleLocation
+          ? route.locationId
+          : null,
       );
       setInventoryItemId(
-        route.view === "inventory" ? route.itemId : null,
+        route.view === "inventory" && !staleItem
+          ? route.itemId
+          : null,
       );
       setGuidanceTarget(null);
       setShowWelcome(false);
       scrollAppToTop();
-      if (!existing) {
+      if (staleItem) {
+        const message =
+          "This item link is stale. The item is missing or archived, so Stowplan did not open it.";
+        setWorkspaceNotice(message);
+      } else if (staleLocation) {
+        const message =
+          "This space link is stale. The space is missing or archived, so Stowplan did not open it.";
+        setWorkspaceNotice(message);
+      } else if (!existing) {
         setWorkspaceNotice("Shared workspace opened. Your previous local workspace is still available from the main menu.");
       }
-      setRouteStatus("ready");
+      setRouteStatus(staleItem || staleLocation ? "blocked" : "ready");
     } catch (error) {
       if (routeRequest.current !== request) return;
       if (error instanceof WorkspaceOpenError && error.status === 401) {
@@ -726,7 +881,7 @@ function Application() {
     ? inventoryItemId
     : null;
   const canonicalPath = state
-    ? workspacePath({
+    ? stateWorkspacePath(state, {
         itemId: view === "inventory" ? validInventoryItemId : null,
         locationId:
           view === "capture" || view === "spaces"
@@ -735,7 +890,6 @@ function Application() {
               ? validInventoryLocationId
               : null,
         view,
-        workspaceId: state.workspace.id,
       })
     : null;
 
@@ -747,20 +901,42 @@ function Application() {
     ) return;
     const browserPath = `${location.pathname}${location.search}`;
     if (browserPath !== canonicalPath) {
-      updateBrowserHistory(canonicalPath, "replace");
+      const itemModalEntry = isItemModalHistoryEntry(history.state);
+      if (itemModalEntry && !validInventoryItemId) return;
+      updateBrowserHistory(
+        canonicalPath,
+        "replace",
+        validInventoryItemId && itemModalEntry
+          ? ITEM_MODAL_HISTORY_STATE
+          : BROWSER_HISTORY_STATE,
+      );
     }
-  }, [canonicalPath, routeStatus, showWelcome]);
+  }, [canonicalPath, routeStatus, showWelcome, validInventoryItemId]);
 
   useEffect(() => {
+    if (showWelcome) {
+      document.title = "Workspaces · Stowplan";
+      return;
+    }
     if (!state) return;
     const viewLabel = nav.find((entry) => entry.id === view)?.label ?? "Workspace";
     document.title = `${viewLabel} · ${state.workspace.name} · Stowplan`;
-  }, [state, view]);
+  }, [showWelcome, state, view]);
 
-  const writePath = (path: string, mode: "push" | "replace" = "push") => {
+  const writePath = (
+    path: string,
+    mode: "push" | "replace" = "push",
+    itemModal = false,
+  ) => {
+    setRouteStatus("ready");
+    setWorkspaceNotice("");
     const browserPath = `${location.pathname}${location.search}`;
     if (browserPath === path) return;
-    updateBrowserHistory(path, mode);
+    updateBrowserHistory(
+      path,
+      mode,
+      itemModal ? ITEM_MODAL_HISTORY_STATE : BROWSER_HISTORY_STATE,
+    );
   };
 
   const enter = (
@@ -777,10 +953,9 @@ function Application() {
     setRouteStatus("ready");
     setWorkspaceNotice("");
     scrollAppToTop();
-    writePath(workspacePath({
+    writePath(stateWorkspacePath(next, {
       locationId,
       view: "capture",
-      workspaceId: next.workspace.id,
     }), mode);
   };
   const start = async (demo: boolean, name?: string) => {
@@ -793,7 +968,8 @@ function Application() {
     if (demo) {
       await openWorkspace(demo.id);
       const next = await readWorkspaceReplica(demo.id);
-      if (next) enter(next.state, "push");
+      if (!next) throw new Error("Could not open kitchen demo");
+      enter(next.state, "push");
       return;
     }
     await start(true);
@@ -830,7 +1006,7 @@ function Application() {
     return <div className="loading">Opening the requested workspace view…</div>;
   }
   if (!state) {
-    return <><Onboarding online={online} onOpenWorkspace={chooseWorkspace} onRemoveWorkspace={removeLocalWorkspace} onStart={start} />{workspaceNotice && <output className="workspace-notice onboarding-notice">{workspaceNotice}</output>}</>;
+    return <><Onboarding backupConfigured={backupConfigured} online={online} onOpenWorkspace={chooseWorkspace} onRemoveWorkspace={removeLocalWorkspace} onStart={start} />{workspaceNotice && <output className="workspace-notice onboarding-notice">{workspaceNotice}</output>}</>;
   }
   if (showWelcome) {
     const statusRevision = [
@@ -841,10 +1017,11 @@ function Application() {
       pending,
       blocked,
       backupConfigured,
+      workspaceStatusRevision,
     ].join("|");
-    return <><Onboarding currentId={state.workspace.id} currentName={state.workspace.name} isDemo={state.workspace.id.startsWith("ws_demo")} online={online} statusRevision={statusRevision} onContinue={continueWorkspace} onOpenDemo={openDemo} onOpenWorkspace={chooseWorkspace} onRemoveWorkspace={removeLocalWorkspace} onResetDemo={resetDemo} onStart={start} />{workspaceNotice && <output className="workspace-notice onboarding-notice">{workspaceNotice}</output>}</>;
+    return <><Onboarding backupConfigured={backupConfigured} currentId={state.workspace.id} currentName={state.workspace.name} isDemo={state.workspace.id.startsWith("ws_demo")} online={online} statusRevision={statusRevision} onContinue={continueWorkspace} onOpenDemo={openDemo} onOpenWorkspace={chooseWorkspace} onRemoveWorkspace={removeLocalWorkspace} onResetDemo={resetDemo} onStart={start} />{workspaceNotice && <output className="workspace-notice onboarding-notice">{workspaceNotice}</output>}</>;
   }
-  const tabPath = (nextView: View) => workspacePath({
+  const tabPath = (nextView: View) => stateWorkspacePath(state, {
     locationId:
       nextView === "capture" || nextView === "spaces"
         ? current?.id
@@ -852,7 +1029,6 @@ function Application() {
           ? validInventoryLocationId
           : null,
     view: nextView,
-    workspaceId: state.workspace.id,
   });
   const syncIssue = lastSyncError === DEVICE_ONLY_BACKUP_ERROR
     ? null
@@ -868,10 +1044,9 @@ function Application() {
   const selectLocation = (id: string) => {
     setSelected(id);
     if (view === "capture" || view === "spaces") {
-      writePath(workspacePath({
+      writePath(stateWorkspacePath(state, {
         locationId: id,
         view,
-        workspaceId: state.workspace.id,
       }));
     }
   };
@@ -880,21 +1055,29 @@ function Application() {
     setInventoryLocationId(locationId);
     setInventoryItemId(null);
     setGuidanceTarget(null);
-    writePath(workspacePath({
+    writePath(stateWorkspacePath(state, {
       locationId,
       view: "inventory",
-      workspaceId: state.workspace.id,
     }));
   };
   const changeInventoryItem = (id: string | null) => {
     setInventoryItemId(id);
     if (!id) setGuidanceTarget(null);
-    writePath(workspacePath({
+    if (
+      !id &&
+      inventoryItemId &&
+      isItemModalHistoryEntry(history.state)
+    ) {
+      setRouteStatus("ready");
+      setWorkspaceNotice("");
+      window.History.prototype.back.call(history);
+      return;
+    }
+    writePath(stateWorkspacePath(state, {
       itemId: id,
       locationId: id ? null : validInventoryLocationId,
       view: "inventory",
-      workspaceId: state.workspace.id,
-    }), id ? "push" : "replace");
+    }), id ? "push" : "replace", Boolean(id));
   };
   const openGuidanceTarget = (
     nextView: GuidanceTarget["view"],
@@ -917,15 +1100,19 @@ function Application() {
     }));
     setView(nextView);
     scrollAppToTop();
-    writePath(workspacePath({
-      itemId: nextView === "inventory" ? id : null,
-      locationId: nextView === "inventory" ? null : id,
-      view: nextView,
-      workspaceId: state.workspace.id,
-    }));
+    writePath(
+      stateWorkspacePath(state, {
+        itemId: nextView === "inventory" ? id : null,
+        locationId: nextView === "inventory" ? null : id,
+        view: nextView,
+      }),
+      "push",
+      nextView === "inventory",
+    );
   };
   const shareCurrentView = async () => {
     if (!canonicalPath) return;
+    setFeedback(null);
     const url = new URL(canonicalPath, location.origin).href;
     const title = `${nav.find((entry) => entry.id === view)?.label ?? "Workspace"} · ${state.workspace.name}`;
     try {
@@ -948,7 +1135,6 @@ function Application() {
       );
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
-        showFeedback("Sharing was canceled", "info");
         return;
       }
       showFeedback(
@@ -969,6 +1155,19 @@ function Application() {
   const themeToggleLabel = appliedTheme === "dark"
     ? "Dark theme active. Switch to light theme"
     : "Light theme active. Switch to dark theme";
+  const syncStatus = backupPresentation({
+    backupConfigured,
+    blocked,
+    lastSyncError,
+    lastSyncedAt,
+    online,
+    pending,
+    syncing,
+  });
+  const syncTitle = lastSyncError ??
+    (lastSyncedAt
+      ? `Last successful backup: ${formatTimestamp(lastSyncedAt)}`
+      : "This workspace has not been backed up online yet.");
   return <div className="app-shell" data-sidebar-collapsed={sidebarCollapsed}>
     <aside aria-label="Workspace navigation">
       <Brand />
@@ -983,10 +1182,28 @@ function Application() {
         {sidebarCollapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
         <span>{sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}</span>
       </button>
-      <div className="sync" title={lastSyncError ?? (lastSyncedAt ? `Last successful backup: ${formatTimestamp(lastSyncedAt)}` : "This workspace has not been backed up online yet.")}>{online ? <Wifi /> : <WifiOff />}<span>{blocked ? `${blocked} need review` : backupConfigured === false ? pending ? `${pending} saved on device` : "Device only" : syncing ? "Backing up…" : pending ? `${pending} pending upload` : !online ? "Working offline" : lastSyncedAt ? `Backed up ${formatTimestamp(lastSyncedAt)}` : "Device only"}</span></div>
+      <a
+        className="sync"
+        href={WORKSPACE_LIST_PATH}
+        aria-label={`Review workspace backup statuses: ${syncStatus.label}`}
+        title={`${syncTitle} Review all workspace backup statuses.`}
+        onClick={(event) => followAppLink(event, openWorkspaceMenu)}
+      >
+        <BackupStatusIcon presentation={syncStatus} />
+        <span>{syncStatus.label}</span>
+      </a>
     </aside>
     <main>
-      <header><div><p className="eyebrow">{state.workspace.name}</p><h1>{nav.find((entry) => entry.id === view)?.label}</h1></div><div className="header-actions"><button className="jump-trigger" aria-label="Search and jump, Command or Control K" onClick={() => setJumpPaletteOpen(true)}><Search /><span>Search</span><kbd>⌘ / Ctrl K</kbd></button><a className="icon" href={WORKSPACE_LIST_PATH} aria-label="Open main menu" onClick={(event) => followAppLink(event, openWorkspaceMenu)}><Home /></a><a className="icon mobile-settings" data-active={view === "settings"} aria-label="Open settings" href={tabPath("settings")} onClick={(event) => followAppLink(event, () => selectView("settings"))}><Settings /></a><button className="icon" aria-label="Share this view" onClick={() => void shareCurrentView()}><Share2 /></button><button className="icon" aria-label={themeToggleLabel} title={themeToggleLabel} onClick={() => selectTheme(appliedTheme === "dark" ? "light" : "dark")}>{appliedTheme === "dark" ? <Moon /> : <Sun />}</button></div></header>
+      <header><div><p className="eyebrow">{state.workspace.name}</p><h1>{nav.find((entry) => entry.id === view)?.label}</h1></div><div className="header-actions"><button className="jump-trigger" aria-label="Search and jump, Command or Control K" onClick={() => setJumpPaletteOpen(true)}><Search /><span>Search</span><kbd>⌘ / Ctrl K</kbd></button><a className="icon" href={WORKSPACE_LIST_PATH} aria-label="Workspaces and backup status" onClick={(event) => followAppLink(event, openWorkspaceMenu)}><Home /></a><a className="icon mobile-settings" data-active={view === "settings"} aria-label="Open settings" href={tabPath("settings")} onClick={(event) => followAppLink(event, () => selectView("settings"))}><Settings /></a><button className="icon" aria-label="Share this view" onClick={() => void shareCurrentView()}><Share2 /></button><button className="icon" aria-label={themeToggleLabel} title={themeToggleLabel} onClick={() => selectTheme(appliedTheme === "dark" ? "light" : "dark")}>{appliedTheme === "dark" ? <Moon /> : <Sun />}</button></div></header>
+      {!syncIssue && <a
+        className="mobile-sync-status"
+        href={WORKSPACE_LIST_PATH}
+        onClick={(event) => followAppLink(event, openWorkspaceMenu)}
+      >
+        <BackupStatusIcon presentation={syncStatus} />
+        <span>{syncStatus.label}</span>
+        <ChevronRight />
+      </a>}
       {syncIssue && <section className="sync-error-banner" role="alert">
         <AlertCircle />
         <span><strong>Backup needs attention</strong><small>{syncIssue}</small></span>
@@ -996,12 +1213,12 @@ function Application() {
         <Info />
         <span><strong>Preferences are session-only</strong><small>Theme, sidebar, and panel choices will reset after reload because browser preference storage is unavailable.</small></span>
       </section>}
+      {workspaceNotice && <output className="workspace-notice">{workspaceNotice}</output>}
       {view === "capture" && <Capture state={state} current={current} select={selectLocation} commit={dispatch} focusEditorKey={guidanceTarget?.view === "capture" ? guidanceTarget.token : null} />}
       {view === "spaces" && <Spaces state={state} current={current} select={selectLocation} commit={dispatch} focusEditorKey={guidanceTarget?.view === "spaces" ? guidanceTarget.token : null} focusEditorSection={guidanceTarget?.view === "spaces" ? guidanceTarget.focus : undefined} />}
-      {view === "inventory" && <Inventory state={state} commit={dispatch} editing={validInventoryItemId} editFocus={guidanceTarget?.view === "inventory" ? guidanceTarget.focus : undefined} locationFilter={validInventoryLocationId ?? ""} onEditingChange={changeInventoryItem} onLocationFilterChange={changeInventoryLocation} />}
+      {view === "inventory" && <Inventory state={state} commit={dispatch} editing={validInventoryItemId} editFocus={guidanceTarget?.view === "inventory" ? guidanceTarget.focus : undefined} locationFilter={validInventoryLocationId ?? ""} onEditingChange={changeInventoryItem} onLocationFilterChange={changeInventoryLocation} onOpenLocation={(id) => openGuidanceTarget("spaces", id)} />}
       {view === "plan" && <Planner state={state} commit={dispatch} openGuidanceTarget={openGuidanceTarget} />}
       {view === "activity" && <History state={state} commit={dispatch} />}
-      {workspaceNotice && <output className="workspace-notice">{workspaceNotice}</output>}
       {view === "settings" && <Preferences state={state} commit={dispatch} theme={theme} setTheme={selectTheme} openMenu={openWorkspaceMenu} returnTo={canonicalPath ?? tabPath("settings")} />}
     </main>
     {feedback && <output
@@ -1040,14 +1257,26 @@ function followAppLink(
   navigate();
 }
 
+function isItemModalHistoryEntry(value: unknown): boolean {
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    "stowplan" in value &&
+    value.stowplan === true &&
+    "itemModal" in value &&
+    value.itemModal === true,
+  );
+}
+
 function updateBrowserHistory(
   path: string,
   mode: "push" | "replace",
+  state = BROWSER_HISTORY_STATE,
 ): void {
   const method = mode === "push"
     ? window.History.prototype.pushState
     : window.History.prototype.replaceState;
-  method.call(history, BROWSER_HISTORY_STATE, "", path);
+  method.call(history, state, "", path);
 }
 
 function scrollAppToTop(): void {
@@ -1060,7 +1289,8 @@ function Brand() {
 function Nav({ label, icon: Icon, active, href, select }: { label: string; icon: typeof Boxes; active: boolean; href: string; select: () => void }) {
   return <a className="nav" data-active={active} aria-current={active ? "page" : undefined} href={href} title={label} onClick={(event) => followAppLink(event, select)}><Icon /><span>{label}</span></a>;
 }
-function Onboarding({ currentId, currentName, isDemo = false, online, statusRevision, onContinue, onOpenDemo, onOpenWorkspace, onRemoveWorkspace, onResetDemo, onStart }: {
+function Onboarding({ backupConfigured, currentId, currentName, isDemo = false, online, statusRevision, onContinue, onOpenDemo, onOpenWorkspace, onRemoveWorkspace, onResetDemo, onStart }: {
+  backupConfigured: boolean | null;
   currentId?: string;
   currentName?: string;
   isDemo?: boolean;
@@ -1077,6 +1307,7 @@ function Onboarding({ currentId, currentName, isDemo = false, online, statusRevi
   const [workspacesLoaded, setWorkspacesLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const workspaceHeading = useRef<HTMLHeadingElement | null>(null);
   useEffect(() => {
     let active = true;
     void listWorkspaceReplicas().then((next) => {
@@ -1090,6 +1321,14 @@ function Onboarding({ currentId, currentName, isDemo = false, online, statusRevi
     });
     return () => { active = false; };
   }, [currentId, statusRevision]);
+  useEffect(() => {
+    if (!currentName || !workspacesLoaded) return;
+    const frame = requestAnimationFrame(() => {
+      scrollAppToTop();
+      workspaceHeading.current?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [currentName, workspacesLoaded]);
   const run = async (
     action: () => Promise<void>,
     fallbackMessage: string,
@@ -1143,14 +1382,99 @@ function Onboarding({ currentId, currentName, isDemo = false, online, statusRevi
   if (!workspacesLoaded) return <main className="onboarding"><section><Brand /><div className="loading-inline" role="status">Checking workspaces on this device…</div></section></main>;
   if (!currentName && workspaces.length === 0) return <main className="onboarding"><section><Brand /><p className="eyebrow">A calmer first pass</p><h1>Label it. Count it.<br />Find it later.</h1><p>Start with one box, drawer, or cabinet. Stowplan remembers nested containers and keeps working without connectivity or a healthy server.</p><div className="steps"><span><b>1</b>Label a space</span><span><b>2</b>Add what is inside</span><span><b>3</b>Mark it counted</span></div><form className="workspace-start" onSubmit={(event) => submitForm(event, (data) => begin(false, String(data.get("workspaceName"))), false)}><label>Workspace name<input required maxLength={80} name="workspaceName" defaultValue="My home" autoComplete="organization" /></label><button className="primary" disabled={busy}>{busy ? "Starting…" : "Start my workspace"}</button></form><button className="linkish" disabled={busy} onClick={() => void begin(true)}>Explore the kitchen demo instead</button><small>Your inventory is saved on this device first.</small>{message && <output className="form-message">{message}</output>}</section></main>;
 
-  return <main className="onboarding workspace-home"><section><Brand /><div className="workspace-home-heading"><div><p className="eyebrow">Workspaces</p><h1>Where to next?</h1><p>Choose a local workspace and see exactly what has or has not reached the server.</p></div><span className="connectivity" data-online={online}>{online ? <Wifi /> : <WifiOff />}{online ? "Online" : "Offline"}</span></div><div className="workspace-cards">{workspaces.map((workspace) => {
-    const current = workspace.id === currentId;
-    const unsynced = workspace.pending + workspace.blocked;
-    const localOnly = workspace.lastSyncError === DEVICE_ONLY_BACKUP_ERROR;
-    const status = workspace.blocked ? `${workspace.blocked} change${workspace.blocked === 1 ? "" : "s"} need review` : localOnly ? workspace.pending ? `${workspace.pending} change${workspace.pending === 1 ? "" : "s"} saved on device` : "Device only" : workspace.pending ? `${workspace.pending} change${workspace.pending === 1 ? "" : "s"} pending upload` : workspace.lastSyncedAt ? "Backed up online" : "Device only";
-    const detail = workspace.lastSyncedAt ? `Last successful backup ${formatTimestamp(workspace.lastSyncedAt)}` : "Never backed up online";
-    return <article className="workspace-card" data-current={current} key={workspace.id}><header><div><span>{current ? "Open now" : "On this device"}</span><h2>{workspace.name}</h2></div><b data-state={workspace.blocked ? "blocked" : workspace.pending ? "pending" : workspace.lastSyncedAt ? "synced" : "local"}>{status}</b></header><div className="workspace-dates"><span><small>Last local change</small><strong>{formatTimestamp(workspace.updatedAt)}</strong></span><span><small>Server backup</small><strong>{detail}</strong></span></div>{workspace.lastSyncError && <p className="workspace-sync-error">Latest backup check {formatTimestamp(workspace.lastSyncAttemptAt)}: {workspace.lastSyncError}</p>}{unsynced > 0 && <details className="workspace-queue"><summary>Queued changes ({unsynced})</summary><ol>{workspace.changes.slice(0, 6).map((change) => <li key={change.id}><span><strong>{change.label}</strong><small>{formatTimestamp(change.timestamp)}</small></span><b data-state={change.status}>{change.status === "blocked" ? "Needs review" : localOnly ? "Saved locally" : "Pending upload"}</b>{change.error && <small>{change.error}</small>}</li>)}</ol>{workspace.changes.length > 6 && <p>+ {workspace.changes.length - 6} more changes</p>}</details>}<footer><button disabled={busy} className={current ? "primary" : ""} onClick={() => current ? onContinue?.() : void open(workspace.id)}>{current ? "Continue current workspace" : "Open workspace"}</button><button disabled={busy} className="workspace-remove danger" aria-label={`Remove ${workspace.name} from this device`} onClick={() => void remove(workspace)}><Trash2 /><span>Remove</span></button></footer></article>;
-  })}</div><div className="workspace-home-actions"><details className="workspace-create"><summary>Start a new workspace</summary><form onSubmit={(event) => submitForm(event, (data) => begin(false, String(data.get("workspaceName"))), false)}><label>Workspace name<input required maxLength={80} name="workspaceName" placeholder="e.g. Jamie's apartment" /></label><button className="primary" disabled={busy}>{busy ? "Starting…" : "Create workspace"}</button></form></details>{isDemo ? <button disabled={busy} className="danger menu-action" onClick={() => void run(() => onResetDemo?.() ?? Promise.resolve(), "Could not reset the demo")}><RotateCcw /> Reset kitchen demo</button> : <button disabled={busy} className="linkish" onClick={() => void run(() => onOpenDemo?.() ?? Promise.resolve(), "Could not open the demo")}>Open kitchen demo</button>}</div><small className="workspace-home-note">Removing a workspace here affects this device only. Online deletion is never implied.</small>{message && <output className="form-message">{message}</output>}</section></main>;
+  const workspaceViews = workspaces.map((workspace) => ({
+    presentation: backupPresentation({
+      backupConfigured,
+      blocked: workspace.blocked,
+      lastSyncError: workspace.lastSyncError,
+      lastSyncedAt: workspace.lastSyncedAt,
+      pending: workspace.pending,
+    }),
+    workspace,
+  }));
+  const summary = workspaceViews.reduce(
+    (counts, { presentation }) => ({
+      ...counts,
+      [presentation.state]: counts[presentation.state] + 1,
+    }),
+    { blocked: 0, local: 0, pending: 0, synced: 0 },
+  );
+
+  return <main className="onboarding workspace-home">
+    <section>
+      <Brand />
+      <div className="workspace-home-heading">
+        <div>
+          <p className="eyebrow">Workspaces on this device</p>
+          <h1 ref={workspaceHeading} tabIndex={-1}>Workspaces</h1>
+          <p>Open a workspace or review what has and has not reached server backup.</p>
+        </div>
+        <span className="connectivity" data-online={online}>
+          {online ? <Wifi /> : <WifiOff />}
+          {online ? "Network online" : "Network offline"}
+        </span>
+      </div>
+      <div className="workspace-status-summary" aria-label="Workspace backup status summary">
+        <span data-state="blocked"><AlertCircle /><b>{summary.blocked}</b><small>Need review</small></span>
+        <span data-state="pending"><CircleDashed /><b>{summary.pending}</b><small>Changes local</small></span>
+        <span data-state="local"><HardDrive /><b>{summary.local}</b><small>Device only</small></span>
+        <span data-state="synced"><CheckCircle2 /><b>{summary.synced}</b><small>Backed up</small></span>
+      </div>
+      <div className="workspace-cards">{workspaceViews.map(({ presentation, workspace }) => {
+        const current = workspace.id === currentId;
+        const unsynced = workspace.pending + workspace.blocked;
+        const localOnly = backupConfigured === false ||
+          workspace.lastSyncError === DEVICE_ONLY_BACKUP_ERROR;
+        const detail = workspace.lastSyncedAt
+          ? `Last successful backup ${formatTimestamp(workspace.lastSyncedAt)}`
+          : "Never backed up online";
+        return <article className="workspace-card" data-current={current} key={workspace.id}>
+          <header>
+            <div><span>{current ? "Open now" : "On this device"}</span><h2>{workspace.name}</h2></div>
+            <b data-state={presentation.state}>{presentation.label}</b>
+          </header>
+          <div className="workspace-dates">
+            <span><small>Last local change</small><strong>{formatTimestamp(workspace.updatedAt)}</strong></span>
+            <span><small>Server backup</small><strong>{detail}</strong></span>
+          </div>
+          {workspace.lastSyncError && <p className="workspace-sync-error">Latest backup check {formatTimestamp(workspace.lastSyncAttemptAt)}: {workspace.lastSyncError}</p>}
+          {unsynced > 0 && <details className="workspace-queue">
+            <summary>Queued changes ({unsynced})</summary>
+            <ol>{workspace.changes.slice(0, 6).map((change) => <li key={change.id}>
+              <span><strong>{change.label}</strong><small>{formatTimestamp(change.timestamp)}</small></span>
+              <b data-state={change.status}>{change.status === "blocked" ? "Needs review" : localOnly ? "Saved locally" : "Pending upload"}</b>
+              {change.error && <small>{change.error}</small>}
+            </li>)}</ol>
+            {workspace.changes.length > 6 && <p>+ {workspace.changes.length - 6} more changes</p>}
+          </details>}
+          <footer>
+            <button disabled={busy} className={current ? "primary" : ""} onClick={() => current ? onContinue?.() : void open(workspace.id)}>{current ? "Continue current workspace" : "Open workspace"}</button>
+            <details className="workspace-manage">
+              <summary><Settings /><span>Manage</span></summary>
+              <div>
+                <button disabled={busy} className="workspace-remove danger" aria-label={`Remove ${workspace.name} from this device`} onClick={() => void remove(workspace)}><Trash2 /><span>Remove from this device</span></button>
+                <small>Does not delete a server copy</small>
+              </div>
+            </details>
+          </footer>
+        </article>;
+      })}</div>
+      <div className="workspace-home-actions">
+        <details className="workspace-create">
+          <summary>Start a new workspace</summary>
+          <form onSubmit={(event) => submitForm(event, (data) => begin(false, String(data.get("workspaceName"))), false)}>
+            <label>Workspace name<input required maxLength={80} name="workspaceName" placeholder="e.g. Jamie's apartment" /></label>
+            <button className="primary" disabled={busy}>{busy ? "Starting…" : "Create workspace"}</button>
+          </form>
+        </details>
+        {isDemo
+          ? <button disabled={busy} className="danger menu-action" onClick={() => void run(() => onResetDemo?.() ?? Promise.resolve(), "Could not reset the demo")}><RotateCcw /> Reset kitchen demo</button>
+          : <button disabled={busy} className="linkish" onClick={() => void run(() => onOpenDemo?.() ?? Promise.resolve(), "Could not open the demo")}>Open kitchen demo</button>}
+      </div>
+      <small className="workspace-home-note">This page lists workspaces stored on this device. Removing one here never requests deletion of a server copy.</small>
+      {message && <output className="form-message">{message}</output>}
+    </section>
+  </main>;
 }
 
 function Capture({ state, current, select, commit, focusEditorKey }: { state: WorkspaceState; current: Location | null; select: (id: string) => void; commit: Commit; focusEditorKey: number | null }) {
@@ -1167,7 +1491,6 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
   const containerReviewTrigger = useRef<HTMLElement | null>(null);
   const restoreContainerReviewFocus = useRef(true);
   const editor = useRef<HTMLElement | null>(null);
-  const nativeReorderHandled = useRef(false);
   const live = state.locations.filter((location) => !location.archivedAt);
   const tree = flattenLocationTree(live);
   const normalizedQuery = queueQuery.trim().toLocaleLowerCase();
@@ -1219,7 +1542,6 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
         return;
       }
       setContainerReview(null);
-      showFeedback(`No changes were made to ${containerReview.locationName}`, "info");
     };
     const explainBlockedSearch = (event: Event) => {
       event.preventDefault();
@@ -1332,7 +1654,6 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
       return;
     }
     setContainerReview(null);
-    showFeedback(`No changes were made to ${containerReview.locationName}`, "info");
   };
   const emptyContainer = async () => {
     if (
@@ -1379,7 +1700,7 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
       type: "capture.status",
       id: current.id,
       status,
-    }, () => showFeedback(`${current.name} is open for capture again`, "success"));
+    });
   };
   const reorderLocation = (location: Location, direction: -1 | 1) => {
     const siblings = live.filter((candidate) => candidate.parentId === location.parentId);
@@ -1391,22 +1712,11 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
     setNativeReorderSource(null);
   };
   const startNativeReorder = (event: React.DragEvent, payload: DragPayload) => {
-    nativeReorderHandled.current = false;
     setNativeReorderCue(null);
     setNativeReorderSource(payload);
     writeDrag(event, payload);
   };
-  const endNativeReorder = (payload: DragPayload) => {
-    if (!nativeReorderHandled.current) {
-      showFeedback(
-        payload.type === "location"
-          ? "Capture only reorders sibling spaces. Use Spaces to change nesting."
-          : "Items can only be reordered onto a different item in the same container",
-      );
-    }
-    nativeReorderHandled.current = false;
-    clearNativeReorder();
-  };
+  const endNativeReorder = () => clearNativeReorder();
   const canDropLocation = (sourceId: string, targetId: string) => {
     if (sourceId === targetId) return false;
     const source = live.find((location) => location.id === sourceId);
@@ -1462,7 +1772,6 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
       !canDropLocation(payload.id, targetId)
     ) {
       event.preventDefault();
-      nativeReorderHandled.current = true;
       showFeedback(
         "Capture only reorders sibling spaces. Use Spaces to change nesting.",
       );
@@ -1470,7 +1779,6 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
       return;
     }
     event.preventDefault();
-    nativeReorderHandled.current = true;
     reorderLocationByDrop(
       payload,
       reorderDropTarget(event.currentTarget, event.clientY, "location", targetId),
@@ -1519,13 +1827,11 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
     const payload = readDrag(event) ?? nativeReorderSource;
     if (payload?.type !== "item" || !canDropItem(payload.id, targetId)) {
       event.preventDefault();
-      nativeReorderHandled.current = true;
       showFeedback("Items can only be reordered onto a different item in the same container");
       clearNativeReorder();
       return;
     }
     event.preventDefault();
-    nativeReorderHandled.current = true;
     reorderByDrop(
       payload,
       reorderDropTarget(event.currentTarget, event.clientY, "item", targetId),
@@ -1562,7 +1868,7 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
         data-drop-valid={validDrop === null ? undefined : String(validDrop)}
         data-location-id={location.id}
         draggable
-        onDragEnd={() => endNativeReorder({ type: "location", id: location.id })}
+        onDragEnd={endNativeReorder}
         onDragLeave={(event) => leaveNativeReorderTarget(event, "location", location.id)}
         onDragOver={(event) => dragOverLocation(event, location.id)}
         onDragStart={(event) => startNativeReorder(event, { type: "location", id: location.id })}
@@ -1597,7 +1903,7 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
           data-item-id={item.id}
           key={item.id}
           draggable={!captureComplete}
-          onDragEnd={captureComplete ? undefined : () => endNativeReorder({ type: "item", id: item.id })}
+          onDragEnd={captureComplete ? undefined : endNativeReorder}
           onDragLeave={captureComplete ? undefined : (event) => leaveNativeReorderTarget(event, "item", item.id)}
           onDragOver={captureComplete ? undefined : (event) => dragOverItem(event, item.id)}
           onDragStart={captureComplete ? undefined : (event) => startNativeReorder(event, { type: "item", id: item.id })}
@@ -1741,7 +2047,6 @@ function Spaces({ state, current, select, commit, focusEditorKey, focusEditorSec
   const [dropCue, setDropCue] = useState<DropTarget | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const inspector = useRef<HTMLElement | null>(null);
-  const nativeDropHandled = useRef(false);
   useEffect(() => {
     if (focusEditorKey === null) return;
     const frame = requestAnimationFrame(() => {
@@ -1868,20 +2173,16 @@ function Spaces({ state, current, select, commit, focusEditorKey, focusEditorSec
     payload: DragPayload,
   ) => {
     event.stopPropagation();
-    nativeDropHandled.current = false;
     setDragging(true);
     writeDrag(event, payload);
   };
-  const endNativeDrag = (message: string) => {
-    if (!nativeDropHandled.current) refuseDrop(message);
-    nativeDropHandled.current = false;
+  const endNativeDrag = () => {
     setDragging(false);
     setDropCue(null);
   };
   const drop = (event: React.DragEvent, fallback: DropTarget) => {
     event.preventDefault();
     event.stopPropagation();
-    nativeDropHandled.current = true;
     const target = dropTargetAt(event.clientX, event.clientY) ?? fallback;
     moveByDrop(readDrag(event), target);
     setDragging(false);
@@ -1898,16 +2199,129 @@ function Spaces({ state, current, select, commit, focusEditorKey, focusEditorSec
     const order = movedOrder(siblings, location.id, direction);
     if (order !== null) void perform(commit, { type: "location.reorder", id: location.id, order });
   };
-  const branch = (parentId: string | null, depth = 0): React.ReactNode => sortLocations(visibleChildren(parentId)).map((location) => {
-    const displayParentId = location.parentId && liveIds.has(location.parentId) ? location.parentId : null;
-    const siblings = sortLocations(visibleChildren(displayParentId));
-    const index = siblings.findIndex((candidate) => candidate.id === location.id);
-    const children = live.filter((candidate) => candidate.parentId === location.id);
-    const itemCount = state.items.filter((item) => item.locationId === location.id && !item.archivedAt).length;
-    const cue = dropCue?.kind === "location" && dropCue.id === location.id ? dropCue.intent : undefined;
-    const isCollapsed = collapsed.has(location.id);
-    return <div className="tree-node" role="listitem" key={location.id}><div className="tree-row" data-location-id={location.id} data-drop-target="location" data-drop-id={location.id} data-drop-intent={cue} data-active={current?.id === location.id} draggable onDragStart={(event) => startNativeDrag(event, { type: "location", id: location.id })} onDragEnd={() => endNativeDrag(`Choose a valid destination for ${location.name}`)} onDragOver={(event) => dragOver(event, { id: location.id, intent: "inside", kind: "location" })} onDrop={(event) => drop(event, { id: location.id, intent: "inside", kind: "location" })}><TouchDragHandle label={`Drag ${location.name} to move or nest it`} onActiveChange={setDragging} onDrop={(target) => finishTouchDrop({ type: "location", id: location.id }, target)} onInvalidDrop={() => refuseDrop(`Choose a valid destination for ${location.name}`)} />{children.length ? <button className="tree-toggle" aria-expanded={!isCollapsed} aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${location.name}`} onClick={() => setCollapsed((current) => { const next = new Set(current); if (next.has(location.id)) next.delete(location.id); else next.add(location.id); return next; })}>{isCollapsed ? <ChevronRight /> : <ChevronDown />}</button> : <span className="tree-toggle-spacer" />}<button className="tree-select" aria-current={current?.id === location.id ? "true" : undefined} onClick={() => chooseLocation(location.id)}><span className="tree-code"><b>{location.code}</b><i>{location.kind}</i></span><span className="tree-name">{location.name}<small>{children.length} nested · {itemCount} items</small></span></button><span className="drop-copy" aria-hidden>{cue === "before" ? "Place before" : cue === "after" ? "Place after" : "Move inside"}</span><div className="row-actions"><button className="icon small" aria-label={`Move ${location.name} up`} disabled={index === 0} onClick={() => reorderLocation(location, -1)}><ArrowUp /></button><button className="icon small" aria-label={`Move ${location.name} down`} disabled={index === siblings.length - 1} onClick={() => reorderLocation(location, 1)}><ArrowDown /></button></div></div>{children.length > 0 && !isCollapsed && <div className="tree-children" role="list">{branch(location.id, depth + 1)}</div>}</div>;
-  });
+  const branch = (
+    parentId: string | null,
+    depth = 0,
+  ): React.ReactNode => sortLocations(visibleChildren(parentId)).map(
+    (location) => {
+      const displayParentId = location.parentId &&
+        liveIds.has(location.parentId)
+        ? location.parentId
+        : null;
+      const siblings = sortLocations(visibleChildren(displayParentId));
+      const index = siblings.findIndex(
+        (candidate) => candidate.id === location.id,
+      );
+      const children = live.filter(
+        (candidate) => candidate.parentId === location.id,
+      );
+      const itemCount = state.items.filter(
+        (item) => item.locationId === location.id && !item.archivedAt,
+      ).length;
+      const cue = dropCue?.kind === "location" &&
+        dropCue.id === location.id
+        ? dropCue.intent
+        : undefined;
+      const isCollapsed = collapsed.has(location.id);
+      const captureStatus = location.captureStatus.replace("_", " ");
+      return <div className="tree-node" role="listitem" key={location.id}>
+        <div
+          className="tree-row"
+          data-location-id={location.id}
+          data-drop-target="location"
+          data-drop-id={location.id}
+          data-drop-intent={cue}
+          data-active={current?.id === location.id}
+          draggable
+          onDragStart={(event) => startNativeDrag(event, {
+            type: "location",
+            id: location.id,
+          })}
+          onDragEnd={endNativeDrag}
+          onDragOver={(event) => dragOver(event, {
+            id: location.id,
+            intent: "inside",
+            kind: "location",
+          })}
+          onDrop={(event) => drop(event, {
+            id: location.id,
+            intent: "inside",
+            kind: "location",
+          })}
+        >
+          <TouchDragHandle
+            label={`Drag ${location.name} to move or nest it`}
+            onActiveChange={setDragging}
+            onDrop={(target) => finishTouchDrop({
+              type: "location",
+              id: location.id,
+            }, target)}
+            onInvalidDrop={() => refuseDrop(
+              `Choose a valid destination for ${location.name}`,
+            )}
+          />
+          {children.length
+            ? <button
+                className="tree-toggle"
+                aria-expanded={!isCollapsed}
+                aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${location.name}`}
+                onClick={() => setCollapsed((current) => {
+                  const next = new Set(current);
+                  if (next.has(location.id)) next.delete(location.id);
+                  else next.add(location.id);
+                  return next;
+                })}
+              >
+                {isCollapsed ? <ChevronRight /> : <ChevronDown />}
+              </button>
+            : <span className="tree-toggle-spacer" />}
+          <button
+            className="tree-select"
+            aria-current={current?.id === location.id ? "true" : undefined}
+            onClick={() => chooseLocation(location.id)}
+          >
+            <span className="tree-code">
+              <b>{location.code}</b>
+              <i>{location.kind}</i>
+            </span>
+            <span className="tree-name">
+              {location.name}
+              <small>{children.length} nested · {itemCount} items · {captureStatus}</small>
+            </span>
+          </button>
+          <span className="drop-copy" aria-hidden>
+            {cue === "before"
+              ? "Place before"
+              : cue === "after"
+                ? "Place after"
+                : "Move inside"}
+          </span>
+          {siblings.length > 1 && <div className="row-actions">
+            <button
+              className="icon small"
+              aria-label={`Move ${location.name} up`}
+              disabled={index === 0}
+              onClick={() => reorderLocation(location, -1)}
+            >
+              <ArrowUp />
+            </button>
+            <button
+              className="icon small"
+              aria-label={`Move ${location.name} down`}
+              disabled={index === siblings.length - 1}
+              onClick={() => reorderLocation(location, 1)}
+            >
+              <ArrowDown />
+            </button>
+          </div>}
+        </div>
+        {children.length > 0 && !isCollapsed &&
+          <div className="tree-children" role="list">
+            {branch(location.id, depth + 1)}
+          </div>}
+      </div>;
+    },
+  );
   const removeLocation = (location: Location) => {
     const descendants = descendantIds(state, location.id);
     const locationIds = [location.id, ...descendants];
@@ -1917,13 +2331,14 @@ function Spaces({ state, current, select, commit, focusEditorKey, focusEditorSec
     }
   };
 
-  const treePanel = <section className="panel tree-panel" data-dragging={dragging}><div className="title"><div><p className="eyebrow">Your physical hierarchy</p><h2>Rooms → cabinets → boxes</h2></div></div><p className="tree-help">Drag a handle onto the top, middle, or bottom of another row to place before, move inside, or place after. On touch, press the handle, slide, and release.</p><details className="tree-add"><summary>Add a top-level room or area</summary><form onSubmit={(event) => submitForm(event, addRoot)}><LocationCreateFields defaultKind="room" existingCodes={live.map((location) => location.code)} kindLabel="Space type" namePlaceholder="Friendly name" /><button>Add top-level space</button></form></details><div className="root-drop" data-drop-target="root" data-drop-intent={dropCue?.kind === "root" ? "inside" : undefined} onDragOver={(event) => dragOver(event, { id: null, intent: "inside", kind: "root" })} onDrop={(event) => drop(event, { id: null, intent: "inside", kind: "root" })}>Drop here to make a top-level room or area</div><div className="location-tree" role="list" aria-label="Space hierarchy">{branch(null)}</div>{current && <button className="mobile-edit-space primary" onClick={() => { const behavior = matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"; inspector.current?.scrollIntoView({ behavior, block: "start" }); inspector.current?.focus({ preventScroll: true }); }}>Edit {current.name}</button>}{archived.length > 0 && <details className="archived"><summary>{archived.length} archived</summary>{archived.map((location) => <div key={location.id}><span>{location.code} · {location.name}</span><button onClick={() => void perform(commit, { type: "location.archive", id: location.id, archived: false })}>Restore</button></div>)}</details>}</section>;
+  const treePanel = <section className="panel tree-panel" data-dragging={dragging}><div className="title"><div><p className="eyebrow">Your physical hierarchy</p><h2>Rooms → cabinets → boxes</h2></div></div><div className="tree-tools"><details className="tree-add"><summary><Plus /><span>Add top-level space</span></summary><form onSubmit={(event) => submitForm(event, addRoot)}><LocationCreateFields defaultKind="room" existingCodes={live.map((location) => location.code)} kindLabel="Space type" namePlaceholder="Friendly name" /><button>Add top-level space</button></form></details><details className="tree-help"><summary><Info /><span>Move spaces</span></summary><p>Drag a handle onto the top, middle, or bottom of another row to place before, move inside, or place after. On touch, press the handle, slide, and release.</p></details></div><div className="root-drop" data-drop-target="root" data-drop-intent={dropCue?.kind === "root" ? "inside" : undefined} onDragOver={(event) => dragOver(event, { id: null, intent: "inside", kind: "root" })} onDrop={(event) => drop(event, { id: null, intent: "inside", kind: "root" })}>Drop here to make a top-level room or area</div><div className="location-tree" role="list" aria-label="Space hierarchy">{branch(null)}</div>{current && <button className="mobile-edit-space primary" onClick={() => { const behavior = matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"; inspector.current?.scrollIntoView({ behavior, block: "start" }); inspector.current?.focus({ preventScroll: true }); }}>Edit {current.name}</button>}{archived.length > 0 && <details className="archived"><summary>{archived.length} archived</summary>{archived.map((location) => <div key={location.id}><span>{location.code} · {location.name}</span><button onClick={() => void perform(commit, { type: "location.archive", id: location.id, archived: false })}>Restore</button></div>)}</details>}</section>;
   const inspectorPanel = <section className="panel inspector" id="space-inspector" ref={inspector} tabIndex={-1} aria-label={current ? `Edit ${current.name}` : "Space editor"}>{current ? <LocationEditor key={current.id} state={state} location={current} commit={commit} select={select} reorder={reorderLocation} remove={() => removeLocation(current)} editItem={setEditingItem} moveByDrop={finishTouchDrop} setDragging={setDragging} startNativeDrag={startNativeDrag} endNativeDrag={endNativeDrag} /> : <Empty title="Select a space" text="Edit it, move it, or drop an item or container onto it." />}</section>;
   return <>
     <ResizablePanels
       className="content split"
       defaultPanelPercent={42}
       label="Space panels"
+      minSideBySideWidth={960}
       primary={treePanel}
       primaryLabel="space hierarchy"
       secondary={inspectorPanel}
@@ -1933,7 +2348,7 @@ function Spaces({ state, current, select, commit, focusEditorKey, focusEditorSec
   </>;
 }
 
-function LocationEditor({ state, location, commit, select, reorder, remove, editItem, moveByDrop, setDragging, startNativeDrag, endNativeDrag }: { state: WorkspaceState; location: Location; commit: Commit; select: (id: string) => void; reorder: (location: Location, direction: -1 | 1) => void; remove: () => void; editItem: (id: string) => void; moveByDrop: (payload: DragPayload, target: DropTarget) => void; setDragging: (dragging: boolean) => void; startNativeDrag: (event: React.DragEvent, payload: DragPayload) => void; endNativeDrag: (message: string) => void }) {
+function LocationEditor({ state, location, commit, select, reorder, remove, editItem, moveByDrop, setDragging, startNativeDrag, endNativeDrag }: { state: WorkspaceState; location: Location; commit: Commit; select: (id: string) => void; reorder: (location: Location, direction: -1 | 1) => void; remove: () => void; editItem: (id: string) => void; moveByDrop: (payload: DragPayload, target: DropTarget) => void; setDragging: (dragging: boolean) => void; startNativeDrag: (event: React.DragEvent, payload: DragPayload) => void; endNativeDrag: () => void }) {
   const invalidParents = new Set([location.id, ...descendantIds(state, location.id)]);
   const contents = sortItems(state.items.filter((item) => item.locationId === location.id && !item.archivedAt));
   const liveDescendantCount = descendantIds(state, location.id).filter(
@@ -1987,7 +2402,7 @@ function LocationEditor({ state, location, commit, select, reorder, remove, edit
     type: "capture.status",
     id: location.id,
     status: contents.length || liveDescendantCount ? "in_progress" : "uncounted",
-  }, () => showFeedback(`${location.name} is open for changes again`, "success"));
+  });
   return <>
     <form onSubmit={(event) => submitForm(event, save, false)} className="editor-form">
       <div className="title">
@@ -1996,12 +2411,12 @@ function LocationEditor({ state, location, commit, select, reorder, remove, edit
       </div>
       {!parentIsAvailable && <p className="form-warning" role="status">The previous parent is archived or missing. Choose a parent below; saving will place this space at the top level if you leave it unchanged.</p>}
       <div className="form-grid">
-        <label>Friendly name<input required name="name" defaultValue={location.name} /></label>
-        <label>Short ID<input required name="code" defaultValue={location.code} autoCapitalize="characters" /></label>
-        <label>Type<select name="kind" defaultValue={location.kind}>{kinds.map((kind) => <option key={kind}>{kind}</option>)}</select></label>
-        <label>Parent space<select name="parentId" defaultValue={parentIsAvailable ? location.parentId ?? "" : ""}><option value="">Top level</option>{parentOptions.map(({ depth, location: candidate }) => <option key={candidate.id} value={candidate.id}>{`${"  ".repeat(depth)}${depth ? "↳ " : ""}${candidate.code} · ${candidate.name}`}</option>)}</select></label>
-        <label className="wide">Tags, comma-separated<input name="tags" defaultValue={location.tags.join(", ")} /></label>
-        <label className="wide">Description<textarea name="description" defaultValue={location.description} /></label>
+        <label className="space-name-field">Friendly name<input required name="name" defaultValue={location.name} /></label>
+        <label className="space-code-field">Short ID<input required name="code" defaultValue={location.code} autoCapitalize="characters" /></label>
+        <label className="space-kind-field">Type<select name="kind" defaultValue={location.kind}>{kinds.map((kind) => <option key={kind}>{kind}</option>)}</select></label>
+        <label className="space-parent-field">Parent space<select name="parentId" defaultValue={parentIsAvailable ? location.parentId ?? "" : ""}><option value="">Top level</option>{parentOptions.map(({ depth, location: candidate }) => <option key={candidate.id} value={candidate.id}>{`${"  ".repeat(depth)}${depth ? "↳ " : ""}${candidate.code} · ${candidate.name}`}</option>)}</select></label>
+        <label className="space-tags-field">Tags, comma-separated<input name="tags" defaultValue={location.tags.join(", ")} /></label>
+        <label className="space-description-field">Description<textarea name="description" defaultValue={location.description} /></label>
       </div>
       <fieldset data-guidance-section="space_suitability" tabIndex={-1}>
         <legend>Suitability</legend>
@@ -2047,7 +2462,7 @@ function LocationEditor({ state, location, commit, select, reorder, remove, edit
         key={item.id}
         draggable={!captureComplete}
         onDragStart={captureComplete ? undefined : (event) => startNativeDrag(event, { type: "item", id: item.id })}
-        onDragEnd={captureComplete ? undefined : () => endNativeDrag(`Choose a different space for ${item.name}`)}
+        onDragEnd={captureComplete ? undefined : endNativeDrag}
       >
         {captureComplete ? <span className="capture-readonly-marker" aria-hidden><CheckCircle2 /></span> : <TouchDragHandle label={`Drag ${item.name} into another space`} onActiveChange={setDragging} onDrop={(target) => moveByDrop({ type: "item", id: item.id }, target)} onInvalidDrop={() => showFeedback(`Choose a different space for ${item.name}`)} />}
         {captureComplete ? <span className="item-name"><strong>{item.name}</strong><small>{item.quantity} {item.unit}</small></span> : <button className="item-name" onClick={() => editItem(item.id)}><strong>{item.name}</strong><small>{item.quantity} {item.unit}</small></button>}
@@ -2058,13 +2473,12 @@ function LocationEditor({ state, location, commit, select, reorder, remove, edit
   </>;
 }
 
-function Inventory({ state, commit, editing, editFocus, locationFilter, onEditingChange, onLocationFilterChange }: { state: WorkspaceState; commit: Commit; editing: string | null; editFocus?: GuidanceFocus; locationFilter: string; onEditingChange: (id: string | null) => void; onLocationFilterChange: (id: string) => void }) {
+function Inventory({ state, commit, editing, editFocus, locationFilter, onEditingChange, onLocationFilterChange, onOpenLocation }: { state: WorkspaceState; commit: Commit; editing: string | null; editFocus?: GuidanceFocus; locationFilter: string; onEditingChange: (id: string | null) => void; onLocationFilterChange: (id: string) => void; onOpenLocation: (id: string) => void }) {
   const [query, setQuery] = useState("");
   const [sortBy, setSortBy] = useState<"location" | "name" | "quantity">("name");
   const [selected, setSelected] = useState<string[]>([]);
   const [nativeReorderCue, setNativeReorderCue] = useState<DropTarget | null>(null);
   const [nativeReorderSource, setNativeReorderSource] = useState<DragPayload | null>(null);
-  const nativeReorderHandled = useRef(false);
   const locationName = useMemo(() => new Map(state.locations.map((location) => [location.id, locationPath(state.locations, location.id).map((part) => part.name).join(" › ")])), [state.locations]);
   const locationOptions = flattenLocationTree(state.locations.filter((location) => !location.archivedAt));
   const shown = useMemo(() => state.items.filter((item) => {
@@ -2107,10 +2521,7 @@ function Inventory({ state, commit, editing, editFocus, locationFilter, onEditin
       type: "capture.status",
       id: filteredLocation.id,
       status: hasContents ? "in_progress" : "uncounted",
-    }, () => showFeedback(
-      `${filteredLocation.name} is open for changes again`,
-      "success",
-    ));
+    });
   };
   const moveSelected = (destinationId: string) => {
     const completed = [
@@ -2136,18 +2547,11 @@ function Inventory({ state, commit, editing, editFocus, locationFilter, onEditin
     setNativeReorderSource(null);
   };
   const startNativeReorder = (event: React.DragEvent, payload: DragPayload) => {
-    nativeReorderHandled.current = false;
     setNativeReorderCue(null);
     setNativeReorderSource(payload);
     writeDrag(event, payload);
   };
-  const endNativeReorder = (item: ItemRecord) => {
-    if (!nativeReorderHandled.current) {
-      showFeedback(`Choose a different destination for ${item.name}`);
-    }
-    nativeReorderHandled.current = false;
-    clearNativeReorder();
-  };
+  const endNativeReorder = () => clearNativeReorder();
   const canDropItem = (sourceId: string, targetId: string) => {
     if (!canReorder || sourceId === targetId) return false;
     const source = state.items.find((item) => item.id === sourceId);
@@ -2213,13 +2617,11 @@ function Inventory({ state, commit, editing, editFocus, locationFilter, onEditin
     const payload = readDrag(event) ?? nativeReorderSource;
     if (payload?.type !== "item" || !canDropItem(payload.id, target.id)) {
       event.preventDefault();
-      nativeReorderHandled.current = true;
       showFeedback("Choose another item in this filtered container");
       clearNativeReorder();
       return;
     }
     event.preventDefault();
-    nativeReorderHandled.current = true;
     moveItemByDrop(
       payload,
       reorderDropTarget(event.currentTarget, event.clientY, "item", target.id),
@@ -2232,6 +2634,11 @@ function Inventory({ state, commit, editing, editFocus, locationFilter, onEditin
     if (order !== null) void perform(commit, { type: "item.reorder", id: item.id, order });
   };
   const inventoryRow = (item: ItemRecord) => {
+    const itemLocation = state.locations.find(
+      (location) => location.id === item.locationId,
+    );
+    const itemLocationPath =
+      locationName.get(item.locationId) ?? "Unknown space";
     const siblings = sortItems(state.items.filter((candidate) => !candidate.archivedAt && candidate.locationId === item.locationId));
     const siblingIndex = siblings.findIndex((candidate) => candidate.id === item.id);
     const actionIdentity = `${item.name}, ${item.quantity} ${item.unit}`;
@@ -2250,25 +2657,41 @@ function Inventory({ state, commit, editing, editFocus, locationFilter, onEditin
       data-drop-target={canReorder ? "item" : undefined}
       data-drop-valid={validDrop === null ? undefined : String(validDrop)}
       data-item-id={item.id}
+      data-reorderable={String(canReorder)}
       key={item.id}
       draggable={canReorder}
-      onDragEnd={canReorder ? () => endNativeReorder(item) : undefined}
+      onDragEnd={canReorder ? endNativeReorder : undefined}
       onDragLeave={canReorder ? (event) => leaveNativeReorderTarget(event, item.id) : undefined}
       onDragOver={canReorder ? (event) => dragOverItem(event, item.id) : undefined}
       onDragStart={canReorder ? (event) => startNativeReorder(event, { type: "item", id: item.id }) : undefined}
       onDrop={canReorder ? (event) => dropOnItem(event, item) : undefined}
     >
-      {canReorder ? <TouchDragHandle label={`Drag ${item.name} to reorder`} targetAt={(clientX, clientY) => {
+      {canReorder && <TouchDragHandle label={`Drag ${item.name} to reorder`} targetAt={(clientX, clientY) => {
         const target = reorderTargetAt(clientX, clientY, "item");
         return target?.id && canDropItem(item.id, target.id) ? target : null;
-      }} onDrop={(target) => moveItemByDrop({ type: "item", id: item.id }, target)} onInvalidDrop={() => showFeedback(`Choose a different destination for ${item.name}`)} /> : <span className="inventory-marker" aria-hidden>•</span>}
-      <label className="inventory-select"><input aria-label={`Select ${actionIdentity} in ${locationName.get(item.locationId) ?? "Unknown space"}`} type="checkbox" checked={activeSelection.includes(item.id)} onChange={() => setSelected((current) => { const valid = current.filter((id) => shownIds.has(id)); return valid.includes(item.id) ? valid.filter((id) => id !== item.id) : [...valid, item.id]; })} /></label>
-      <button className="item-name" aria-label={`Open ${actionIdentity} in ${locationName.get(item.locationId) ?? "Unknown space"}`} onClick={() => onEditingChange(item.id)}><strong>{item.name}</strong><small>{item.category} · {item.frequency} · {item.tags.join(", ") || "no tags"}</small></button>
+      }} onDrop={(target) => moveItemByDrop({ type: "item", id: item.id }, target)} onInvalidDrop={() => showFeedback(`Choose a different destination for ${item.name}`)} />}
+      <label className="inventory-select"><input aria-label={`Select ${actionIdentity} in ${itemLocationPath}`} type="checkbox" checked={activeSelection.includes(item.id)} onChange={() => setSelected((current) => { const valid = current.filter((id) => shownIds.has(id)); return valid.includes(item.id) ? valid.filter((id) => id !== item.id) : [...valid, item.id]; })} /></label>
+      <button className="item-name" aria-label={`Open ${actionIdentity} in ${itemLocationPath}`} onClick={() => onEditingChange(item.id)}><strong>{item.name}</strong><small>{item.category} · {item.frequency} · {item.tags.join(", ") || "no tags"}</small></button>
       <b>{item.quantity} {item.unit}</b>
-      <span className="location-path">{locationName.get(item.locationId)}</span>
+      {itemLocation
+        ? <a
+          aria-label={`Open ${itemLocationPath} in Spaces`}
+          className="location-path"
+          href={stateWorkspacePath(state, {
+            locationId: item.locationId,
+            view: "spaces",
+          })}
+          onClick={(event) =>
+            followAppLink(event, () => onOpenLocation(item.locationId))}
+        >
+          <MapIcon />
+          <span>{itemLocationPath}</span>
+          <ChevronRight />
+        </a>
+        : <span className="location-path">{itemLocationPath}</span>}
       {canReorder && <span className="inventory-order-actions"><button type="button" className="icon small" aria-label={`Move ${actionIdentity} up`} disabled={siblingIndex === 0} onClick={() => reorderItem(item, -1)}><ArrowUp /></button><button type="button" className="icon small" aria-label={`Move ${actionIdentity} down`} disabled={siblingIndex === siblings.length - 1} onClick={() => reorderItem(item, 1)}><ArrowDown /></button></span>}
       <span className="reorder-drop-copy" aria-hidden>{cue === "before" ? "Place before" : cue === "after" ? "Place after" : ""}</span>
-      <button className="row-action" aria-label={`Edit or move ${actionIdentity} in ${locationName.get(item.locationId) ?? "Unknown space"}`} onClick={() => onEditingChange(item.id)}><Edit3 /><span>Edit / move</span></button>
+      <button className="row-action" aria-label={`Edit or move ${actionIdentity} in ${itemLocationPath}`} onClick={() => onEditingChange(item.id)}><Edit3 /><span>Edit / move</span></button>
     </div>;
   };
   return <div className="content inventory-page">
@@ -2420,10 +2843,6 @@ function ItemEditor({ item, state, commit, close, focus }: { item: ItemRecord; s
       id: currentLocationRecord.id,
       status: "in_progress",
     }, () => {
-      showFeedback(
-        `${currentLocationRecord.name} is open for changes again`,
-        "success",
-      );
       requestAnimationFrame(() =>
         dialog.current?.querySelector<HTMLInputElement>('input[name="name"]')
           ?.focus()
@@ -2717,8 +3136,30 @@ function History({ state, commit }: { state: WorkspaceState; commit: Commit }) {
   return <div className="content"><div className="toolbar"><span>{state.activities.length} recorded changes</span><div className="history-batch"><label>Changes<input aria-label="Batch history count" type="number" min="1" max="100" value={count} onChange={(event) => setCount(Math.max(1, Math.min(100, Number(event.target.value) || 1)))} /></label><button disabled={!applied} onClick={() => void perform(commit, { type: "history.batchUndo", count: Math.min(count, applied) })}>Undo {Math.min(count, applied)}</button><button disabled={!undone} onClick={() => void perform(commit, { type: "history.batchRedo", count: Math.min(count, undone) })}>Redo {Math.min(count, undone)}</button></div></div><section className="panel history">{[...state.activities].reverse().map((entry) => <div key={entry.id}><Undo2 /><span><strong>{entry.label}</strong><small>{new Date(entry.timestamp).toLocaleString()} · {entry.patches.length} fields</small></span><b>{entry.status}</b><button aria-label={`${entry.status === "applied" ? "Undo" : "Reapply"} ${entry.label}`} onClick={() => void perform(commit, entry.status === "applied" ? { type: "history.undo", activityId: entry.id } : { type: "history.reapply", activityId: entry.id })}>{entry.status === "applied" ? "Undo this" : "Reapply"}</button></div>)}{!state.activities.length && <Empty title="No changes yet" text="Every meaningful change will be inspectable and reversible here." />}</section></div>;
 }
 function Preferences({ state, commit, theme, setTheme, openMenu, returnTo }: { state: WorkspaceState; commit: Commit; theme: ThemePreference; setTheme: (theme: ThemePreference) => void; openMenu: () => void; returnTo: string }) {
-  const download = () => { const anchor = document.createElement("a"); const url = URL.createObjectURL(new Blob([JSON.stringify(state, null, 2)], { type: "application/json" })); anchor.href = url; anchor.download = `stowplan-${state.workspace.id}.json`; anchor.click(); URL.revokeObjectURL(url); };
-  return <div className="content settings"><section className="panel"><h2>Workspace</h2><form className="workspace-rename" onSubmit={(event) => submitForm(event, (data) => perform(commit, { type: "workspace.rename", name: String(data.get("workspaceName")) }), false)}><label>Workspace name<input required maxLength={80} name="workspaceName" defaultValue={state.workspace.name} /></label><button>Rename workspace</button></form><p className="muted">Switch, inspect backup status, or remove device copies from the main menu.</p><button onClick={openMenu}><Home /> Open workspace menu</button><h2>Appearance</h2><div className="segments">{(["system", "light", "dark"] as const).map((entry) => <button aria-pressed={theme === entry} data-active={theme === entry} key={entry} onClick={() => setTheme(entry)}>{entry}</button>)}</div><h2>Backup & recovery</h2><p className="muted">Export a complete portable snapshot. Imports are validated and previewed before replacement.</p><button onClick={download}>Export JSON backup</button><a href="/recovery">Review sync issues or restore a backup</a><a href="/labels">Print text and QR labels</a></section><section className="panel"><h2>Account & server backup</h2><a href={`/account?workspace=${encodeURIComponent(state.workspace.id)}&returnTo=${encodeURIComponent(returnTo)}`}>Sign in, sync, or create a guest link to this view</a><a href="/admin">Open admin control plane</a><h2>Help & source</h2><a href="/docs/">Read the offline quick guide</a><a target="_blank" rel="noreferrer" href={process.env.NEXT_PUBLIC_REPOSITORY_URL || "https://github.com/j-256/stowplan"}>View source repository</a><p className="license">AGPL-3.0-only<br />Copyright © 2026 James Klein (j-256)</p></section></div>;
+  const download = () => {
+    let url: string | null = null;
+    try {
+      const anchor = document.createElement("a");
+      url = URL.createObjectURL(
+        new Blob(
+          [JSON.stringify(state, null, 2)],
+          { type: "application/json" },
+        ),
+      );
+      anchor.href = url;
+      anchor.download = `stowplan-${state.workspace.id}.json`;
+      anchor.click();
+    } catch (error) {
+      showFeedback(
+        `Could not export this workspace: ${
+          error instanceof Error ? error.message : "browser download failed"
+        }`,
+      );
+    } finally {
+      if (url) URL.revokeObjectURL(url);
+    }
+  };
+  return <div className="content settings"><section className="panel"><h2>Workspace</h2><form className="workspace-rename" onSubmit={(event) => submitForm(event, (data) => perform(commit, { type: "workspace.rename", name: String(data.get("workspaceName")) }), false)}><label>Workspace name<input required maxLength={80} name="workspaceName" defaultValue={state.workspace.name} /></label><button>Rename workspace</button></form><p className="muted">Switch workspaces, inspect backup status, or manage device copies.</p><a className="settings-workspaces-link" href={WORKSPACE_LIST_PATH} onClick={(event) => followAppLink(event, openMenu)}><Home /> Workspaces and backup status</a><h2>Appearance</h2><div className="segments">{(["system", "light", "dark"] as const).map((entry) => <button aria-pressed={theme === entry} data-active={theme === entry} key={entry} onClick={() => setTheme(entry)}>{entry}</button>)}</div><h2>Backup & recovery</h2><p className="muted">Export a complete portable snapshot. Imports are validated and previewed before replacement.</p><button onClick={download}>Export JSON backup</button><a href="/recovery">Review sync issues or restore a backup</a><a href="/labels">Print text and QR labels</a></section><section className="panel"><h2>Account & server backup</h2><a href={`/account?workspace=${encodeURIComponent(state.workspace.id)}&returnTo=${encodeURIComponent(returnTo)}`}>Sign in, sync, or create a guest link to this view</a><a href="/admin">Open admin control plane</a><h2>Help & source</h2><a href="/docs/">Read the offline quick guide</a><a target="_blank" rel="noreferrer" href={process.env.NEXT_PUBLIC_REPOSITORY_URL || "https://github.com/j-256/stowplan"}>View source repository</a><p className="license">AGPL-3.0-only<br />Copyright © 2026 James Klein (j-256)</p></section></div>;
 }
 function Empty({ title, text }: { title: string; text: string }) {
   return <div className="empty"><b>□</b><h3>{title}</h3><p>{text}</p></div>;

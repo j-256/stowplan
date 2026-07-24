@@ -1,8 +1,16 @@
 import { D1SnapshotStore } from "../../../src/adapters/d1-snapshot-store";
-import { validateImportSnapshot } from "../../../src/domain/import";
+import {
+  normalizeWorkspaceState,
+  validateImportSnapshot,
+} from "../../../src/domain/import";
 import type { WorkspaceState } from "../../../src/domain/types";
 import { audit } from "../../../src/server/admin";
 import { authenticate, canOwnWorkspace, canReadWorkspace, isTrustedMutation } from "../../../src/server/auth";
+import {
+  assertSnapshotWithinQuotas,
+  QuotaExceededError,
+  quotaProblem,
+} from "../../../src/server/quotas";
 import { readJsonRequest, RequestBodyTooLargeError, SNAPSHOT_REQUEST_MAX_BYTES } from "../../../src/server/request-body";
 import { runtimeEnv } from "../../../src/server/runtime";
 
@@ -37,6 +45,7 @@ export async function PUT(request: Request) {
       return Response.json({ error: "workspaceId, expectedRevision, and a matching snapshot are required" }, { status: 400 });
     }
     if (!await canOwnWorkspace(env.DB, user.userId, body.workspaceId)) return Response.json({ error: "Workspace owner access required" }, { status: 403 });
+    assertSnapshotWithinQuotas(body.snapshot, { status: 413 });
     const issues = validateImportSnapshot(body.snapshot).filter(candidate => candidate.severity === "error");
     if (issues.length) return Response.json({ error: "Backup is invalid", issues }, { status: 400 });
     const store = new D1SnapshotStore(env.DB);
@@ -46,9 +55,10 @@ export async function PUT(request: Request) {
     if (current.workspace.revision >= Number.MAX_SAFE_INTEGER) {
       return Response.json({ error: "Server workspace revision counter is exhausted" }, { status: 409 });
     }
-    const state = structuredClone(body.snapshot);
+    const state = normalizeWorkspaceState(structuredClone(body.snapshot));
     state.workspace.revision = current.workspace.revision + 1;
     state.workspace.updatedAt = new Date().toISOString();
+    assertSnapshotWithinQuotas(state, { status: 413 });
     if (!await store.replace(body.workspaceId, current.workspace.revision, state)) return Response.json({ error: "Server workspace changed during restore; retry the preview" }, { status: 409 });
     let auditRecorded = true;
     try {
@@ -58,6 +68,9 @@ export async function PUT(request: Request) {
     }
     return Response.json({ auditRecorded, state }, { headers: { "cache-control": "no-store" } });
   } catch (error) {
+    if (error instanceof QuotaExceededError) {
+      return Response.json(quotaProblem(error), { status: error.status });
+    }
     return Response.json(
       { error: error instanceof Error ? error.message : "Could not restore backup" },
       {

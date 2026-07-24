@@ -1,3 +1,4 @@
+export const CONTROL_REQUEST_MAX_BYTES = 256 * 1024;
 export const SNAPSHOT_REQUEST_MAX_BYTES = 8 * 1024 * 1024;
 export const SYNC_REQUEST_MAX_BYTES = 8 * 1024 * 1024;
 

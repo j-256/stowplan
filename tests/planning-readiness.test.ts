@@ -52,7 +52,7 @@ describe("planning readiness", () => {
         expect(readiness.canGenerateUsefulPlan).toBe(true);
         expect(readiness.level).toBe("limited");
         expect(readiness.uncountedLocationIds).toEqual(
-            expect.arrayContaining(["loc_unknown", "loc_box"]),
+            expect.arrayContaining(["loc_corner", "loc_box"]),
         );
         expect(readiness.uncategorizedItemIds).toEqual([]);
         expect(readiness.unmeasuredDestinationIds).toContain("loc_box");

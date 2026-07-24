@@ -62,6 +62,7 @@ export function createEmptyState(name = "My home", timestamp = nowIso()): Worksp
     return {
         activities: [],
         audit: [],
+        commandReceipts: [],
         items: [],
         locations: [],
         plans: [],

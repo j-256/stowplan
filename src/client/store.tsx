@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { applyCommand } from "../domain/commands";
 import { createEnvelope } from "../domain/factories";
 import type { Command, SyncReceipt, WorkspaceState } from "../domain/types";
-import { activateOrInsertWorkspaceReplica, activateWorkspaceReplica, canRebaseQueuedCommand, deleteWorkspaceReplica, listWorkspaceReplicas, mutateReplica, mutateWorkspaceReplica, readReplica, readWorkspaceReplica, reconcileReplica, reconciliationTargets, replaceReplicaIfUnchanged, writeReplica, type LocalReplica } from "./local-replica";
+import { activateOrInsertWorkspaceReplica, activateWorkspaceReplica, canRebaseQueuedCommand, deleteWorkspaceReplica, listWorkspaceReplicas, mutateReplica, mutateWorkspaceReplica, readReplica, readWorkspaceReplica, reconcileReplica, reconciliationTargets, replaceReplicaIfUnchanged, selectPendingSyncBatch, writeReplica, type LocalReplica } from "./local-replica";
 
 export const DEVICE_ONLY_BACKUP_ERROR = "Server backup is not configured for this deployment.";
 
@@ -70,6 +70,7 @@ interface StoreValue {
   replace: (state: WorkspaceState) => Promise<void>;
   state: WorkspaceState | null;
   syncing: boolean;
+  workspaceStatusRevision: number;
 }
 
 const Store = createContext<StoreValue | null>(null);
@@ -79,7 +80,10 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [online, setOnline] = useState(() => typeof navigator === "undefined" ? true : navigator.onLine);
-  const [syncing, setSyncing] = useState(false);
+  const [syncingWorkspaceIds, setSyncingWorkspaceIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const [workspaceStatusRevision, setWorkspaceStatusRevision] = useState(0);
   const [backupConfigured, setBackupConfigured] = useState<boolean | null>(null);
   const [backupAccess, setBackupAccess] = useState<BackupAccess>("idle");
   const mutationQueue = useRef<Promise<void>>(Promise.resolve());
@@ -89,7 +93,6 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
   const flushWorkspaceRef = useRef<(workspaceId: string, allowEmpty?: boolean) => Promise<void>>(
     () => Promise.resolve(),
   );
-  const syncingOperations = useRef(0);
   const syncTimers = useRef(new Map<string, {
     idle: ReturnType<typeof setTimeout> | null;
     maximum: ReturnType<typeof setTimeout> | null;
@@ -177,6 +180,7 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
       lastSyncedAt: syncedAt ?? latest.lastSyncedAt ?? null,
     }));
     if (next) {
+      setWorkspaceStatusRevision((current) => current + 1);
       setReplica((current) => current?.state.workspace.id === workspaceId ? next : current);
     }
   }, []);
@@ -207,11 +211,17 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
         const value = await readWorkspaceReplica(workspaceId);
         if (!value || !navigator.onLine) return;
         attemptedWorkspaceId = value.state.workspace.id;
-        const batch = value.outbox.filter(entry => entry.status === "pending");
+        const pendingCount = value.outbox.filter(
+          (entry) => entry.status === "pending",
+        ).length;
+        const batch = selectPendingSyncBatch(value.outbox);
         if (!allowEmpty && batch.length === 0) return;
-        syncingOperations.current += 1;
         countedAsSyncing = true;
-        setSyncing(true);
+        setSyncingWorkspaceIds((current) => {
+          const next = new Set(current);
+          next.add(workspaceId);
+          return next;
+        });
         const response = await fetch("/api/sync", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -250,6 +260,7 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
             outbox: latest.outbox.map(entry => denied.has(entry.envelope.id) ? { ...entry, status: "blocked" as const, error: "This account has read-only or no access to the workspace" } : entry),
           }));
           if (next) {
+            setWorkspaceStatusRevision((current) => current + 1);
             setReplica((current) => current?.state.workspace.id === value.state.workspace.id ? next : current);
           }
           return;
@@ -259,7 +270,12 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
           await recordSyncAttempt(value.state.workspace.id, "This account has read-only or no access to the workspace.");
           return;
         }
-        if (!response.ok) throw new Error(`Sync failed (${response.status})`);
+        if (!response.ok) {
+          const body = await response.json().catch(() => null) as {
+            error?: string;
+          } | null;
+          throw new Error(body?.error ?? `Sync failed (${response.status})`);
+        }
         setBackupConfigured(true);
         setBackupAccess("available");
         const body = await response.json() as { receipts: SyncReceipt[]; state: WorkspaceState };
@@ -271,15 +287,22 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
           lastSyncedAt: syncedAt,
         }));
         if (next) {
+          setWorkspaceStatusRevision((current) => current + 1);
           setReplica((current) => current?.state.workspace.id === value.state.workspace.id ? next : current);
+          if (pendingCount > batch.length) {
+            followUpFlushes.current.set(workspaceId, false);
+          }
         }
       } catch (error) {
         // Local state stays authoritative; visibility/manual/online events retry
         if (attemptedWorkspaceId) await recordSyncAttempt(attemptedWorkspaceId, error instanceof Error ? error.message : "Server backup is temporarily unavailable.");
       } finally {
         if (countedAsSyncing) {
-          syncingOperations.current -= 1;
-          setSyncing(syncingOperations.current > 0);
+          setSyncingWorkspaceIds((current) => {
+            const next = new Set(current);
+            next.delete(workspaceId);
+            return next;
+          });
         }
       }
     })();
@@ -320,6 +343,9 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
   }, [clearSchedule, flushWorkspace]);
 
   const activeWorkspaceId = replica?.state.workspace.id;
+  const syncing = Boolean(
+    activeWorkspaceId && syncingWorkspaceIds.has(activeWorkspaceId),
+  );
   useEffect(() => {
     if (!activeWorkspaceId) return;
     const reconcile = async () => {
@@ -482,7 +508,8 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
     replace,
     state: replica?.state ?? null,
     syncing,
-  }), [backupConfigured, dispatch, initialize, online, openWorkspace, removeWorkspace, replace, replica, syncing]);
+    workspaceStatusRevision,
+  }), [backupConfigured, dispatch, initialize, online, openWorkspace, removeWorkspace, replace, replica, syncing, workspaceStatusRevision]);
   if (!loaded) return <div className="loading">Opening your local workspace…</div>;
   if (loadError) return <main className="storage-error" role="alert"><h1>On-device storage could not be opened</h1><p>Stowplan has not changed your inventory. Check this browser&apos;s storage or private-browsing settings, then reload.</p><small>{loadError}</small><button onClick={() => location.reload()}>Reload Stowplan</button></main>;
   return <Store.Provider value={value}>{children}</Store.Provider>;

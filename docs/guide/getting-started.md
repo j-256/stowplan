@@ -15,9 +15,9 @@ The distinction between *uncounted* and *known empty* matters: plans must never 
 
 ## Link to a workspace view
 
-An open workspace uses a path that starts with `/workspaces/WORKSPACE_ID` and ends in `/capture`, `/spaces`, `/inventory`, `/plan`, `/activity`, or `/settings`. Capture and Spaces include the selected space, while Inventory includes a container filter or open item editor. Reloading the page or using browser back and forward restores that context.
+An open workspace uses a path that starts with `/workspaces/READABLE-NAME@WORKSPACE-ID` and ends in `/capture`, `/spaces`, `/inventory`, `/plan`, `/activity`, or `/settings`. Capture and Spaces include the selected space, while Inventory includes a container filter or open item editor. Reloading the page or using browser back and forward restores that context.
 
-Choose **Share this view** to use the device share sheet or copy the exact address. Anyone who already has access to the workspace can open that address on another device; Stowplan asks them to sign in when necessary and returns them to the same view. To grant short guest access, open **Settings → Sign in, sync, or create a guest link to this view** and send the one-time confirmation URL. Workspace URLs contain opaque record IDs rather than inventory names, searches, or unsaved form text.
+Choose **Share this view** to use the device share sheet or copy the exact address. Anyone who already has access to the workspace can open that address on another device; Stowplan asks them to sign in when necessary and returns them to the same view. To grant short guest access, open **Settings → Sign in, sync, or create a guest link to this view** and send the one-time confirmation URL. Workspace URLs pair readable workspace, space, and item slugs with stable record IDs, so links remain understandable without breaking when something is renamed. Searches and unsaved form text stay out of the URL.
 
 ## A practical coding scheme
 

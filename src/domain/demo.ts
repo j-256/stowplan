@@ -110,11 +110,11 @@ export function createDemoState(workspaceId = "ws_demo"): WorkspaceState {
         location("loc_counter", "CTR", "Counter", "area", "loc_right", 1, {
             conditions: conditions({ foodSafe: true }),
         }),
-        location("loc_unknown", "C-04", "Corner cabinet", "cabinet", "loc_right", 2, {
+        location("loc_corner", "C-04", "Corner cabinet", "cabinet", "loc_right", 2, {
             captureStatus: "in_progress",
             conditions: conditions({ dark: true, foodSafe: true }),
         }),
-        location("loc_box", "BX-09", "Appliance parts", "box", "loc_unknown", 0, {
+        location("loc_box", "BX-09", "Appliance parts", "box", "loc_corner", 0, {
             captureStatus: "uncounted",
         }),
     ];
@@ -194,6 +194,7 @@ export function createDemoState(workspaceId = "ws_demo"): WorkspaceState {
     return {
         activities: [],
         audit: [],
+        commandReceipts: [],
         items,
         locations,
         plans: [],
