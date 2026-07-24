@@ -33,7 +33,7 @@ railway status
 
 ## UI path
 
-Create a project from the GitHub repository, choose the Dockerfile deployment, attach one Volume at `/data`, add the environment variables, and generate a domain. The volume is mounted only at runtime—not during image build or pre-deploy commands—so database initialization belongs in Stowplan’s start process as implemented.
+Create a project from the GitHub repository, choose the Dockerfile deployment, attach one Volume at `/data`, add the environment variables, and generate a domain. The volume is mounted only at runtime, not during image build or pre-deploy commands, so database initialization belongs in Stowplan's start process as implemented.
 
 Railway documents a 0.5 GB Volume default for Free/Trial as of 2026-07-22, but compute/network pricing and sleep behavior can change. Verify the current plan before relying on it. Keep a single service replica with this SQLite adapter.
 

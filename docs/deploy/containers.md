@@ -13,7 +13,7 @@ docker run --name stowplan --restart unless-stopped \
   stowplan:1.0.0
 ```
 
-Pass provider secrets with your orchestrator’s secret mechanism, not `-e SECRET=value` in shared shell history. Put an HTTPS reverse proxy in front.
+Pass provider secrets with your orchestrator's secret mechanism, not `-e SECRET=value` in shared shell history. Put an HTTPS reverse proxy in front.
 
 Podman uses equivalent commands:
 

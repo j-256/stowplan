@@ -59,7 +59,7 @@ fly logs
 
 ## Dashboard path
 
-Create an app from the Git repository and Dockerfile, attach a volume named `stowplan_data` at `/data` in the app’s region, set the variables above, keep one Machine, deploy, then configure the health check at `/api/health`.
+Create an app from the Git repository and Dockerfile, attach a volume named `stowplan_data` at `/data` in the app's region, set the variables above, keep one Machine, deploy, then configure the health check at `/api/health`.
 
 ## Backup and rollback
 

@@ -31,7 +31,7 @@ All responses containing workspace or administrative data use `Cache-Control: no
 
 The initial authenticated sync may include a fully validated local snapshot; the server creates it and assigns owner membership. A colliding workspace ID never grants membership to the second creator. Subsequent syncs require membership, and only editors/owners may submit commands. An empty member batch is a low-frequency pull reconciliation. The response contains the authoritative snapshot plus a receipt per command: `applied`, `duplicate`, or `rejected` with structured conflicts.
 
-Owner restore validates the backup again, requires the caller’s expected server revision, advances the restored revision, and uses the same persistence compare-and-swap as sync. A concurrent write returns `409` and leaves both versions unchanged.
+Owner restore validates the backup again, requires the caller's expected server revision, advances the restored revision, and uses the same persistence compare-and-swap as sync. A concurrent write returns `409` and leaves both versions unchanged.
 
 Same-field stale edits reject. Unrelated stale edits can merge because expectations are field-specific. The client must retain rejected envelopes for user review and recovery export.
 

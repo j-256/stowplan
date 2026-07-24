@@ -484,7 +484,7 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
     syncing,
   }), [backupConfigured, dispatch, initialize, online, openWorkspace, removeWorkspace, replace, replica, syncing]);
   if (!loaded) return <div className="loading">Opening your local workspace…</div>;
-  if (loadError) return <main className="storage-error" role="alert"><h1>On-device storage could not be opened</h1><p>Stowplan has not changed your inventory. Check this browser’s storage or private-browsing settings, then reload.</p><small>{loadError}</small><button onClick={() => location.reload()}>Reload Stowplan</button></main>;
+  if (loadError) return <main className="storage-error" role="alert"><h1>On-device storage could not be opened</h1><p>Stowplan has not changed your inventory. Check this browser&apos;s storage or private-browsing settings, then reload.</p><small>{loadError}</small><button onClick={() => location.reload()}>Reload Stowplan</button></main>;
   return <Store.Provider value={value}>{children}</Store.Provider>;
 }
 

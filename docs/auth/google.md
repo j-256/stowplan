@@ -1,6 +1,6 @@
 # Google OAuth setup
 
-Google’s console is the authoritative setup surface; `gcloud` can create/select the project and enable APIs, but Google still requires browser work for OAuth branding, audience, and web-client redirect URIs.
+Google's console is the authoritative setup surface; `gcloud` can create/select the project and enable APIs, but Google still requires browser work for OAuth branding, audience, and web-client redirect URIs.
 
 ## Values to decide first
 
@@ -49,7 +49,7 @@ An External app in testing mode accepts only listed test users and may impose sh
 | Symptom | Check |
 |---|---|
 | `redirect_uri_mismatch` | Compare the callback character-for-character and confirm the correct client ID is deployed. |
-| “Access blocked” or `access_denied` | Add the account as a test user; verify audience type; ensure the user did not deny consent. |
+| "Access blocked" or `access_denied` | Add the account as a test user; verify audience type; ensure the user did not deny consent. |
 | Unverified-app warning | Finish branding/domain verification and publish, or remain in a controlled test audience. |
 | Callback loops to the wrong host | Set `AUTH_BASE_URL`; check reverse-proxy forwarded host/proto settings. |
 | State invalid/expired | Retry from Stowplan; state lasts ten minutes and is single-use. Check clock skew. |

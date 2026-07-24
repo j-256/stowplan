@@ -2,7 +2,7 @@
 
 Every domain mutation records field-level before/after patches. Activity supports:
 
-- **Undo this change:** reverse one selected applied activity (“pluck” it from history).
+- **Undo this change:** reverse one selected applied activity ("pluck" it from history).
 - **Reapply:** apply one selected undone activity again.
 - **Undo N:** undo the latest N applied activities.
 - **Redo N:** reapply the latest N undone activities.

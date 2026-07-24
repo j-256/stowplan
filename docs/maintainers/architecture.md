@@ -38,4 +38,4 @@ The service worker caches document navigations and static application assets onl
 
 ## Adding an adapter
 
-Implement `SnapshotStore`, provide transactional compare-and-swap, run the shared sync and adapter conformance tests, expose runtime configuration without leaking secrets into the client, and document backup/restore semantics. “SQLite-compatible” is not enough: verify strict JSON, revision CAS, and concurrent writers.
+Implement `SnapshotStore`, provide transactional compare-and-swap, run the shared sync and adapter conformance tests, expose runtime configuration without leaking secrets into the client, and document backup/restore semantics. "SQLite-compatible" is not enough: verify strict JSON, revision CAS, and concurrent writers.

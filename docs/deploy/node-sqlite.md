@@ -1,6 +1,6 @@
 # Node 24 + SQLite
 
-This reference composition root uses Node’s built-in `node:sqlite`, the same migration, and a D1-compatible SQL wrapper. It requires a persistent writable path.
+This reference composition root uses Node's built-in `node:sqlite`, the same migration, and a D1-compatible SQL wrapper. It requires a persistent writable path.
 
 ```bash
 nvm install 24.18.0
@@ -31,6 +31,6 @@ The server applies the initial migration only to an empty database. Future numbe
 
 ## Backup
 
-Stop writes or use SQLite’s online backup facility. At minimum, copy the database plus `-wal`/`-shm` files together while stopped. Test restore into a separate path and run the smoke checks before replacing production.
+Stop writes or use SQLite's online backup facility. At minimum, copy the database plus `-wal`/`-shm` files together while stopped. Test restore into a separate path and run the smoke checks before replacing production.
 
 Health check: `GET /api/health`. Terminate the process gracefully through your service manager; do not expose port 3000 directly to the public internet.
