@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
 
@@ -175,6 +175,14 @@ test("initializes OpenNext bindings for next dev and awaits runtime context fail
     readFileSync(new URL("../.openai/hosting.json", import.meta.url), "utf8"),
   );
   assert.equal(hosting.d1, "DB");
+  const packagedHosting = JSON.parse(
+    readFileSync(new URL("../dist/.openai/hosting.json", import.meta.url), "utf8"),
+  );
+  assert.equal(packagedHosting.d1, "DB");
+  const packagedMigrations = readdirSync(
+    new URL("../dist/.openai/drizzle/", import.meta.url),
+  ).filter((name) => name.endsWith(".sql"));
+  assert.ok(packagedMigrations.length > 0);
   const config = readFileSync(new URL("../next.config.ts", import.meta.url), "utf8");
   assert.match(config, /initOpenNextCloudflareForDev\(\)/);
   const runtime = readFileSync(new URL("../src/server/runtime.ts", import.meta.url), "utf8");

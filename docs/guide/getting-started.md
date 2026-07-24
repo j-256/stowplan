@@ -7,9 +7,11 @@ Stowplan’s first job is to help you finish a trustworthy first pass. You do **
 3. Attach a physical label to the first room, cabinet, drawer, box, or bin. Enter the same short code in Stowplan.
 4. Open that location and record each distinct thing as `quantity + unit + name`.
 5. Add any nested boxes or bins before leaving the current location.
-6. Choose **Mark counted & next**. Use **Known empty** only after physically checking the space.
+6. Choose **Counted & next**. Use **Known empty & next** only after physically checking the space.
 
 The distinction between *uncounted* and *known empty* matters: plans must never assume an unopened box has free capacity.
+
+If a space already contains recorded items, **Known empty & next** names what will be removed and asks for confirmation. Confirming removes those items and marks the space known empty as one history action, so a single **Undo** restores the items and the earlier capture status. A space with nested spaces cannot be marked empty; Stowplan leaves it unchanged and explains why. Choose **Reopen capture** to make a completed space editable again. It returns to in progress when it contains items or nested spaces, and to uncounted when it is empty.
 
 ## Link to a workspace view
 
@@ -23,7 +25,9 @@ Use short codes your label gun can print: `GAR-01`, `GAR-01-A`, `KIT-C03`, `KIT-
 
 ## Phone ergonomics
 
-The bottom navigation, 44-pixel targets, single-column capture form, sticky completion controls, safe-area spacing, and keyboard-friendly item loop are the primary interface. Desktop adds room for the location tree and structured inspector without changing the workflow.
+The bottom navigation, 44-pixel targets, single-column capture form, sticky completion controls, safe-area spacing, and keyboard-friendly item loop are the primary interface. On a wider screen, collapse the left navigation to icons when you want more working room. Capture and Spaces can switch between stacked and side-by-side panes, and their divider can be dragged or moved with the arrow keys.
+
+Press **Command-K** on macOS or **Control-K** elsewhere to search workspace views, spaces, and items. The jump menu opens the matching view and preserves meaningful workspace context in the address.
 
 ## Return to the main menu
 

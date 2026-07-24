@@ -186,6 +186,7 @@ export type Command =
           descendantIds: string[];
           itemIds: string[];
       }
+    | { type: "capture.empty"; id: string; itemIds: string[] }
     | { type: "capture.status"; id: string; status: CaptureStatus }
     | { type: "item.create"; item: ItemRecord }
     | { type: "item.update"; id: string; changes: Partial<Omit<ItemRecord, "id" | "createdAt">> }

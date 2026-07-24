@@ -22,4 +22,6 @@
 
 Commit only `.env.example`-style names and harmless defaults. OAuth secrets, session values, guest URLs, Access assertions, and exported production data are secrets.
 
+Sites reads its binding name from `.openai/hosting.json`; keep it aligned with the `DB` entry above. The production artifact must package the matching Drizzle SQL directory so a new D1 database can be initialized before collaborative routes receive traffic.
+
 The client receives only `NEXT_PUBLIC_*` values. Adding that prefix to a secret permanently exposes it in built JavaScript.

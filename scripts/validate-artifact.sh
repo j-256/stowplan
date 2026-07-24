@@ -20,11 +20,19 @@ hosting="${SITES_PROJECT_ROOT}/dist/.openai/hosting.json"
 }
 
 node --input-type=module - "${worker}" "${hosting}" <<'NODE'
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const [workerPath, hostingPath] = process.argv.slice(2);
-JSON.parse(await readFile(hostingPath, "utf8"));
+const hosting = JSON.parse(await readFile(hostingPath, "utf8"));
+if (hosting.d1) {
+  const migrationDirectory = resolve(dirname(hostingPath), "drizzle");
+  const migrationFiles = await readdir(migrationDirectory);
+  if (!migrationFiles.some((name) => name.endsWith(".sql"))) {
+    throw new Error("A Sites D1 binding requires at least one packaged SQL migration");
+  }
+}
 
 const workerUrl = pathToFileURL(workerPath);
 workerUrl.searchParams.set("sites-validation", `${process.pid}-${Date.now()}`);
@@ -34,4 +42,4 @@ if (!worker.default || typeof worker.default.fetch !== "function") {
 }
 NODE
 
-echo "Validated Sites artifact: ESM Worker default.fetch and hosting manifest are present."
+echo "Validated Sites artifact: Worker, hosting manifest, and configured binding migrations are present."

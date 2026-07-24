@@ -14,6 +14,10 @@ export default defineConfig({
   },
   projects: [
     { name:"mobile-chromium", use:{ ...devices["Pixel 7"] } },
-    { name:"desktop-chromium", use:{ ...devices["Desktop Chrome"] } },
+    { name:"mobile-landscape", use:{ ...devices["Pixel 7"], contextOptions:{ screen:{ width:915, height:412 } }, viewport:{ width:915, height:412 } } },
+    { name:"tablet-portrait", use:{ ...devices["iPad Mini"], browserName:"chromium" } },
+    { name:"tablet-landscape", use:{ ...devices["iPad Mini landscape"], browserName:"chromium" } },
+    { name:"desktop-compact", use:{ ...devices["Desktop Chrome"], viewport:{ width:1024, height:700 } } },
+    { name:"desktop-chromium", use:{ ...devices["Desktop Chrome"], viewport:{ width:1440, height:900 } } },
   ],
 });

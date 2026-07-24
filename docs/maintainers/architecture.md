@@ -26,6 +26,8 @@ UI / PWA → local replica + outbox → authenticated sync API → SnapshotStore
 
 `src/domain` has no Cloudflare, React, SQL, or browser imports. `SnapshotStore` is the persistence port. D1 and Node SQLite are adapters. Route handlers use standard `Request`/`Response`; `runtimeEnv` is the small composition seam.
 
+The Sites manifest binds D1 as `DB`. `db/schema.ts` is the typed collaboration schema and Drizzle generates the SQL packaged under `.openai/drizzle`. The packaged schema includes local-first workspace snapshots plus identities, memberships, sessions, guest links, OAuth state, and audit events. The artifact validator treats the binding and its migration payload as one deployment requirement.
+
 `src/domain/app-url.ts` defines the runtime-neutral workspace route grammar. Canonical paths start with `/workspaces/:workspaceId/:view`; Capture and Spaces may identify a location, while Inventory may identify a location filter or item editor. The client accepts legacy workspace/container queries, activates or fetches the authorized replica before canonicalizing, and keeps searches plus unsaved form data out of URLs. Ordinary anchor clicks use same-document history so the IndexedDB provider remains mounted, while modified clicks and direct navigation use the App Router workspace shell.
 
 IndexedDB is the interaction database, not a cache. It preserves the active replica plus inactive workspaces and each durable outbox. Workspace opening, guarded removal, reset, and restore use single-transaction selection or compare-and-swap so stale renders and concurrent tabs cannot overwrite a newer local replica. Reconnect and foreground reconciliation include inactive workspaces with pending commands.

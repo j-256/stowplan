@@ -56,6 +56,7 @@ export function expectationsForCommand(
         command.type === "location.reorder" ||
         command.type === "location.archive" ||
         command.type === "location.delete" ||
+        command.type === "capture.empty" ||
         command.type === "capture.status"
     ) {
         const location = state.locations.find((candidate) => candidate.id === command.id);
@@ -73,6 +74,14 @@ export function expectationsForCommand(
         }
         if (command.type === "location.reorder") return [locationExpectation(location, "order")];
         if (command.type === "location.archive") return [locationExpectation(location, "archivedAt")];
+        if (command.type === "capture.empty") {
+            return [
+                locationExpectation(location, "captureStatus"),
+                ...state.items
+                    .filter((candidate) => command.itemIds.includes(candidate.id))
+                    .map((candidate) => itemExpectation(candidate, "")),
+            ];
+        }
         if (command.type === "capture.status") return [locationExpectation(location, "captureStatus")];
         if (command.type === "location.delete") {
             const locationIds = new Set([command.id, ...command.descendantIds]);

@@ -33,4 +33,4 @@ npm run dev:next
 
 `next.config.ts` initializes OpenNext’s development bindings, so `getCloudflareContext()` can see the local D1 database. `npm run dev` is the separate Sites agent-preview adapter; use `npm run dev:next` when testing Worker bindings and admin routes.
 
-The owner-only `chatgpt.site` checkpoint is a client showcase and has no D1 binding. Its organizer remains fully local-first, but its `/admin` route deliberately reports that server storage is not configured. Test admin with Node + SQLite or a Cloudflare + D1 deployment.
+The Sites project declares a `DB` D1 binding and packages the Drizzle migrations needed for workspace snapshots, identities, sessions, memberships, guest links, OAuth state, and audit events. A Sites version must include both `.openai/hosting.json` and the generated SQL under `.openai/drizzle`; the artifact validator rejects a D1 declaration without a packaged migration. Configure provider secrets before testing public sign-in. Node + SQLite and the local Cloudflare D1 adapter remain the fastest ways to exercise admin flows with development sign-in.

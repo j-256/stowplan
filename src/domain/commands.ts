@@ -888,10 +888,72 @@ function normalPatches(
         };
     }
 
+    if (command.type === "capture.empty") {
+        const location = requireActiveLocation(state, command.id);
+        if (!Array.isArray(command.itemIds) || command.itemIds.length === 0) {
+            throw new DomainError(
+                "EMPTY_REVIEW_STALE",
+                "Choose an occupied container before emptying it",
+            );
+        }
+        if (
+            state.locations.some(
+                (candidate) =>
+                    candidate.parentId === location.id && !candidate.archivedAt,
+            )
+        ) {
+            throw new DomainError(
+                "NOT_EMPTY",
+                "Move or remove nested spaces before marking this container known empty",
+            );
+        }
+        const directItems = state.items.filter(
+            (item) => item.locationId === location.id && !item.archivedAt,
+        );
+        const reviewedIds = [...command.itemIds].sort();
+        const directIds = directItems.map((item) => item.id).sort();
+        if (!equal(reviewedIds, directIds)) {
+            throw new DomainError(
+                "EMPTY_REVIEW_STALE",
+                "Contents changed after confirmation; review the container again",
+            );
+        }
+        return {
+            label: `Emptied ${location.name} and marked it known empty`,
+            patches: [
+                ...planInvalidationPatches(state, directIds, [location.id]),
+                ...directItems.map((item) =>
+                    patch("item", item.id, "", item, undefined)
+                ),
+                patch(
+                    "location",
+                    location.id,
+                    "captureStatus",
+                    location.captureStatus,
+                    "known_empty",
+                ),
+                patch(
+                    "location",
+                    location.id,
+                    "updatedAt",
+                    location.updatedAt,
+                    envelope.timestamp,
+                ),
+            ],
+            subjectIds: [location.id, ...directIds],
+        };
+    }
+
     if (command.type === "capture.status") {
         const location = requireActiveLocation(state, command.id);
         if (!captureStatuses.has(String(command.status))) {
             throw new DomainError("INVALID_CAPTURE_STATUS", "Capture status is invalid");
+        }
+        if (location.captureStatus === command.status) {
+            throw new DomainError(
+                "NO_CHANGES",
+                `${location.name} is already marked ${command.status.replace("_", " ")}`,
+            );
         }
         if (
             command.status === "known_empty" &&

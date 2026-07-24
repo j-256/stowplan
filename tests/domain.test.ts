@@ -39,6 +39,81 @@ describe("organizer command engine", () => {
         expect(state.workspace.revision).toBe(2);
     });
 
+    it("empties a reviewed container and restores its contents with one undo", () => {
+        let state = createDemoState();
+        const originalItems = state.items
+            .filter((item) => item.locationId === "loc_bin")
+            .map((item) => item.id)
+            .sort();
+        const emptied = applyCommand(
+            state,
+            createEnvelope(
+                state,
+                {
+                    type: "capture.empty",
+                    id: "loc_bin",
+                    itemIds: originalItems,
+                },
+                { id: "cmd_empty_bin" },
+            ),
+        );
+        state = emptied.state;
+
+        expect(state.items.some((item) => item.locationId === "loc_bin")).toBe(false);
+        expect(state.locations.find((location) => location.id === "loc_bin")?.captureStatus)
+            .toBe("known_empty");
+        expect(emptied.activity?.label).toMatch(/Emptied Baking bin/);
+
+        state = applyCommand(
+            state,
+            createEnvelope(state, {
+                type: "history.undo",
+                activityId: emptied.activity?.id as string,
+            }),
+        ).state;
+        expect(state.items
+            .filter((item) => item.locationId === "loc_bin")
+            .map((item) => item.id)
+            .sort()).toEqual(originalItems);
+        expect(state.locations.find((location) => location.id === "loc_bin")?.captureStatus)
+            .toBe("counted");
+    });
+
+    it("rejects stale empty-container review and allows counted status to be unset", () => {
+        let state = createDemoState();
+        expect(() =>
+            applyCommand(
+                state,
+                createEnvelope(state, {
+                    type: "capture.empty",
+                    id: "loc_bin",
+                    itemIds: ["item_flour"],
+                }),
+            ),
+        ).toThrow(/Contents changed/);
+
+        state = applyCommand(
+            state,
+            createEnvelope(state, {
+                type: "capture.status",
+                id: "loc_bin",
+                status: "in_progress",
+            }),
+        ).state;
+        expect(state.locations.find((location) => location.id === "loc_bin")?.captureStatus)
+            .toBe("in_progress");
+        expect(() =>
+            applyCommand(
+                state,
+                createEnvelope(state, {
+                    type: "capture.status",
+                    id: "loc_bin",
+                    status: "in_progress",
+                }),
+            ),
+        ).toThrow(/already marked/);
+    });
+
     it("prevents moving a container inside its descendant", () => {
         const state = createDemoState();
         expect(() =>
