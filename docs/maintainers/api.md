@@ -12,12 +12,12 @@ All responses containing workspace or administrative data use `Cache-Control: no
 | `/api/auth/:provider/start` | GET | none | Begin Google/GitHub code + PKCE flow |
 | `/api/auth/:provider/callback` | GET | OAuth state | Exchange code and issue app session |
 | `/api/auth/access` | POST | Access assertion | Issue app session after JWT verification |
-| `/guest/:token` | GET | one-time token | Show the confirmation page without consuming the link |
-| `/api/auth/guest/:token` | POST | one-time token | Atomically consume the link and issue a short guest session |
+| `/guest/:token` | GET | one-time token | Show the confirmation page without consuming the link or losing its workspace return path |
+| `/api/auth/guest/:token` | POST | one-time token | Atomically consume the link, issue a short guest session, and return to the validated workspace view |
 | `/api/auth/logout` | POST | session | Revoke current session and clear cookie |
 | `/api/admin/overview` | GET | global admin (+ optional matching Access assertion) | Read users, sessions, links, audit |
 | `/api/admin/mutate` | POST | global admin (+ optional matching Access assertion) | Role/status/revocation operations |
-| `/api/admin/guest-links` | POST | workspace editor/admin | Create one-time short link |
+| `/api/admin/guest-links` | POST | workspace editor/admin | Create a one-time short link with an optional return path scoped to that workspace |
 
 ## Sync body
 

@@ -8,6 +8,16 @@ import { activateOrInsertWorkspaceReplica, activateWorkspaceReplica, canRebaseQu
 
 export const DEVICE_ONLY_BACKUP_ERROR = "Server backup is not configured for this deployment.";
 
+export class WorkspaceOpenError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "WorkspaceOpenError";
+    this.status = status;
+  }
+}
+
 const BACKUP_UNAVAILABLE_API_ERROR = "Durable storage is not configured";
 const BACKUP_UNAVAILABLE_SESSION_KEY = "stowplan-backup-unavailable-at";
 const BACKUP_RETRY_INTERVAL_MS = 5 * 60 * 1_000;
@@ -407,7 +417,12 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
       if (!next) {
         const response = await fetch(`/api/snapshot?workspaceId=${encodeURIComponent(workspaceId)}`, { cache: "no-store" });
         const body = await response.json() as { error?: string; state?: WorkspaceState };
-        if (!response.ok || !body.state) throw new Error(body.error ?? "Could not open that workspace");
+        if (!response.ok || !body.state) {
+          throw new WorkspaceOpenError(
+            body.error ?? "Could not open that workspace",
+            response.status,
+          );
+        }
         const syncedAt = new Date().toISOString();
         next = await activateOrInsertWorkspaceReplica({
           lastSyncAttemptAt: syncedAt,

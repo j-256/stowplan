@@ -57,6 +57,89 @@ test("names a new workspace during first run", async ({ page }) => {
   expect(replica.state.workspace.name).toBe("Jamie’s apartment");
 });
 
+test("gives tabs, spaces, filters, and item editors restorable URLs", async ({ page }) => {
+  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+  const replica = await localReplica(page) as {
+    state: { workspace: { id: string } };
+  };
+  const workspacePrefix = `/workspaces/${encodeURIComponent(replica.state.workspace.id)}`;
+
+  await expect(page).toHaveURL(
+    new RegExp(`${workspacePrefix}/capture/locations/loc_kitchen$`),
+  );
+  const plan = page.locator(".nav:visible", { hasText: "Plan" });
+  await expect(plan).toHaveAttribute("href", `${workspacePrefix}/plan`);
+  await plan.click();
+  await expect(page).toHaveURL(new RegExp(`${workspacePrefix}/plan$`));
+  await expect(page).toHaveTitle(/Plan · Kitchen reset · Stowplan/);
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Plan", exact: true })).toBeVisible();
+
+  await page.goBack();
+  await expect(page.getByRole("heading", { name: "Capture", exact: true })).toBeVisible();
+  await expect(page).toHaveURL(
+    new RegExp(`${workspacePrefix}/capture/locations/loc_kitchen$`),
+  );
+  await page.locator(
+    '.capture-location-row[data-location-id="loc_bin"] .queue-row',
+  ).click();
+  await expect(page).toHaveURL(
+    new RegExp(`${workspacePrefix}/capture/locations/loc_bin$`),
+  );
+
+  await page.locator(".nav:visible", { hasText: "Inventory" }).click();
+  await page.getByLabel("Filter by location").selectOption("loc_bin");
+  await expect(page).toHaveURL(
+    new RegExp(`${workspacePrefix}/inventory/locations/loc_bin$`),
+  );
+  await page.locator('[data-item-id="item_flour"] .item-name').click();
+  await expect(page).toHaveURL(
+    new RegExp(`${workspacePrefix}/inventory/items/item_flour$`),
+  );
+  await page.reload();
+  await expect(page.getByRole("dialog", { name: "Edit item" })).toBeVisible();
+  await page.getByRole("button", { name: "Close item editor" }).click();
+  await expect(page).toHaveURL(new RegExp(`${workspacePrefix}/inventory$`));
+});
+
+test("opens a shared workspace URL on a clean collaborator device", async ({ page, browser }) => {
+  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+  await page.locator(".nav:visible", { hasText: "Spaces" }).click();
+  await page.locator('[data-location-id="loc_bin"] .tree-select').click();
+  const sharedUrl = page.url();
+  const replica = await localReplica(page) as {
+    state: {
+      workspace: { id: string };
+    };
+  };
+
+  const collaboratorContext = await browser.newContext();
+  try {
+    const collaborator = await collaboratorContext.newPage();
+    await collaborator.route(
+      `**/api/snapshot?workspaceId=${encodeURIComponent(replica.state.workspace.id)}`,
+      (route) => route.fulfill({
+        body: JSON.stringify({ state: replica.state }),
+        contentType: "application/json",
+        status: 200,
+      }),
+    );
+    await collaborator.goto(sharedUrl);
+    await expect(collaborator.getByRole("heading", { name: "Spaces" })).toBeVisible();
+    await expect(collaborator.getByRole("region", { name: "Edit Baking bin" }))
+      .toBeVisible();
+    await expect(collaborator).toHaveURL(sharedUrl);
+    const collaboratorReplica = await localReplica(collaborator) as {
+      state: { workspace: { id: string } };
+    };
+    expect(collaboratorReplica.state.workspace.id).toBe(
+      replica.state.workspace.id,
+    );
+  } finally {
+    await collaboratorContext.close();
+  }
+});
+
 test("onboards, captures, edits, searches, plans, rolls back, and persists locally", async ({ page }) => {
   const consoleErrors: string[] = [];
   const syncRequests: string[] = [];
@@ -93,18 +176,18 @@ test("onboards, captures, edits, searches, plans, rolls back, and persists local
 
   await page.reload();
   await expect(page.getByText("Test tea towels", { exact: true })).toBeVisible();
-  await page.locator("button.nav:visible", { hasText: "Inventory" }).click();
+  await page.locator(".nav:visible", { hasText: "Inventory" }).click();
   await expect(page.getByRole("heading", { name: "All item records" })).toBeVisible();
   await expect(page.getByText("Showing the containerless inventory.")).toBeVisible();
   await expect(page.locator('.inventory-row .drag-handle[title="Drag Test tea towels to reorder"]')).toHaveCount(0);
   await page.getByPlaceholder("Search names, categories, tags, constraints, and notes").fill("washable");
   await expect(page.getByText("Test tea towels", { exact: true })).toBeVisible();
-  await page.locator("button.nav:visible", { hasText: "Plan" }).click();
+  await page.locator(".nav:visible", { hasText: "Plan" }).click();
   await page.getByText("Plan priorities", { exact: true }).click();
   await page.getByRole("button", { name: "How accessibility affects a plan" }).focus();
   await expect(page.getByRole("tooltip", { name: /Score bonus = max/ })).toBeVisible();
   await page.getByRole("button", { name: "Generate move plan" }).click();
-  await page.locator("button.nav:visible", { hasText: "Activity" }).click();
+  await page.locator(".nav:visible", { hasText: "Activity" }).click();
   await expect(page.getByText(/recorded changes/)).toBeVisible();
   await page.getByLabel("Change theme").click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
@@ -174,7 +257,7 @@ test("reorders sibling spaces in Capture and advances in visible hierarchy order
   await page.getByRole("button", { name: "Mark counted & next" }).click();
   await expect(page.getByRole("heading", { name: "NEW · Priority bin" })).toBeVisible();
 
-  await page.locator("button.nav:visible", { hasText: "Spaces" }).click();
+  await page.locator(".nav:visible", { hasText: "Spaces" }).click();
   const overflow = await page.locator(".tree-panel").evaluate((panel) => ({
     labels: [...panel.querySelectorAll<HTMLElement>(".tree-name")].filter((label) => label.scrollWidth > label.clientWidth || label.scrollHeight > label.clientHeight).map((label) => label.innerText),
     panel: panel.scrollWidth > panel.clientWidth,
@@ -234,7 +317,7 @@ test("previews desktop reorder destinations before committing them", async ({ pa
       (items.find((item) => item.id === "item_flour")?.order ?? 0);
   }).toBe(true);
 
-  await page.locator("button.nav:visible", { hasText: "Inventory" }).click();
+  await page.locator(".nav:visible", { hasText: "Inventory" }).click();
   await page.getByLabel("Filter by location").selectOption("loc_bin");
   const inventoryFlour = page.locator('.inventory-row[data-item-id="item_flour"]');
   const inventorySugar = page.locator('.inventory-row[data-item-id="item_sugar"]');
@@ -320,7 +403,7 @@ test("keeps touch reordering available on draggable handles", async ({ page }, t
 
 test("guides incomplete evidence into a reviewable plan", async ({ page }) => {
   await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
-  await page.locator("button.nav:visible", { hasText: "Plan" }).click();
+  await page.locator(".nav:visible", { hasText: "Plan" }).click();
 
   const readiness = page.getByRole("region", { name: "Planning readiness" });
   await expect(readiness.getByRole("heading", { name: "Enough to try, with gaps to review" })).toBeVisible();
@@ -344,19 +427,19 @@ test("guides incomplete evidence into a reviewable plan", async ({ page }) => {
   expect(afterAdvance.state.locations.find((location) => location.id === "loc_box")?.captureStatus)
     .toBe(beforeAdvance.state.locations.find((location) => location.id === "loc_box")?.captureStatus);
 
-  await page.locator("button.nav:visible", { hasText: "Plan" }).click();
+  await page.locator(".nav:visible", { hasText: "Plan" }).click();
   const refreshedReadiness = page.getByRole("region", { name: "Planning readiness" });
   await refreshedReadiness.getByText("2 more ways to improve confidence").click();
   await refreshedReadiness.getByRole("button", { name: "Review a space" }).click();
   await expect(page.getByRole("group", { name: "Suitability" })).toBeFocused();
 
-  await page.locator("button.nav:visible", { hasText: "Plan" }).click();
+  await page.locator(".nav:visible", { hasText: "Plan" }).click();
   const capacityReadiness = page.getByRole("region", { name: "Planning readiness" });
   await capacityReadiness.getByText("2 more ways to improve confidence").click();
   await capacityReadiness.getByRole("button", { name: "Review capacity" }).click();
   await expect(page.getByRole("group", { name: "Interior dimensions (optional)" })).toBeFocused();
 
-  await page.locator("button.nav:visible", { hasText: "Plan" }).click();
+  await page.locator(".nav:visible", { hasText: "Plan" }).click();
   await page.getByRole("button", { name: "Generate move plan" }).click();
   await expect(page.getByText(/explainable moves added to the new plan/)).toBeVisible();
   const planCards = page.locator(".plan-list > div");
@@ -442,7 +525,7 @@ test("guides incomplete evidence into a reviewable plan", async ({ page }) => {
     (location) => location.id === activePlan?.steps[0]?.destinationId,
   );
   expect(firstDestination).toBeTruthy();
-  await page.locator("button.nav:visible", { hasText: "Plan" }).click();
+  await page.locator(".nav:visible", { hasText: "Plan" }).click();
   await page.getByRole("button", { name: "Review destination" }).first().click();
   await expect(page.getByRole("region", { name: `Edit ${firstDestination?.name ?? ""}` })).toBeFocused();
   const afterDestinationReview = await localReplica(page) as typeof generated;
@@ -471,7 +554,7 @@ test("opens the exact item section needed for planning evidence", async ({ page 
   await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
   await page.getByLabel("What is it?").fill("Unclassified charger");
   await page.getByRole("button", { name: "Save & add next" }).click();
-  await page.locator("button.nav:visible", { hasText: "Plan" }).click();
+  await page.locator(".nav:visible", { hasText: "Plan" }).click();
 
   const readiness = page.getByRole("region", { name: "Planning readiness" });
   await readiness.getByText(/more ways to improve confidence/).click();
@@ -542,7 +625,7 @@ test("preserves a failed creation draft and avoids narrow-screen overflow", asyn
     narrowTargets: [],
   });
 
-  await page.locator("button.nav:visible", { hasText: "Plan" }).click();
+  await page.locator(".nav:visible", { hasText: "Plan" }).click();
   await page.getByText("Plan priorities", { exact: true }).click();
   const suitabilityHelp = page.getByRole("button", { name: "How suitability affects a plan" });
   await suitabilityHelp.evaluate((button) => button.scrollIntoView({ block: "end" }));
@@ -579,7 +662,7 @@ test("distinguishes duplicate inventory actions by quantity and unit", async ({ 
   await page.getByRole("button", { name: "Save & add next" }).click();
   await expect(page.getByText("Batteries", { exact: true })).toHaveCount(2);
 
-  await page.locator("button.nav:visible", { hasText: "Inventory" }).click();
+  await page.locator(".nav:visible", { hasText: "Inventory" }).click();
   await page.getByLabel("Search inventory").fill("Batteries");
 
   for (const amount of ["2 AA", "3 AAA"]) {
@@ -641,7 +724,7 @@ test("keeps the Capture hierarchy readable at compact desktop widths", async ({ 
 
 test("executes a planned move and rolls it back from Activity", async ({ page }) => {
   await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
-  await page.locator("button.nav:visible", { hasText: "Plan" }).click();
+  await page.locator(".nav:visible", { hasText: "Plan" }).click();
   await page.getByRole("button", { name: "Generate move plan" }).click();
   const before = await localReplica(page) as {
     state: {
@@ -669,7 +752,7 @@ test("executes a planned move and rolls it back from Activity", async ({ page })
       : moved.state.locations.find((location) => location.id === step.locationId)?.parentId;
   }).toBe(step.destinationId);
 
-  await page.locator("button.nav:visible", { hasText: "Activity" }).click();
+  await page.locator(".nav:visible", { hasText: "Activity" }).click();
   await page.locator(".history>div").first().getByRole("button", { name: /^Undo Completed plan step:/ }).click();
   await expect.poll(async () => {
     const rolledBack = await localReplica(page) as typeof before;
@@ -681,7 +764,7 @@ test("executes a planned move and rolls it back from Activity", async ({ page })
 
 test("supports drag organization and the partial-move fallback", async ({ page }) => {
   await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
-  await page.locator("button.nav:visible", { hasText: "Spaces" }).click();
+  await page.locator(".nav:visible", { hasText: "Spaces" }).click();
   await expect(page.getByRole("list", { name: "Space hierarchy" })).toBeVisible();
   await expect(page.locator('[data-location-id="loc_bin"] .drag-handle[title="Drag Baking bin to move or nest it"]')).toBeVisible();
   await page.getByRole("button", { name: "Collapse Kitchen" }).click();
@@ -698,7 +781,7 @@ test("supports drag organization and the partial-move fallback", async ({ page }
     return replica.state.locations.find((location) => location.id === "loc_bin")?.parentId;
   }).toBe("loc_food");
 
-  await page.locator("button.nav:visible", { hasText: "Inventory" }).click();
+  await page.locator(".nav:visible", { hasText: "Inventory" }).click();
   await expect(page.locator('.inventory-row[data-item-id="item_sugar"] .drag-handle[title="Drag Brown sugar to reorder"]')).toHaveCount(0);
   await page.getByLabel("Filter by location").selectOption("loc_bin");
   await expect(page.locator('.inventory-row[data-item-id="item_sugar"] .drag-handle[title="Drag Brown sugar to reorder"]')).toBeVisible();

@@ -16,4 +16,4 @@ OAuth uses authorization code + PKCE and single-use, ten-minute state records. G
 
 Set `AUTH_ADMIN_EMAILS` before the first sign-in. The first user also becomes admin, but an allowlist makes bootstrap deterministic.
 
-Guest URLs open a confirmation page before the one-time token is consumed. Mail previews and security scanners can inspect the URL without burning it. Confirmation atomically claims the token, creates a short guest session, and opens the shared workspace while preserving any other workspace already stored on that device.
+Guest URLs open a confirmation page before the one-time token is consumed. Mail previews and security scanners can inspect the URL without burning it. Confirmation atomically claims the token, creates a short guest session, and opens the exact shared workspace view carried by the invitation while preserving any other workspace already stored on that device. The requested return path is accepted only when it belongs to the authorized workspace.

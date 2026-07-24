@@ -26,11 +26,13 @@ UI / PWA → local replica + outbox → authenticated sync API → SnapshotStore
 
 `src/domain` has no Cloudflare, React, SQL, or browser imports. `SnapshotStore` is the persistence port. D1 and Node SQLite are adapters. Route handlers use standard `Request`/`Response`; `runtimeEnv` is the small composition seam.
 
+`src/domain/app-url.ts` defines the runtime-neutral workspace route grammar. Canonical paths start with `/workspaces/:workspaceId/:view`; Capture and Spaces may identify a location, while Inventory may identify a location filter or item editor. The client accepts legacy workspace/container queries, activates or fetches the authorized replica before canonicalizing, and keeps searches plus unsaved form data out of URLs. Ordinary anchor clicks use same-document history so the IndexedDB provider remains mounted, while modified clicks and direct navigation use the App Router workspace shell.
+
 IndexedDB is the interaction database, not a cache. It preserves the active replica plus inactive workspaces and each durable outbox. Workspace opening, guarded removal, reset, and restore use single-transaction selection or compare-and-swap so stale renders and concurrent tabs cannot overwrite a newer local replica. Reconnect and foreground reconciliation include inactive workspaces with pending commands.
 
 The server is a durable backup and multi-device reconciliation authority. A rejected command remains inspectable; never silently drop it. Recovery-bundle uploads must prove that every retained outbox command is already represented in the bundled snapshot before recovery discards the queue.
 
-The service worker caches document navigations and static application assets only. It never caches API responses or mixes React Server Component payloads with HTML, and it deletes only Stowplan-owned cache versions.
+The service worker caches document navigations and static application assets only. It never caches API responses or mixes React Server Component payloads with HTML, and it deletes only Stowplan-owned cache versions. Workspace-specific paths are not cache keys; an offline workspace navigation receives the generic cached root shell, which restores route context from the address and data from IndexedDB.
 
 ## Adding an adapter
 

@@ -11,6 +11,12 @@ Stowplan’s first job is to help you finish a trustworthy first pass. You do **
 
 The distinction between *uncounted* and *known empty* matters: plans must never assume an unopened box has free capacity.
 
+## Link to a workspace view
+
+An open workspace uses a path that starts with `/workspaces/WORKSPACE_ID` and ends in `/capture`, `/spaces`, `/inventory`, `/plan`, `/activity`, or `/settings`. Capture and Spaces include the selected space, while Inventory includes a container filter or open item editor. Reloading the page or using browser back and forward restores that context.
+
+Choose **Share this view** to use the device share sheet or copy the exact address. Anyone who already has access to the workspace can open that address on another device; Stowplan asks them to sign in when necessary and returns them to the same view. To grant short guest access, open **Settings → Sign in, sync, or create a guest link to this view** and send the one-time confirmation URL. Workspace URLs contain opaque record IDs rather than inventory names, searches, or unsaved form text.
+
 ## A practical coding scheme
 
 Use short codes your label gun can print: `GAR-01`, `GAR-01-A`, `KIT-C03`, `KIT-D02`. Codes are searchable identifiers; names can stay friendly and change later.

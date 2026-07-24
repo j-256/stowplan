@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   Archive,
@@ -20,6 +20,7 @@ import {
   RotateCcw,
   Search,
   Settings,
+  Share2,
   Sun,
   Trash2,
   Undo2,
@@ -48,10 +49,17 @@ import type {
   WorkspaceState,
 } from "../domain/types";
 import { captureReorderOrder, nextCaptureLocation } from "./capture-order";
+import {
+  parseAppUrl,
+  WORKSPACE_LIST_PATH,
+  workspacePath,
+  type AppRoute,
+  type WorkspaceView,
+} from "../domain/app-url";
 import { listWorkspaceReplicas, readWorkspaceReplica, type LocalWorkspaceSummary } from "./local-replica";
-import { DEVICE_ONLY_BACKUP_ERROR, StowplanProvider, useStowplan } from "./store";
+import { DEVICE_ONLY_BACKUP_ERROR, StowplanProvider, useStowplan, WorkspaceOpenError } from "./store";
 
-type View = "capture" | "spaces" | "inventory" | "plan" | "activity" | "settings";
+type View = WorkspaceView;
 type Commit = (command: Command) => Promise<void>;
 type DragPayload = { id: string; type: "item" | "location" };
 type DropIntent = "before" | "inside" | "after";
@@ -438,19 +446,21 @@ function Application() {
   const { state, initialize, dispatch, backupConfigured, lastSyncAttemptAt, lastSyncError, lastSyncedAt, localUpdatedAt, openWorkspace, online, pending, blocked, removeWorkspace, replace, syncing } = useStowplan();
   const [view, setView] = useState<View>("capture");
   const [selected, setSelected] = useState<string | null>(null);
+  const [inventoryLocationId, setInventoryLocationId] = useState<string | null>(null);
+  const [inventoryItemId, setInventoryItemId] = useState<string | null>(null);
   const [showWelcome, setShowWelcome] = useState(false);
   const [theme, setTheme] = useState<ThemePreference>("system");
   const [themeReady, setThemeReady] = useState(false);
   const [workspaceNotice, setWorkspaceNotice] = useState("");
   const [guidanceTarget, setGuidanceTarget] = useState<GuidanceTarget | null>(null);
+  const [routeStatus, setRouteStatus] = useState<"blocked" | "loading" | "ready">("loading");
+  const routeRequest = useRef(0);
 
   useEffect(() => {
-    /* eslint-disable react-hooks/set-state-in-effect -- hydrate device-only preferences and deep-link state after the server-consistent first render */
+    /* eslint-disable react-hooks/set-state-in-effect -- hydrate device-only preferences after the server-consistent first render */
     const saved = localStorage.getItem("stowplan-theme") as ThemePreference | null;
     if (saved && ["dark", "light", "system"].includes(saved)) setTheme(saved);
     setThemeReady(true);
-    const container = new URLSearchParams(location.search).get("container");
-    if (container) setSelected(container);
     /* eslint-enable react-hooks/set-state-in-effect */
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => undefined);
   }, []);
@@ -463,34 +473,151 @@ function Application() {
     if (theme === "system") media.addEventListener("change", apply);
     return () => media.removeEventListener("change", apply);
   }, [theme, themeReady]);
-  useEffect(() => {
-    const url = new URL(location.href);
-    const workspaceId = url.searchParams.get("workspace");
-    if (!workspaceId) return;
-    void openWorkspace(workspaceId).then(() => {
-      setWorkspaceNotice("Shared workspace opened. Your previous local workspace is still available from the main menu.");
-      url.searchParams.delete("workspace");
-      history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
-    }).catch((error) => setWorkspaceNotice(error instanceof Error ? error.message : "Could not open the shared workspace"));
+
+  const applyBrowserRoute = useCallback(async (route: AppRoute) => {
+    const request = routeRequest.current + 1;
+    routeRequest.current = request;
+    setWorkspaceNotice("");
+    if (route.kind === "workspace-list") {
+      setShowWelcome(true);
+      setRouteStatus("ready");
+      return;
+    }
+    if (route.kind === "home") {
+      setShowWelcome(false);
+      setRouteStatus("ready");
+      return;
+    }
+    setRouteStatus("loading");
+    try {
+      const existing = await readWorkspaceReplica(route.workspaceId);
+      await openWorkspace(route.workspaceId);
+      if (routeRequest.current !== request) return;
+      setView(route.view);
+      setSelected(
+        route.view === "capture" || route.view === "spaces"
+          ? route.locationId
+          : null,
+      );
+      setInventoryLocationId(
+        route.view === "inventory" ? route.locationId : null,
+      );
+      setInventoryItemId(
+        route.view === "inventory" ? route.itemId : null,
+      );
+      setGuidanceTarget(null);
+      setShowWelcome(false);
+      if (!existing) {
+        setWorkspaceNotice("Shared workspace opened. Your previous local workspace is still available from the main menu.");
+      }
+      setRouteStatus("ready");
+    } catch (error) {
+      if (routeRequest.current !== request) return;
+      if (error instanceof WorkspaceOpenError && error.status === 401) {
+        const returnTo = `${location.pathname}${location.search}${location.hash}`;
+        location.assign(`/account?returnTo=${encodeURIComponent(returnTo)}`);
+        return;
+      }
+      setShowWelcome(true);
+      setWorkspaceNotice(error instanceof Error ? error.message : "Could not open the shared workspace");
+      setRouteStatus("blocked");
+    }
   }, [openWorkspace]);
 
-  const enter = (next: WorkspaceState) => {
-    setSelected(next.locations[0]?.id ?? null);
+  useEffect(() => {
+    const openRoute = () => void applyBrowserRoute(parseAppUrl(new URL(location.href)));
+    openRoute();
+    addEventListener("popstate", openRoute);
+    return () => removeEventListener("popstate", openRoute);
+  }, [applyBrowserRoute]);
+
+  const current = state
+    ? state.locations.find((location) => location.id === selected && !location.archivedAt) ??
+      state.locations.find((location) => !location.archivedAt) ??
+      null
+    : null;
+  const validInventoryLocationId = state?.locations.some(
+    (location) => location.id === inventoryLocationId && !location.archivedAt,
+  )
+    ? inventoryLocationId
+    : null;
+  const validInventoryItemId = state?.items.some(
+    (item) => item.id === inventoryItemId && !item.archivedAt,
+  )
+    ? inventoryItemId
+    : null;
+  const canonicalPath = state
+    ? workspacePath({
+        itemId: view === "inventory" ? validInventoryItemId : null,
+        locationId:
+          view === "capture" || view === "spaces"
+            ? current?.id
+            : view === "inventory"
+              ? validInventoryLocationId
+              : null,
+        view,
+        workspaceId: state.workspace.id,
+      })
+    : null;
+
+  useEffect(() => {
+    if (
+      routeStatus !== "ready" ||
+      showWelcome ||
+      !canonicalPath
+    ) return;
+    const browserPath = `${location.pathname}${location.search}`;
+    if (browserPath !== canonicalPath) {
+      history.replaceState({ stowplan: true }, "", canonicalPath);
+    }
+  }, [canonicalPath, routeStatus, showWelcome]);
+
+  useEffect(() => {
+    if (!state) return;
+    const viewLabel = nav.find((entry) => entry.id === view)?.label ?? "Workspace";
+    document.title = `${viewLabel} · ${state.workspace.name} · Stowplan`;
+  }, [state, view]);
+
+  const writePath = (path: string, mode: "push" | "replace" = "push") => {
+    const browserPath = `${location.pathname}${location.search}`;
+    if (browserPath === path) return;
+    history[mode === "push" ? "pushState" : "replaceState"](
+      { stowplan: true },
+      "",
+      path,
+    );
+  };
+
+  const enter = (
+    next: WorkspaceState,
+    mode: "push" | "replace" = "replace",
+  ) => {
+    const locationId = next.locations.find((location) => !location.archivedAt)?.id ?? null;
+    setSelected(locationId);
+    setInventoryLocationId(null);
+    setInventoryItemId(null);
+    setGuidanceTarget(null);
     setView("capture");
     setShowWelcome(false);
+    setRouteStatus("ready");
+    setWorkspaceNotice("");
+    writePath(workspacePath({
+      locationId,
+      view: "capture",
+      workspaceId: next.workspace.id,
+    }), mode);
   };
   const start = async (demo: boolean, name?: string) => {
     const next = demo ? createDemoState(newId("ws_demo")) : createEmptyState(name?.trim() || "My home");
     await initialize(next);
-    enter(next);
+    enter(next, location.pathname === WORKSPACE_LIST_PATH ? "push" : "replace");
   };
   const openDemo = async () => {
     const demo = (await listWorkspaceReplicas()).find((workspace) => workspace.id.startsWith("ws_demo"));
     if (demo) {
       await openWorkspace(demo.id);
-      setSelected(null);
-      setView("capture");
-      setShowWelcome(false);
+      const next = await readWorkspaceReplica(demo.id);
+      if (next) enter(next.state, "push");
       return;
     }
     await start(true);
@@ -498,9 +625,8 @@ function Application() {
   const chooseWorkspace = async (workspaceId: string) => {
     await openWorkspace(workspaceId);
     const next = await readWorkspaceReplica(workspaceId);
-    setSelected(next?.state.locations.find((location) => !location.archivedAt)?.id ?? null);
-    setView("capture");
-    setShowWelcome(false);
+    if (!next) throw new Error("Could not open workspace");
+    enter(next.state, "push");
   };
   const removeLocalWorkspace = async (workspaceId: string, expectedUpdatedAt?: string) => {
     await removeWorkspace(workspaceId, expectedUpdatedAt);
@@ -510,9 +636,23 @@ function Application() {
     if (!confirm("Reset the kitchen demo? Every change and queued backup belonging to this demo will be discarded. Your other workspaces are not affected.")) return;
     const next = createDemoState(newId("ws_demo"));
     await replace(next);
-    enter(next);
+    enter(next, "push");
+  };
+  const openWorkspaceMenu = () => {
+    setShowWelcome(true);
+    setRouteStatus("ready");
+    setWorkspaceNotice("");
+    writePath(WORKSPACE_LIST_PATH);
+  };
+  const continueWorkspace = () => {
+    setShowWelcome(false);
+    setRouteStatus("ready");
+    if (canonicalPath) writePath(canonicalPath);
   };
 
+  if (routeStatus === "loading") {
+    return <div className="loading">Opening the requested workspace view…</div>;
+  }
   if (!state) {
     return <><Onboarding online={online} onOpenWorkspace={chooseWorkspace} onRemoveWorkspace={removeLocalWorkspace} onStart={start} />{workspaceNotice && <output className="workspace-notice onboarding-notice">{workspaceNotice}</output>}</>;
   }
@@ -526,12 +666,55 @@ function Application() {
       blocked,
       backupConfigured,
     ].join("|");
-    return <Onboarding currentId={state.workspace.id} currentName={state.workspace.name} isDemo={state.workspace.id.startsWith("ws_demo")} online={online} statusRevision={statusRevision} onContinue={() => setShowWelcome(false)} onOpenDemo={openDemo} onOpenWorkspace={chooseWorkspace} onRemoveWorkspace={removeLocalWorkspace} onResetDemo={resetDemo} onStart={start} />;
+    return <><Onboarding currentId={state.workspace.id} currentName={state.workspace.name} isDemo={state.workspace.id.startsWith("ws_demo")} online={online} statusRevision={statusRevision} onContinue={continueWorkspace} onOpenDemo={openDemo} onOpenWorkspace={chooseWorkspace} onRemoveWorkspace={removeLocalWorkspace} onResetDemo={resetDemo} onStart={start} />{workspaceNotice && <output className="workspace-notice onboarding-notice">{workspaceNotice}</output>}</>;
   }
-  const current = state.locations.find((location) => location.id === selected && !location.archivedAt) ?? state.locations.find((location) => !location.archivedAt) ?? null;
+  const tabPath = (nextView: View) => workspacePath({
+    locationId:
+      nextView === "capture" || nextView === "spaces"
+        ? current?.id
+        : nextView === "inventory"
+          ? validInventoryLocationId
+          : null,
+    view: nextView,
+    workspaceId: state.workspace.id,
+  });
   const selectView = (nextView: View) => {
     setGuidanceTarget(null);
+    setInventoryItemId(null);
     setView(nextView);
+    setRouteStatus("ready");
+    writePath(tabPath(nextView));
+  };
+  const selectLocation = (id: string) => {
+    setSelected(id);
+    if (view === "capture" || view === "spaces") {
+      writePath(workspacePath({
+        locationId: id,
+        view,
+        workspaceId: state.workspace.id,
+      }));
+    }
+  };
+  const changeInventoryLocation = (id: string) => {
+    const locationId = id || null;
+    setInventoryLocationId(locationId);
+    setInventoryItemId(null);
+    setGuidanceTarget(null);
+    writePath(workspacePath({
+      locationId,
+      view: "inventory",
+      workspaceId: state.workspace.id,
+    }));
+  };
+  const changeInventoryItem = (id: string | null) => {
+    setInventoryItemId(id);
+    if (!id) setGuidanceTarget(null);
+    writePath(workspacePath({
+      itemId: id,
+      locationId: id ? null : validInventoryLocationId,
+      view: "inventory",
+      workspaceId: state.workspace.id,
+    }), id ? "push" : "replace");
   };
   const openGuidanceTarget = (
     nextView: GuidanceTarget["view"],
@@ -541,8 +724,10 @@ function Application() {
     if (nextView === "inventory") {
       const item = state.items.find((candidate) => candidate.id === id);
       if (item) setSelected(item.locationId);
+      setInventoryItemId(id);
     } else {
       setSelected(id);
+      setInventoryItemId(null);
     }
     setGuidanceTarget((previous) => ({
       focus,
@@ -551,32 +736,74 @@ function Application() {
       view: nextView,
     }));
     setView(nextView);
+    writePath(workspacePath({
+      itemId: nextView === "inventory" ? id : null,
+      locationId: nextView === "inventory" ? null : id,
+      view: nextView,
+      workspaceId: state.workspace.id,
+    }));
+  };
+  const shareCurrentView = async () => {
+    if (!canonicalPath) return;
+    const url = new URL(canonicalPath, location.origin).href;
+    const title = `${nav.find((entry) => entry.id === view)?.label ?? "Workspace"} · ${state.workspace.name}`;
+    try {
+      if (typeof navigator.share === "function") {
+        await navigator.share({ title, url });
+        setWorkspaceNotice("Shared this workspace view.");
+        return;
+      }
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+        setWorkspaceNotice("Link copied. Anyone with workspace access can open this exact view.");
+        return;
+      }
+      setWorkspaceNotice("This view is ready to share from the browser address bar.");
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      setWorkspaceNotice("Could not share automatically. Copy this view from the browser address bar.");
+    }
   };
   return <div className="app-shell">
     <aside>
       <Brand />
-      <nav>{nav.map((entry) => <Nav key={entry.id} {...entry} active={entry.id === view} select={() => selectView(entry.id)} />)}</nav>
+      <nav>{nav.map((entry) => <Nav key={entry.id} {...entry} active={entry.id === view} href={tabPath(entry.id)} select={() => selectView(entry.id)} />)}</nav>
       <div className="sync" title={lastSyncError ?? (lastSyncedAt ? `Last successful backup: ${formatTimestamp(lastSyncedAt)}` : "This workspace has not been backed up online yet.")}>{online ? <Wifi /> : <WifiOff />}<span>{blocked ? `${blocked} need review` : backupConfigured === false ? pending ? `${pending} saved on device` : "Device only" : syncing ? "Backing up…" : pending ? `${pending} pending upload` : !online ? "Working offline" : lastSyncedAt ? `Backed up ${formatTimestamp(lastSyncedAt)}` : "Device only"}</span></div>
     </aside>
     <main>
-      <header><div><p className="eyebrow">{state.workspace.name}</p><h1>{nav.find((entry) => entry.id === view)?.label}</h1></div><div className="header-actions"><button className="icon" aria-label="Open main menu" onClick={() => setShowWelcome(true)}><Home /></button><button className="icon mobile-settings" data-active={view === "settings"} aria-label="Open settings" onClick={() => selectView("settings")}><Settings /></button><button className="icon" aria-label="Change theme" onClick={() => setTheme(theme === "system" ? "dark" : theme === "dark" ? "light" : "system")}>{theme === "dark" ? <Moon /> : <Sun />}</button></div></header>
-      {view === "capture" && <Capture state={state} current={current} select={setSelected} commit={dispatch} focusEditorKey={guidanceTarget?.view === "capture" ? guidanceTarget.token : null} />}
-      {view === "spaces" && <Spaces state={state} current={current} select={setSelected} commit={dispatch} focusEditorKey={guidanceTarget?.view === "spaces" ? guidanceTarget.token : null} focusEditorSection={guidanceTarget?.view === "spaces" ? guidanceTarget.focus : undefined} />}
-      {view === "inventory" && <Inventory state={state} commit={dispatch} editOnOpen={guidanceTarget?.view === "inventory" ? guidanceTarget.id : null} editFocus={guidanceTarget?.view === "inventory" ? guidanceTarget.focus : undefined} />}
+      <header><div><p className="eyebrow">{state.workspace.name}</p><h1>{nav.find((entry) => entry.id === view)?.label}</h1></div><div className="header-actions"><a className="icon" href={WORKSPACE_LIST_PATH} aria-label="Open main menu" onClick={(event) => followAppLink(event, openWorkspaceMenu)}><Home /></a><a className="icon mobile-settings" data-active={view === "settings"} aria-label="Open settings" href={tabPath("settings")} onClick={(event) => followAppLink(event, () => selectView("settings"))}><Settings /></a><button className="icon" aria-label="Share this view" onClick={() => void shareCurrentView()}><Share2 /></button><button className="icon" aria-label="Change theme" onClick={() => setTheme(theme === "system" ? "dark" : theme === "dark" ? "light" : "system")}>{theme === "dark" ? <Moon /> : <Sun />}</button></div></header>
+      {view === "capture" && <Capture state={state} current={current} select={selectLocation} commit={dispatch} focusEditorKey={guidanceTarget?.view === "capture" ? guidanceTarget.token : null} />}
+      {view === "spaces" && <Spaces state={state} current={current} select={selectLocation} commit={dispatch} focusEditorKey={guidanceTarget?.view === "spaces" ? guidanceTarget.token : null} focusEditorSection={guidanceTarget?.view === "spaces" ? guidanceTarget.focus : undefined} />}
+      {view === "inventory" && <Inventory state={state} commit={dispatch} editing={validInventoryItemId} editFocus={guidanceTarget?.view === "inventory" ? guidanceTarget.focus : undefined} locationFilter={validInventoryLocationId ?? ""} onEditingChange={changeInventoryItem} onLocationFilterChange={changeInventoryLocation} />}
       {view === "plan" && <Planner state={state} commit={dispatch} openGuidanceTarget={openGuidanceTarget} />}
       {view === "activity" && <History state={state} commit={dispatch} />}
       {workspaceNotice && <output className="workspace-notice">{workspaceNotice}</output>}
-      {view === "settings" && <Preferences state={state} commit={dispatch} theme={theme} setTheme={setTheme} openMenu={() => setShowWelcome(true)} />}
+      {view === "settings" && <Preferences state={state} commit={dispatch} theme={theme} setTheme={setTheme} openMenu={openWorkspaceMenu} returnTo={canonicalPath ?? tabPath("settings")} />}
     </main>
-    <nav className="bottom">{nav.filter((entry) => entry.id !== "settings").map((entry) => <Nav key={entry.id} {...entry} active={entry.id === view} select={() => selectView(entry.id)} />)}</nav>
+    <nav className="bottom">{nav.filter((entry) => entry.id !== "settings").map((entry) => <Nav key={entry.id} {...entry} active={entry.id === view} href={tabPath(entry.id)} select={() => selectView(entry.id)} />)}</nav>
   </div>;
+}
+
+function followAppLink(
+  event: React.MouseEvent<HTMLAnchorElement>,
+  navigate: () => void,
+) {
+  if (
+    event.button !== 0 ||
+    event.metaKey ||
+    event.ctrlKey ||
+    event.shiftKey ||
+    event.altKey
+  ) return;
+  event.preventDefault();
+  navigate();
 }
 
 function Brand() {
   return <div className="brand"><b>S</b><span><strong>Stowplan</strong><small>Know where everything lives</small></span></div>;
 }
-function Nav({ label, icon: Icon, active, select }: { label: string; icon: typeof Boxes; active: boolean; select: () => void }) {
-  return <button className="nav" data-active={active} aria-current={active ? "page" : undefined} onClick={select}><Icon /><span>{label}</span></button>;
+function Nav({ label, icon: Icon, active, href, select }: { label: string; icon: typeof Boxes; active: boolean; href: string; select: () => void }) {
+  return <a className="nav" data-active={active} aria-current={active ? "page" : undefined} href={href} onClick={(event) => followAppLink(event, select)}><Icon /><span>{label}</span></a>;
 }
 function Onboarding({ currentId, currentName, isDemo = false, online, statusRevision, onContinue, onOpenDemo, onOpenWorkspace, onRemoveWorkspace, onResetDemo, onStart }: {
   currentId?: string;
@@ -1062,18 +1289,12 @@ function LocationEditor({ state, location, commit, select, reorder, remove, edit
   return <><form onSubmit={(event) => submitForm(event, save, false)} className="editor-form"><div className="title"><div><p className="eyebrow">{location.kind}</p><h2>Edit space</h2></div><span className="tag">{location.captureStatus.replace("_", " ")}</span></div>{!parentIsAvailable && <p className="form-warning" role="status">The previous parent is archived or missing. Choose a parent below; saving will place this space at the top level if you leave it unchanged.</p>}<div className="form-grid"><label>Friendly name<input required name="name" defaultValue={location.name} /></label><label>Short ID<input required name="code" defaultValue={location.code} autoCapitalize="characters" /></label><label>Type<select name="kind" defaultValue={location.kind}>{kinds.map((kind) => <option key={kind}>{kind}</option>)}</select></label><label>Parent space<select name="parentId" defaultValue={parentIsAvailable ? location.parentId ?? "" : ""}><option value="">Top level</option>{parentOptions.map(({ depth, location: candidate }) => <option key={candidate.id} value={candidate.id}>{`${"  ".repeat(depth)}${depth ? "↳ " : ""}${candidate.code} · ${candidate.name}`}</option>)}</select></label><label className="wide">Tags, comma-separated<input name="tags" defaultValue={location.tags.join(", ")} /></label><label className="wide">Description<textarea name="description" defaultValue={location.description} /></label></div><fieldset data-guidance-section="space_suitability" tabIndex={-1}><legend>Suitability</legend><div className="check-grid"><label><input type="checkbox" name="foodSafe" defaultChecked={location.conditions.foodSafe} /> Food safe</label><label><input type="checkbox" name="dry" defaultChecked={location.conditions.dry} /> Dry</label><label><input type="checkbox" name="dark" defaultChecked={location.conditions.dark} /> Dark</label><label>Temperature<select name="temperature" defaultValue={location.conditions.temperature}><option>cold</option><option>cool</option><option>normal</option><option>warm</option></select></label><label>Humidity<select name="humidity" defaultValue={location.conditions.humidity}><option>dry</option><option>normal</option><option>humid</option></select></label></div></fieldset><fieldset data-guidance-section="space_capacity" tabIndex={-1}><legend>Interior dimensions (optional)</legend><div className="dimension-grid"><label>W<input name="width" type="number" min="0.01" step="any" defaultValue={location.dimensions?.width} /></label><label>H<input name="height" type="number" min="0.01" step="any" defaultValue={location.dimensions?.height} /></label><label>D<input name="depth" type="number" min="0.01" step="any" defaultValue={location.dimensions?.depth} /></label><label>Unit<select name="dimensionUnit" defaultValue={location.dimensions?.unit ?? "in"}><option>in</option><option>cm</option></select></label></div></fieldset><button className="primary">Save space</button></form><div className="inspector-actions"><button onClick={() => reorder(location, -1)}><ArrowUp /> Earlier</button><button onClick={() => reorder(location, 1)}><ArrowDown /> Later</button><button disabled={!canArchive} title={canArchive ? undefined : "Move, archive, or delete live contents and nested spaces first."} onClick={() => void perform(commit, { type: "location.archive", id: location.id, archived: true }, () => select(state.locations.find((candidate) => !candidate.archivedAt && candidate.id !== location.id)?.id ?? ""))}><Archive /> Archive</button><button className="danger" onClick={remove}><Trash2 /> Delete subtree</button></div><form key={location.id} className="nested inline-add" onSubmit={(event) => submitForm(event, addChild)}><h3>Add inside {location.name}</h3><LocationCreateFields defaultKind="box" existingCodes={state.locations.filter((candidate) => !candidate.archivedAt).map((candidate) => candidate.code)} kindLabel="Space type" namePlaceholder="Friendly name" /><button>Add nested space</button></form><div className="location-contents"><h3>Direct contents <small>{contents.length} records</small></h3>{contents.map((item) => <div className="location-item-row" key={item.id} draggable onDragStart={(event) => { setDragging(true); writeDrag(event, { type: "item", id: item.id }); }} onDragEnd={() => setDragging(false)}><TouchDragHandle label={`Drag ${item.name} into another space`} onActiveChange={setDragging} onDrop={(target) => moveByDrop({ type: "item", id: item.id }, target)} /><button className="item-name" onClick={() => editItem(item.id)}><strong>{item.name}</strong><small>{item.quantity} {item.unit}</small></button><button className="icon small" aria-label={`Edit ${item.name}`} onClick={() => editItem(item.id)}><Edit3 /></button></div>)}{contents.length === 0 && <p className="muted">No direct item records. Drop an inventory item onto this space to move it here.</p>}</div></>;
 }
 
-function Inventory({ state, commit, editOnOpen, editFocus }: { state: WorkspaceState; commit: Commit; editOnOpen: string | null; editFocus?: GuidanceFocus }) {
+function Inventory({ state, commit, editing, editFocus, locationFilter, onEditingChange, onLocationFilterChange }: { state: WorkspaceState; commit: Commit; editing: string | null; editFocus?: GuidanceFocus; locationFilter: string; onEditingChange: (id: string | null) => void; onLocationFilterChange: (id: string) => void }) {
   const [query, setQuery] = useState("");
-  const [locationFilter, setLocationFilter] = useState("");
   const [sortBy, setSortBy] = useState<"location" | "name" | "quantity">("name");
   const [selected, setSelected] = useState<string[]>([]);
   const [nativeReorderCue, setNativeReorderCue] = useState<DropTarget | null>(null);
   const [nativeReorderSource, setNativeReorderSource] = useState<DragPayload | null>(null);
-  const [editing, setEditing] = useState<string | null>(
-    state.items.some((item) => item.id === editOnOpen && !item.archivedAt)
-      ? editOnOpen
-      : null,
-  );
   const locationName = useMemo(() => new Map(state.locations.map((location) => [location.id, locationPath(state.locations, location.id).map((part) => part.name).join(" › ")])), [state.locations]);
   const locationOptions = flattenLocationTree(state.locations.filter((location) => !location.archivedAt));
   const shown = useMemo(() => state.items.filter((item) => {
@@ -1204,15 +1425,15 @@ function Inventory({ state, commit, editOnOpen, editFocus }: { state: WorkspaceS
         return target?.id && canDropItem(item.id, target.id) ? target : null;
       }} onDrop={(target) => moveItemByDrop({ type: "item", id: item.id }, target)} /> : <span className="inventory-marker" aria-hidden>•</span>}
       <label className="inventory-select"><input aria-label={`Select ${actionIdentity} in ${locationName.get(item.locationId) ?? "Unknown space"}`} type="checkbox" checked={activeSelection.includes(item.id)} onChange={() => setSelected((current) => { const valid = current.filter((id) => shownIds.has(id)); return valid.includes(item.id) ? valid.filter((id) => id !== item.id) : [...valid, item.id]; })} /></label>
-      <button className="item-name" aria-label={`Open ${actionIdentity} in ${locationName.get(item.locationId) ?? "Unknown space"}`} onClick={() => setEditing(item.id)}><strong>{item.name}</strong><small>{item.category} · {item.frequency} · {item.tags.join(", ") || "no tags"}</small></button>
+      <button className="item-name" aria-label={`Open ${actionIdentity} in ${locationName.get(item.locationId) ?? "Unknown space"}`} onClick={() => onEditingChange(item.id)}><strong>{item.name}</strong><small>{item.category} · {item.frequency} · {item.tags.join(", ") || "no tags"}</small></button>
       <b>{item.quantity} {item.unit}</b>
       <span className="location-path">{locationName.get(item.locationId)}</span>
       {canReorder && <span className="inventory-order-actions"><button type="button" className="icon small" aria-label={`Move ${actionIdentity} up`} disabled={siblingIndex === 0} onClick={() => reorderItem(item, -1)}><ArrowUp /></button><button type="button" className="icon small" aria-label={`Move ${actionIdentity} down`} disabled={siblingIndex === siblings.length - 1} onClick={() => reorderItem(item, 1)}><ArrowDown /></button></span>}
       <span className="reorder-drop-copy" aria-hidden>{cue === "before" ? "Place before" : cue === "after" ? "Place after" : ""}</span>
-      <button className="row-action" aria-label={`Edit or move ${actionIdentity} in ${locationName.get(item.locationId) ?? "Unknown space"}`} onClick={() => setEditing(item.id)}><Edit3 /><span>Edit / move</span></button>
+      <button className="row-action" aria-label={`Edit or move ${actionIdentity} in ${locationName.get(item.locationId) ?? "Unknown space"}`} onClick={() => onEditingChange(item.id)}><Edit3 /><span>Edit / move</span></button>
     </div>;
   };
-  return <div className="content inventory-page"><div className="inventory-heading"><div><p className="eyebrow">Everything, regardless of container</p><h2>All item records</h2><p>Search the whole workspace, then select records for an explicit move. Filter to one container only when physical order matters.</p></div><b>{shown.length} records</b></div><div className="toolbar inventory-tools"><label className="search"><Search /><input aria-label="Search inventory" value={query} onChange={(event) => { setQuery(event.target.value); setSelected([]); }} placeholder="Search names, categories, tags, constraints, and notes" /></label><select aria-label="Filter by location" value={locationFilter} onChange={(event) => { setLocationFilter(event.target.value); setSelected([]); }}><option value="">Every container</option>{locationOptions.map(({ depth, location }) => <option key={location.id} value={location.id}>{`${"  ".repeat(depth)}${depth ? "↳ " : ""}${location.code} · ${location.name}`}</option>)}</select><select aria-label="Sort inventory" value={sortBy} onChange={(event) => setSortBy(event.target.value as typeof sortBy)} disabled={canReorder}><option value="name">Sort: name</option><option value="location">Sort: location</option><option value="quantity">Sort: quantity</option></select></div><p className="drag-hint">{canReorder ? `Showing one container. Drag handles or arrow buttons reorder ${shown.length} records here; use Edit / move to change containers.` : locationFilter && query.trim() ? "Search results are sorted for review. Clear the search before changing physical order." : "Showing the containerless inventory. Select one or more records to move them, or use Edit / move for details and partial quantities."}</p><section className="panel inventory">{shown.map(inventoryRow)}{shown.length === 0 && <Empty title="No matching records" text="Clear a filter or capture something new." />}</section>{activeSelection.length > 0 && <div className="floating"><b>{activeSelection.length} selected</b><select aria-label="Move selected items" defaultValue="" onChange={(event) => { if (event.target.value) void perform(commit, { type: "item.bulkMove", itemIds: activeSelection, destinationId: event.target.value }, () => setSelected([])); }}><option value="">Move to…</option>{locationOptions.map(({ depth, location }) => <option disabled={selectedItems.length > 0 && selectedItems.every((item) => item.locationId === location.id)} value={location.id} key={location.id}>{`${"  ".repeat(depth)}${depth ? "↳ " : ""}${location.code} · ${location.name}`}</option>)}</select><button onClick={() => setSelected([])}>Clear</button></div>}{editing && state.items.find((item) => item.id === editing) && <ItemEditor item={state.items.find((item) => item.id === editing) as ItemRecord} state={state} commit={commit} close={() => setEditing(null)} focus={editing === editOnOpen ? editFocus : undefined} />}</div>;
+  return <div className="content inventory-page"><div className="inventory-heading"><div><p className="eyebrow">Everything, regardless of container</p><h2>All item records</h2><p>Search the whole workspace, then select records for an explicit move. Filter to one container only when physical order matters.</p></div><b>{shown.length} records</b></div><div className="toolbar inventory-tools"><label className="search"><Search /><input aria-label="Search inventory" value={query} onChange={(event) => { setQuery(event.target.value); setSelected([]); }} placeholder="Search names, categories, tags, constraints, and notes" /></label><select aria-label="Filter by location" value={locationFilter} onChange={(event) => { onLocationFilterChange(event.target.value); setSelected([]); }}><option value="">Every container</option>{locationOptions.map(({ depth, location }) => <option key={location.id} value={location.id}>{`${"  ".repeat(depth)}${depth ? "↳ " : ""}${location.code} · ${location.name}`}</option>)}</select><select aria-label="Sort inventory" value={sortBy} onChange={(event) => setSortBy(event.target.value as typeof sortBy)} disabled={canReorder}><option value="name">Sort: name</option><option value="location">Sort: location</option><option value="quantity">Sort: quantity</option></select></div><p className="drag-hint">{canReorder ? `Showing one container. Drag handles or arrow buttons reorder ${shown.length} records here; use Edit / move to change containers.` : locationFilter && query.trim() ? "Search results are sorted for review. Clear the search before changing physical order." : "Showing the containerless inventory. Select one or more records to move them, or use Edit / move for details and partial quantities."}</p><section className="panel inventory">{shown.map(inventoryRow)}{shown.length === 0 && <Empty title="No matching records" text="Clear a filter or capture something new." />}</section>{activeSelection.length > 0 && <div className="floating"><b>{activeSelection.length} selected</b><select aria-label="Move selected items" defaultValue="" onChange={(event) => { if (event.target.value) void perform(commit, { type: "item.bulkMove", itemIds: activeSelection, destinationId: event.target.value }, () => setSelected([])); }}><option value="">Move to…</option>{locationOptions.map(({ depth, location }) => <option disabled={selectedItems.length > 0 && selectedItems.every((item) => item.locationId === location.id)} value={location.id} key={location.id}>{`${"  ".repeat(depth)}${depth ? "↳ " : ""}${location.code} · ${location.name}`}</option>)}</select><button onClick={() => setSelected([])}>Clear</button></div>}{editing && state.items.find((item) => item.id === editing) && <ItemEditor item={state.items.find((item) => item.id === editing) as ItemRecord} state={state} commit={commit} close={() => onEditingChange(null)} focus={editFocus} />}</div>;
 }
 
 function ItemEditor({ item, state, commit, close, focus }: { item: ItemRecord; state: WorkspaceState; commit: Commit; close: () => void; focus?: GuidanceFocus }) {
@@ -1571,9 +1792,9 @@ function History({ state, commit }: { state: WorkspaceState; commit: Commit }) {
   const undone = state.activities.filter((entry) => entry.status === "undone").length;
   return <div className="content"><div className="toolbar"><span>{state.activities.length} recorded changes</span><div className="history-batch"><label>Changes<input aria-label="Batch history count" type="number" min="1" max="100" value={count} onChange={(event) => setCount(Math.max(1, Math.min(100, Number(event.target.value) || 1)))} /></label><button disabled={!applied} onClick={() => void perform(commit, { type: "history.batchUndo", count: Math.min(count, applied) })}>Undo {Math.min(count, applied)}</button><button disabled={!undone} onClick={() => void perform(commit, { type: "history.batchRedo", count: Math.min(count, undone) })}>Redo {Math.min(count, undone)}</button></div></div><section className="panel history">{[...state.activities].reverse().map((entry) => <div key={entry.id}><Undo2 /><span><strong>{entry.label}</strong><small>{new Date(entry.timestamp).toLocaleString()} · {entry.patches.length} fields</small></span><b>{entry.status}</b><button aria-label={`${entry.status === "applied" ? "Undo" : "Reapply"} ${entry.label}`} onClick={() => void perform(commit, entry.status === "applied" ? { type: "history.undo", activityId: entry.id } : { type: "history.reapply", activityId: entry.id })}>{entry.status === "applied" ? "Undo this" : "Reapply"}</button></div>)}{!state.activities.length && <Empty title="No changes yet" text="Every meaningful change will be inspectable and reversible here." />}</section></div>;
 }
-function Preferences({ state, commit, theme, setTheme, openMenu }: { state: WorkspaceState; commit: Commit; theme: ThemePreference; setTheme: (theme: ThemePreference) => void; openMenu: () => void }) {
+function Preferences({ state, commit, theme, setTheme, openMenu, returnTo }: { state: WorkspaceState; commit: Commit; theme: ThemePreference; setTheme: (theme: ThemePreference) => void; openMenu: () => void; returnTo: string }) {
   const download = () => { const anchor = document.createElement("a"); const url = URL.createObjectURL(new Blob([JSON.stringify(state, null, 2)], { type: "application/json" })); anchor.href = url; anchor.download = `stowplan-${state.workspace.id}.json`; anchor.click(); URL.revokeObjectURL(url); };
-  return <div className="content settings"><section className="panel"><h2>Workspace</h2><form className="workspace-rename" onSubmit={(event) => submitForm(event, (data) => perform(commit, { type: "workspace.rename", name: String(data.get("workspaceName")) }), false)}><label>Workspace name<input required maxLength={80} name="workspaceName" defaultValue={state.workspace.name} /></label><button>Rename workspace</button></form><p className="muted">Switch, inspect backup status, or remove device copies from the main menu.</p><button onClick={openMenu}><Home /> Open workspace menu</button><h2>Appearance</h2><div className="segments">{(["system", "light", "dark"] as const).map((entry) => <button aria-pressed={theme === entry} data-active={theme === entry} key={entry} onClick={() => setTheme(entry)}>{entry}</button>)}</div><h2>Backup & recovery</h2><p className="muted">Export a complete portable snapshot. Imports are validated and previewed before replacement.</p><button onClick={download}>Export JSON backup</button><a href="/recovery">Review sync issues or restore a backup</a><a href="/labels">Print text and QR labels</a></section><section className="panel"><h2>Account & server backup</h2><a href={`/account?workspace=${encodeURIComponent(state.workspace.id)}`}>Sign in, sync, or create a guest link</a><a href="/admin">Open admin control plane</a><h2>Help & source</h2><a href="/docs/">Read the offline quick guide</a><a target="_blank" rel="noreferrer" href={process.env.NEXT_PUBLIC_REPOSITORY_URL || "https://github.com/j-256/stowplan"}>View source repository</a><p className="license">AGPL-3.0-only<br />Copyright © 2026 James Klein (j-256)</p></section></div>;
+  return <div className="content settings"><section className="panel"><h2>Workspace</h2><form className="workspace-rename" onSubmit={(event) => submitForm(event, (data) => perform(commit, { type: "workspace.rename", name: String(data.get("workspaceName")) }), false)}><label>Workspace name<input required maxLength={80} name="workspaceName" defaultValue={state.workspace.name} /></label><button>Rename workspace</button></form><p className="muted">Switch, inspect backup status, or remove device copies from the main menu.</p><button onClick={openMenu}><Home /> Open workspace menu</button><h2>Appearance</h2><div className="segments">{(["system", "light", "dark"] as const).map((entry) => <button aria-pressed={theme === entry} data-active={theme === entry} key={entry} onClick={() => setTheme(entry)}>{entry}</button>)}</div><h2>Backup & recovery</h2><p className="muted">Export a complete portable snapshot. Imports are validated and previewed before replacement.</p><button onClick={download}>Export JSON backup</button><a href="/recovery">Review sync issues or restore a backup</a><a href="/labels">Print text and QR labels</a></section><section className="panel"><h2>Account & server backup</h2><a href={`/account?workspace=${encodeURIComponent(state.workspace.id)}&returnTo=${encodeURIComponent(returnTo)}`}>Sign in, sync, or create a guest link to this view</a><a href="/admin">Open admin control plane</a><h2>Help & source</h2><a href="/docs/">Read the offline quick guide</a><a target="_blank" rel="noreferrer" href={process.env.NEXT_PUBLIC_REPOSITORY_URL || "https://github.com/j-256/stowplan"}>View source repository</a><p className="license">AGPL-3.0-only<br />Copyright © 2026 James Klein (j-256)</p></section></div>;
 }
 function Empty({ title, text }: { title: string; text: string }) {
   return <div className="empty"><b>□</b><h3>{title}</h3><p>{text}</p></div>;

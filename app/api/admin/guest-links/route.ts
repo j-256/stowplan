@@ -1,4 +1,68 @@
 import { audit } from "../../../../src/server/admin";
-import { authenticate, canWriteWorkspace, createGuestLink, isTrustedMutation } from "../../../../src/server/auth";
+import {
+  authenticate,
+  canWriteWorkspace,
+  createGuestLink,
+  isTrustedMutation,
+} from "../../../../src/server/auth";
+import { workspaceReturnTo } from "../../../../src/domain/app-url";
 import { runtimeEnv } from "../../../../src/server/runtime";
-export async function POST(request:Request){try{const env=await runtimeEnv();if(!isTrustedMutation(request,env.AUTH_BASE_URL))return Response.json({error:"Cross-origin mutation denied"},{status:403});if(!env.DB)return Response.json({error:"Database is not configured"},{status:503});const user=await authenticate(env.DB,request);if(!user)return Response.json({error:"Authentication required"},{status:401});const body=await request.json() as {workspaceId:string;role?:"editor"|"viewer";hours?:number};if(user.globalRole!=="admin"&&!await canWriteWorkspace(env.DB,user.userId,body.workspaceId))return Response.json({error:"Workspace write access required"},{status:403});const link=await createGuestLink(env.DB,body.workspaceId,user.userId,body.role??"editor",body.hours),base=env.AUTH_BASE_URL??request.url;await audit(env.DB,user.userId,"guest.create","guest_link",link.id,{workspaceId:body.workspaceId,expiresAt:link.expiresAt});return Response.json({url:new URL(`/guest/${link.raw}`,base).toString(),expiresAt:link.expiresAt},{status:201})}catch(error){return Response.json({error:error instanceof Error?error.message:"Could not create guest link"},{status:400})}}
+
+export async function POST(request: Request) {
+  try {
+    const env = await runtimeEnv();
+    if (!isTrustedMutation(request, env.AUTH_BASE_URL)) {
+      return Response.json({ error: "Cross-origin mutation denied" }, { status: 403 });
+    }
+    if (!env.DB) {
+      return Response.json({ error: "Database is not configured" }, { status: 503 });
+    }
+    const user = await authenticate(env.DB, request);
+    if (!user) {
+      return Response.json({ error: "Authentication required" }, { status: 401 });
+    }
+    const body = await request.json() as {
+      hours?: number;
+      returnTo?: string;
+      role?: "editor" | "viewer";
+      workspaceId: string;
+    };
+    if (
+      user.globalRole !== "admin" &&
+      !await canWriteWorkspace(env.DB, user.userId, body.workspaceId)
+    ) {
+      return Response.json(
+        { error: "Workspace write access required" },
+        { status: 403 },
+      );
+    }
+    const link = await createGuestLink(
+      env.DB,
+      body.workspaceId,
+      user.userId,
+      body.role ?? "editor",
+      body.hours,
+    );
+    const returnTo = workspaceReturnTo(body.returnTo, body.workspaceId);
+    const base = env.AUTH_BASE_URL ?? request.url;
+    const url = new URL(`/guest/${link.raw}`, base);
+    url.searchParams.set("returnTo", returnTo);
+    await audit(
+      env.DB,
+      user.userId,
+      "guest.create",
+      "guest_link",
+      link.id,
+      { workspaceId: body.workspaceId, expiresAt: link.expiresAt },
+    );
+    return Response.json(
+      { url: url.toString(), expiresAt: link.expiresAt },
+      { status: 201 },
+    );
+  } catch (error) {
+    return Response.json(
+      { error: error instanceof Error ? error.message : "Could not create guest link" },
+      { status: 400 },
+    );
+  }
+}

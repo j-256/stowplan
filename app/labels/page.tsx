@@ -1,9 +1,10 @@
 "use client";
-/* QR images are generated data URLs; Next image optimization cannot improve them. */
+/* QR images are generated data URLs; Next image optimization cannot improve them */
 /* eslint-disable @next/next/no-img-element */
 import Link from "next/link";
 import QRCode from "qrcode";
 import { useCallback, useEffect, useState } from "react";
+import { workspacePath } from "../../src/domain/app-url";
 import type { Location } from "../../src/domain/types";
 import { readReplica } from "../../src/client/local-replica";
 type Label = Location & { qr: string };
@@ -29,7 +30,11 @@ export default function Labels() {
         live.map(async (location) => ({
           ...location,
           qr: await QRCode.toDataURL(
-            `${window.location.origin}/?workspace=${encodeURIComponent(replica.state.workspace.id)}&container=${encodeURIComponent(location.id)}`,
+            new URL(workspacePath({
+              locationId: location.id,
+              view: "capture",
+              workspaceId: replica.state.workspace.id,
+            }), window.location.origin).href,
             { width: 220, margin: 1, errorCorrectionLevel: "M" },
           ),
         })),

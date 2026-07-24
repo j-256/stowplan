@@ -178,12 +178,22 @@ try {
   const createGuest = await fetch(`${origin}/api/admin/guest-links`, {
     method: "POST",
     headers: syncHeaders,
-    body: JSON.stringify({ workspaceId: "ws_smoke", role: "viewer", hours: 1 }),
+    body: JSON.stringify({
+      workspaceId: "ws_smoke",
+      role: "viewer",
+      hours: 1,
+      returnTo: "/workspaces/ws_smoke/inventory",
+    }),
   });
   await assertStatus(createGuest, 201);
   const guest = await createGuest.json();
-  assert.equal(new URL(guest.url).origin, origin);
-  const token = new URL(guest.url).pathname.split("/").at(-1);
+  const guestUrl = new URL(guest.url);
+  assert.equal(guestUrl.origin, origin);
+  assert.equal(
+    guestUrl.searchParams.get("returnTo"),
+    "/workspaces/ws_smoke/inventory",
+  );
+  const token = guestUrl.pathname.split("/").at(-1);
   assert(token);
 
   const confirmation = await fetch(guest.url);
@@ -193,12 +203,19 @@ try {
   assert.equal(legacyGet.status, 302);
   assert.match(legacyGet.headers.get("location") ?? "", new RegExp(`/guest/${token}$`));
 
-  const redeem = await fetch(`${origin}/api/auth/guest/${token}`, {
-    method: "POST",
-    headers: { origin },
-    redirect: "manual",
-  });
+  const redeem = await fetch(
+    `${origin}/api/auth/guest/${token}?returnTo=${encodeURIComponent("/workspaces/ws_smoke/inventory")}`,
+    {
+      method: "POST",
+      headers: { origin },
+      redirect: "manual",
+    },
+  );
   assert.equal(redeem.status, 302);
+  assert.equal(
+    redeem.headers.get("location"),
+    `${origin}/workspaces/ws_smoke/inventory`,
+  );
   const guestCookie = (redeem.headers.get("set-cookie") ?? "").split(";")[0];
   assert.match(guestCookie, /^stowplan_session=/);
   const guestSnapshot = await fetch(`${origin}/api/snapshot?workspaceId=ws_smoke`, { headers: { cookie: guestCookie } });

@@ -37,11 +37,41 @@ test("renders development preview metadata", async () => {
   assert.match(await response.text(), developmentPreviewMeta);
 });
 
+test("renders canonical workspace view routes", async () => {
+  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
+  workerUrl.searchParams.set("workspace-route-test", `${process.pid}-${Date.now()}`);
+  const { default: worker } = await import(workerUrl.href);
+  const response = await worker.fetch(
+    new Request(
+      "http://localhost/workspaces/ws_example/inventory/items/item_example",
+      { headers: { accept: "text/html" } },
+    ),
+    {
+      ASSETS: {
+        fetch: async () => new Response("Not found", { status: 404 }),
+      },
+    },
+    {
+      waitUntil() {},
+      passThroughOnException() {},
+    },
+  );
+
+  assert.equal(response.status, 200);
+  assert.match(
+    response.headers.get("content-type") ?? "",
+    /^text\/html\b/i,
+  );
+  assert.match(await response.text(), developmentPreviewMeta);
+});
+
 test("keeps private APIs out of the service-worker cache and ships install icons", () => {
   const worker = readFileSync(new URL("../public/sw.js", import.meta.url), "utf8");
   assert.match(worker, /url\.pathname\.startsWith\("\/api\/"\)/);
   assert.match(worker, /url\.pathname\.startsWith\("\/assets\/"\)/);
   assert.match(worker, /request\.mode === "navigate"/);
+  assert.match(worker, /url\.pathname\.startsWith\("\/workspaces\/"\)/);
+  assert.match(worker, /caches\.match\("\/"\)/);
   assert.match(worker, /event\.waitUntil\(installShell\(\)/);
   assert.match(worker, /cache\.put\(cacheKey, response\.clone\(\)\)/);
   assert.match(worker, /key\.startsWith\(CACHE_PREFIX\)/);
@@ -164,6 +194,8 @@ test("keeps hierarchy and touch drag affordances in the shipped organizer", () =
   assert.match(application, /Select \$\{actionIdentity\} in/);
   assert.match(application, /"Undo" : "Reapply"\} \$\{entry\.label\}/);
   assert.match(application, /key=\{current\.id\} className="quick"/);
+  assert.match(application, /href=\{href\}/);
+  assert.match(application, /Share this view/);
   assert.match(styles, /\.tree-select \.tree-name\{[^}]*overflow:visible[^}]*white-space:normal/);
   assert.match(styles, /\.drag-handle,[^{]*\{[^}]*min-height:44px/);
   assert.match(styles, /\.app-shell\{display:grid;grid-template-columns:minmax\(0,1fr\);grid-template-rows:minmax\(0,1fr\) auto;height:100dvh/);
@@ -210,5 +242,6 @@ test("guards restore commit boundaries and label deep links", () => {
   assert.match(recovery, /targetExportAcknowledged/);
   assert.match(snapshotRoute, /auditRecorded/);
   assert.match(syncRoute, /Every command must belong to the requested workspace/);
-  assert.match(labels, /workspace=.*container=/s);
+  assert.match(labels, /workspacePath\(\{/);
+  assert.match(labels, /view: "capture"/);
 });
