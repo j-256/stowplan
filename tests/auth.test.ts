@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createEmptyState } from "../src/domain/factories";
 import { D1SnapshotStore } from "../src/adapters/d1-snapshot-store";
 import {
@@ -6,11 +6,13 @@ import {
   AuthorizationError,
   authenticate,
   authorizeAdmin,
+  beginOAuth,
   claimWorkspace,
   cleanupAuthRecords,
   consumeGuestLink,
   createGuestLink,
   createOrLinkUser,
+  finishOAuth,
   InvitationError,
   isTrustedMutation,
   issueSession,
@@ -29,6 +31,65 @@ function database() {
 
 describe("authentication",()=>{
   it("links identities, issues opaque sessions, and revokes them",async()=>{const db=database(),env={AUTH_ADMIN_EMAILS:"owner@example.com"};const user=await createOrLinkUser(db,env,{provider:"test",subject:"one",email:"OWNER@example.com",displayName:"Owner"});expect(user.globalRole).toBe("admin");const request=new Request("https://example.test",{headers:{"user-agent":"test"}}),session=await issueSession(db,env,user,request);expect(session.raw).toHaveLength(64);const authenticated=await authenticate(db,new Request("https://example.test",{headers:{cookie:`stowplan_session=${session.raw}`}}));expect(authenticated?.email).toBe("owner@example.com");await revokeCurrentSession(db,new Request("https://example.test",{headers:{cookie:`stowplan_session=${session.raw}`}}));expect(await authenticate(db,new Request("https://example.test",{headers:{cookie:`stowplan_session=${session.raw}`}}))).toBeNull()});
+  it("scrubs OAuth credentials as soon as a state is claimed", async () => {
+    const { database: db, sqlite } = numberedMigrationDatabase();
+    const oauthProvider = {
+      authorizationUrl: "https://provider.example/authorize",
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      id: "github" as const,
+      scopes: "read:user user:email",
+      tokenUrl: "https://provider.example/token",
+    };
+    const authorizationUrl = await beginOAuth(
+      db,
+      oauthProvider,
+      "https://stowplan.example",
+      "/spaces",
+    );
+    const state = new URL(authorizationUrl).searchParams.get("state");
+    expect(state).toBeTruthy();
+    const before = sqlite.prepare(
+      `SELECT verifier_ciphertext, return_to
+       FROM oauth_states`,
+    ).get() as {
+      return_to: string;
+      verifier_ciphertext: string;
+    };
+    expect(before.return_to).toBe("/spaces");
+    expect(before.verifier_ciphertext).not.toBe("");
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(null, { status: 503 }),
+    );
+    try {
+      await expect(finishOAuth(
+        db,
+        oauthProvider,
+        "https://stowplan.example",
+        state!,
+        "authorization-code",
+      )).rejects.toThrow("OAuth token exchange failed");
+      expect(fetchSpy).toHaveBeenCalledOnce();
+      const requestBody = new URLSearchParams(
+        String(fetchSpy.mock.calls[0]?.[1]?.body),
+      );
+      expect(requestBody.get("code_verifier")).toBe(
+        before.verifier_ciphertext,
+      );
+    } finally {
+      fetchSpy.mockRestore();
+    }
+
+    expect(sqlite.prepare(
+      `SELECT verifier_ciphertext, return_to, consumed_at
+       FROM oauth_states`,
+    ).get()).toMatchObject({
+      consumed_at: expect.any(String),
+      return_to: "/",
+      verifier_ciphertext: "",
+    });
+  });
   it("does not grant first-user admin scope around a configured allowlist", async () => {
     const db = database();
     const env = { AUTH_ADMIN_EMAILS: "configured-admin@example.com" };
@@ -732,6 +793,45 @@ describe("authentication",()=>{
     ).get()).toEqual({ count: 0 });
     expect(sqlite.prepare(
       "SELECT COUNT(*) AS count FROM guest_links",
+    ).get()).toEqual({ count: 0 });
+  });
+  it("scrubs expired OAuth credentials before lifecycle-row cleanup", async () => {
+    const { database: db, sqlite } = numberedMigrationDatabase();
+    sqlite.prepare(
+      `INSERT INTO oauth_states(
+         state_hash, provider, verifier_ciphertext, return_to, created_at,
+         expires_at
+       ) VALUES(?,?,?,?,?,?)`,
+    ).run(
+      "recently-expired-state",
+      "github",
+      "private-verifier",
+      "/private-return",
+      "2026-07-24T11:50:00.000Z",
+      "2026-07-24T12:00:00.000Z",
+    );
+
+    await expect(cleanupAuthRecords(
+      db,
+      new Date("2026-07-24T12:01:00.000Z"),
+    )).resolves.toMatchObject({ oauthStates: 0 });
+    expect(sqlite.prepare(
+      `SELECT verifier_ciphertext, return_to, consumed_at
+       FROM oauth_states
+       WHERE state_hash='recently-expired-state'`,
+    ).get()).toEqual({
+      consumed_at: null,
+      return_to: "/",
+      verifier_ciphertext: "",
+    });
+
+    await expect(cleanupAuthRecords(
+      db,
+      new Date("2026-07-25T12:01:00.000Z"),
+    )).resolves.toMatchObject({ oauthStates: 1 });
+    expect(sqlite.prepare(
+      `SELECT COUNT(*) AS count
+       FROM oauth_states`,
     ).get()).toEqual({ count: 0 });
   });
   it("retains legacy accepted guest memberships regardless of session age", async () => {

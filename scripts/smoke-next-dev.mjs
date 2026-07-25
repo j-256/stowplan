@@ -227,8 +227,16 @@ try {
   assert.equal(invite.guestLink.status, "active");
   const guestUrl = new URL(invite.oneTimeUrl);
   assert.equal(guestUrl.origin, origin);
-  assert.equal(guestUrl.searchParams.get("returnTo"), workspaceReturnTo);
-  const guestToken = guestUrl.pathname.slice("/guest/".length);
+  assert.equal(guestUrl.pathname, "/guest");
+  assert.equal(guestUrl.search, "");
+  const invitationFragment = new URLSearchParams(
+    guestUrl.hash.slice(1),
+  );
+  assert.equal(
+    invitationFragment.get("returnTo"),
+    workspaceReturnTo,
+  );
+  const guestToken = invitationFragment.get("token");
   assert(guestToken);
   const confirmation = await fetch(guestUrl);
   await assertStatus(confirmation, 200);
@@ -264,22 +272,25 @@ try {
     origin,
   };
   const redeem = await fetch(
-    `${origin}/api/auth/guest/${encodeURIComponent(guestToken)}?returnTo=${encodeURIComponent(workspaceReturnTo)}`,
+    `${origin}/api/auth/guest`,
     {
-      body: new URLSearchParams({
+      body: JSON.stringify({
         expectedAccountId: viewerAccountId,
+        returnTo: workspaceReturnTo,
+        token: guestToken,
       }),
       method: "POST",
       headers: {
-        "content-type": "application/x-www-form-urlencoded",
+        [accountContextHeader]: viewerAccountId,
+        "content-type": "application/json",
         cookie: viewerCookie,
         origin,
       },
-      redirect: "manual",
     },
   );
-  assert.equal(redeem.status, 303);
-  assert.equal(redeem.headers.get("location"), `${origin}${workspaceReturnTo}`);
+  assert.equal(redeem.status, 200);
+  assertAccountContext(redeem, viewerAccountId);
+  assert.equal((await redeem.json()).returnTo, workspaceReturnTo);
   assert.equal(redeem.headers.get("set-cookie"), null);
   const guestSnapshot = await fetch(
     `${origin}/api/snapshot?workspaceId=${workspaceId}`,
@@ -351,18 +362,19 @@ try {
   assert.equal((await viewerDelete.json()).code, "OWNER_REQUIRED");
 
   const replay = await fetch(
-    `${origin}/api/auth/guest/${encodeURIComponent(guestToken)}`,
+    `${origin}/api/auth/guest`,
     {
-      body: new URLSearchParams({
+      body: JSON.stringify({
         expectedAccountId: viewerAccountId,
+        token: guestToken,
       }),
       method: "POST",
       headers: {
-        "content-type": "application/x-www-form-urlencoded",
+        [accountContextHeader]: viewerAccountId,
+        "content-type": "application/json",
         cookie: viewerCookie,
         origin,
       },
-      redirect: "manual",
     },
   );
   assert.equal(replay.status, 409);

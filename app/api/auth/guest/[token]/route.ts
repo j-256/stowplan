@@ -1,4 +1,7 @@
-import { workspaceReturnTo } from "../../../../../src/domain/app-url";
+import {
+  guestInvitationUrl,
+  workspaceReturnTo,
+} from "../../../../../src/domain/app-url";
 import {
   authenticate,
   AuthorizationError,
@@ -26,13 +29,23 @@ export async function GET(
   const token = (await params).token;
   const requestUrl = new URL(request.url);
   const base = env.AUTH_BASE_URL ?? request.url;
-  const guestUrl = new URL(`/guest/${encodeURIComponent(token)}`, base);
   const returnTo = requestUrl.searchParams.get("returnTo");
-  if (returnTo) guestUrl.searchParams.set("returnTo", returnTo);
+  let guestUrl: string;
+  try {
+    guestUrl = guestInvitationUrl(base, token, returnTo);
+  } catch {
+    return privateJson(
+      {
+        code: "INVALID_REQUEST",
+        error: "Invitation URL is invalid",
+      },
+      { status: 400 },
+    );
+  }
   return new Response(null, {
     headers: {
       "cache-control": "no-store",
-      location: guestUrl.toString(),
+      location: guestUrl,
     },
     status: 302,
   });
@@ -86,20 +99,10 @@ export async function POST(
     ));
     const user = await authenticate(env.DB, request);
     if (!user) {
-      const guestReturn = new URL(
-        `/guest/${encodeURIComponent(token)}`,
-        base,
-      );
-      if (requested) guestReturn.searchParams.set("returnTo", requested);
-      const account = new URL("/account", base);
-      account.searchParams.set(
-        "returnTo",
-        `${guestReturn.pathname}${guestReturn.search}`,
-      );
       return new Response(null, {
         status: 303,
         headers: {
-          location: account.toString(),
+          location: guestInvitationUrl(base, token, requested),
           "cache-control": "no-store",
         },
       });

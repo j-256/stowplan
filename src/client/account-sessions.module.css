@@ -1,0 +1,144 @@
+.panel {
+  border-block: 1px solid var(--line);
+  display: grid;
+  gap: 0.85rem;
+  margin-block: 1.25rem;
+  padding-block: 1.25rem;
+}
+
+.panel > h2,
+.panel > p {
+  margin: 0;
+}
+
+.panel > p,
+.explanation {
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.session {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 0.8rem;
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+  padding: 0.9rem;
+}
+
+.session header {
+  align-items: start;
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+}
+
+.session header > span {
+  display: grid;
+  min-width: 0;
+}
+
+.session header small,
+.session dd {
+  overflow-wrap: anywhere;
+}
+
+.session b {
+  background: var(--panel);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.7rem;
+  padding: 0.35rem 0.55rem;
+  text-transform: uppercase;
+}
+
+.session b[data-status="active"] {
+  background: var(--sage2);
+  color: var(--sage);
+}
+
+.session dl {
+  display: grid;
+  gap: 0.55rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+}
+
+.session dl > div {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.session dt {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.session dd {
+  font-size: 0.82rem;
+  margin: 0;
+}
+
+.session > button,
+.panel > button,
+.error button,
+.dialogActions button {
+  min-height: 44px;
+}
+
+.session > button {
+  justify-self: end;
+}
+
+.error,
+.notice {
+  border-radius: 0.65rem;
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.75rem;
+}
+
+.error {
+  background: color-mix(in srgb, var(--danger-bg) 50%, transparent);
+  border: 1px solid var(--danger);
+  color: var(--danger);
+}
+
+.error button {
+  justify-self: start;
+}
+
+.errorActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.notice {
+  background: var(--sage2);
+  border: 1px solid color-mix(in srgb, var(--sage) 48%, var(--line));
+}
+
+.dialogActions {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (max-width: 540px) {
+  .session dl,
+  .dialogActions {
+    grid-template-columns: 1fr;
+  }
+
+  .session > button {
+    justify-self: stretch;
+    width: 100%;
+  }
+}

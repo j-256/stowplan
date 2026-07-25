@@ -4,6 +4,7 @@ import type {
   Locator,
   Page,
   Request,
+  Route,
   TestInfo,
 } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
@@ -25,6 +26,7 @@ const CHROMIUM_RESPONSIVE_PROJECTS = Object.freeze([
   "desktop-compact",
   "desktop-chromium",
 ]);
+const PHONE_PROJECT = "mobile-chromium";
 const DESKTOP_PROJECT = "desktop-chromium";
 const WEBKIT_PHONE_PROJECT = "webkit-phone";
 const WEBKIT_TABLET_PROJECT = "webkit-tablet-landscape";
@@ -747,7 +749,12 @@ test(
       )).toHaveCount(0);
       const viewerUrl = await viewerDialog
         .getByLabel("Single-use enrollment URL").inputValue();
-      expect(viewerUrl).toContain("/guest/");
+      const viewerInvitationUrl = new URL(viewerUrl);
+      expect(viewerInvitationUrl.pathname).toBe("/guest");
+      expect(viewerInvitationUrl.search).toBe("");
+      expect(new URLSearchParams(
+        viewerInvitationUrl.hash.slice(1),
+      ).get("token")).toBeTruthy();
       const doneButton = viewerDialog.getByRole("button", { name: "Done" });
       await tabTo(page, doneButton);
       await page.keyboard.press("Enter");
@@ -875,8 +882,11 @@ test(
 
 test(
   "keeps invitation previews inert until a signed-in account confirms",
-  async ({ browser, page, safeBeta }, testInfo) => {
-    skipUnlessProject(testInfo, [DESKTOP_PROJECT]);
+  async ({ browser, context, page, safeBeta }, testInfo) => {
+    skipUnlessProject(testInfo, [
+      DESKTOP_PROJECT,
+      WEBKIT_PHONE_PROJECT,
+    ]);
     const ownerContext = await newContext(browser, safeBeta.origin);
     try {
       await safeBeta.signIn(ownerContext, "browser invite owner");
@@ -886,7 +896,7 @@ test(
         `Browser invitation ${safeBeta.namespace}`,
       );
       const returnTo = workspacePath({
-        view: "capture",
+        view: "settings",
         workspaceId: workspace.summary.id,
         workspaceLabel: workspace.summary.name,
       });
@@ -897,15 +907,34 @@ test(
         24,
         returnTo,
       );
+      const invitationUrl = new URL(invite.oneTimeUrl);
+      const rawToken = new URLSearchParams(
+        invitationUrl.hash.slice(1),
+      ).get("token") ?? "";
+      expect(rawToken).toBeTruthy();
+      const observedRequests: Array<{
+        referer: string;
+        url: string;
+      }> = [];
+      page.on("request", request => {
+        observedRequests.push({
+          referer: request.headers().referer ?? "",
+          url: request.url(),
+        });
+      });
 
       await page.goto(invite.oneTimeUrl);
       await expect(page.getByRole("heading", {
         name: "Open the shared workspace?",
       })).toBeVisible();
-      await page.getByRole("button", {
-        name: "Accept invitation",
-      }).click();
-      await expect(page).toHaveURL(/\/account\?returnTo=/);
+      const signInToAccept = page.getByRole("button", {
+        name: "Sign in to accept invitation",
+      });
+      await tabTo(page, signInToAccept);
+      await page.keyboard.press("Enter");
+      await expect(page).toHaveURL(
+        /\/account\?resume=invitation$/u,
+      );
 
       const linksResponse = await ownerContext.request.get(
         `${safeBeta.origin}/api/workspaces/${encodeURIComponent(
@@ -924,21 +953,41 @@ test(
       )?.status).toBe("active");
 
       const recipient = safeBeta.identity("browser invite member");
-      await page.getByLabel("Name").fill(recipient.name);
-      await page.getByLabel("Email").fill(recipient.email);
-      await page.getByRole("button", {
-        name: "Sign in locally",
-      }).click();
+      if (testInfo.project.name === WEBKIT_PHONE_PROJECT) {
+        await safeBeta.signIn(context, "browser invite member");
+        await page.reload();
+      } else {
+        await page.getByLabel("Name").fill(recipient.name);
+        await page.getByLabel("Email").fill(recipient.email);
+        await page.getByRole("button", {
+          name: "Sign in locally",
+        }).click();
+      }
       await expect(page.getByRole("heading", {
         name: "Open the shared workspace?",
       })).toBeVisible();
-      await page.getByRole("button", {
+      const acceptInvitation = page.getByRole("button", {
+        exact: true,
         name: "Accept invitation",
-      }).click();
+      });
+      await tabTo(page, acceptInvitation);
+      const confirmationResponse = page.waitForResponse(response =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname === "/api/auth/guest"
+      );
+      await page.keyboard.press("Enter");
+      expect((await confirmationResponse).status()).toBe(200);
 
       await expect(page).toHaveURL(new RegExp(
         `${returnTo.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
       ));
+      expect(observedRequests.some(request =>
+        new URL(request.url).pathname === "/api/auth/guest"
+      )).toBe(true);
+      expect(observedRequests.every(request =>
+        !request.url.includes(rawToken) &&
+        !request.referer.includes(rawToken)
+      )).toBe(true);
       await expect(page.getByText("Viewer access", { exact: true }))
         .toBeVisible();
       expect((await readActiveReplica(page))?.state.workspace.id).toBe(
@@ -951,6 +1000,13 @@ test(
       expect(members.members.find(
         member => member.email === recipient.email,
       )?.role).toBe("viewer");
+      await page.goBack({ waitUntil: "domcontentloaded" });
+      expect(page.url()).not.toContain(rawToken);
+      expect(page.url()).not.toContain("#token=");
+      expect(observedRequests.every(request =>
+        !request.url.includes(rawToken) &&
+        !request.referer.includes(rawToken)
+      )).toBe(true);
     } finally {
       await ownerContext.close();
     }
@@ -1763,8 +1819,12 @@ test(
     expect(deletedSnapshot.ok()).toBe(false);
 
     const inviteUrl = new URL(outstandingInvite.oneTimeUrl);
-    const token = inviteUrl.pathname.split("/").at(-1) ?? "";
-    const returnTo = inviteUrl.searchParams.get("returnTo") ?? "/workspaces";
+    const invitationFragment = new URLSearchParams(
+      inviteUrl.hash.slice(1),
+    );
+    const token = invitationFragment.get("token") ?? "";
+    const returnTo =
+      invitationFragment.get("returnTo") ?? "/workspaces";
     const inviteContext = await newContext(browser, safeBeta.origin);
     try {
       const inviteRecipient = await safeBeta.signIn(
@@ -1772,12 +1832,17 @@ test(
         "deleted invite recipient",
       );
       const redemption = await inviteContext.request.post(
-        `${safeBeta.origin}/api/auth/guest/${encodeURIComponent(
-          token,
-        )}?returnTo=${encodeURIComponent(returnTo)}`,
+        `${safeBeta.origin}/api/auth/guest`,
         {
-          form: { expectedAccountId: inviteRecipient.userId },
-          headers: { origin: safeBeta.origin },
+          data: {
+            expectedAccountId: inviteRecipient.userId,
+            returnTo,
+            token,
+          },
+          headers: {
+            [ACCOUNT_CONTEXT_HEADER]: inviteRecipient.userId,
+            origin: safeBeta.origin,
+          },
           maxRedirects: 0,
         },
       );
@@ -1835,5 +1900,737 @@ test(
     expect((await readActiveReplica(page))?.state.workspace.id).toBe(
       workspace.summary.id,
     );
+  },
+);
+
+test(
+  "keeps session and global-admin controls usable in WebKit",
+  async ({ page }, testInfo) => {
+    skipUnlessProject(testInfo, [
+      WEBKIT_PHONE_PROJECT,
+      WEBKIT_TABLET_PROJECT,
+    ]);
+    const accountId = "usr_webkit_control";
+    const responseHeaders = {
+      [ACCOUNT_CONTEXT_HEADER]: accountId,
+    };
+    let sessionRevoked = false;
+    let guestDeleted = false;
+    await page.route("**/api/auth/me", route => route.fulfill({
+      body: JSON.stringify({
+        configured: true,
+        providers: ["development"],
+        user: {
+          displayName: "WebKit administrator",
+          email: "webkit-admin@example.test",
+          expiresAt: "2026-08-25T00:00:00.000Z",
+          globalRole: "admin",
+          userId: accountId,
+        },
+      }),
+      contentType: "application/json",
+      status: 200,
+    }));
+    const sessionRoute = (route: Route) => {
+      if (route.request().method() === "DELETE") {
+        sessionRevoked = true;
+        return route.fulfill({
+          body: JSON.stringify({
+            current: false,
+            revoked: true,
+            revokedAt: "2026-07-25T02:00:00.000Z",
+            sessionId: "ses_webkit_other",
+          }),
+          contentType: "application/json",
+          headers: responseHeaders,
+          status: 200,
+        });
+      }
+      return route.fulfill({
+        body: JSON.stringify({
+          currentSession: {
+            createdAt: "2026-07-25T00:00:00.000Z",
+            current: true,
+            expiresAt: "2026-08-25T00:00:00.000Z",
+            id: "ses_webkit_current",
+            ipPrefix: "192.0.2.0/24",
+            lastSeenAt: "2026-07-25T01:55:00.000Z",
+            revokedAt: null,
+            status: "active",
+            userAgent: "WebKit current device",
+          },
+          otherSessions: [{
+            createdAt: "2026-07-24T00:00:00.000Z",
+            current: false,
+            expiresAt: "2026-08-24T00:00:00.000Z",
+            id: "ses_webkit_other",
+            ipPrefix: "2001:db8:abcd::/48",
+            lastSeenAt: "2026-07-24T03:00:00.000Z",
+            revokedAt: null,
+            status: "active",
+            userAgent: "WebKit other device",
+          }],
+          page: {
+            hasMore: false,
+            limit: 25,
+            nextCursor: null,
+          },
+        }),
+        contentType: "application/json",
+        headers: responseHeaders,
+        status: 200,
+      });
+    };
+    await page.route("**/api/auth/sessions*", sessionRoute);
+    await page.route("**/api/auth/sessions/**", sessionRoute);
+
+    await page.goto("/account");
+    const otherSession = page.getByRole("article").filter({
+      hasText: "ses_webkit_other",
+    });
+    await otherSession.getByRole("button", {
+      name: "Revoke session",
+    }).focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("button", {
+      exact: true,
+      name: "Cancel",
+    })).toBeFocused();
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Enter");
+    await expect.poll(() => sessionRevoked).toBe(true);
+    await expect(otherSession).toContainText("revoked");
+    await expectNoHorizontalPageOverflow(page);
+
+    await page.route("**/api/admin/overview*", route => route.fulfill({
+      body: JSON.stringify({
+        audit: [],
+        databaseInventory: {
+          entries: [{
+            key: "guest-links",
+            label: "One-time invite links",
+            metrics: [{ kind: "count", label: "active", value: 1 }],
+            rowCount: 1,
+            table: "guest_links",
+          }],
+          generatedAt: "2026-07-25T02:00:00.000Z",
+        },
+        deletions: [],
+        guestLinks: [{
+          consumed_at: null,
+          created_at: "2026-07-25T00:00:00.000Z",
+          created_by_display_name: "WebKit administrator",
+          created_by_email: "webkit-admin@example.test",
+          created_by_user_id: accountId,
+          expires_at: "2099-07-26T00:00:00.000Z",
+          guest_link_id: "guest_webkit",
+          redemption_id: null,
+          revoked_at: null,
+          role: "viewer",
+          workspace_id: "ws_webkit",
+          workspace_name: "WebKit workspace",
+        }],
+        identities: [],
+        memberships: [],
+        migrations: [],
+        oauthStates: [],
+        sessions: [],
+        users: [],
+        workspaces: [],
+      }),
+      contentType: "application/json",
+      headers: responseHeaders,
+      status: 200,
+    }));
+    await page.route("**/api/admin/mutate", async route => {
+      const body = route.request().postDataJSON() as {
+        action?: string;
+      };
+      guestDeleted = body.action === "guest.delete";
+      await route.fulfill({
+        body: JSON.stringify({
+          message: "Guest link deleted",
+          ok: true,
+        }),
+        contentType: "application/json",
+        headers: responseHeaders,
+        status: 200,
+      });
+    });
+
+    await page.goto("/admin");
+    const inventoryLink = page.getByRole("region", {
+      name: "Database inventory",
+    }).getByRole("link");
+    await inventoryLink.focus();
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(/#admin-guest-links$/u);
+    const activeGuestLink = page.getByRole("listitem", {
+      name: "Enrollment link guest_webkit for WebKit workspace",
+    });
+    await expect(activeGuestLink.getByText("active", {
+      exact: true,
+    })).toBeVisible();
+    await activeGuestLink.getByRole("button", {
+      exact: true,
+      name: "Delete record for enrollment link guest_webkit in WebKit workspace",
+    }).click();
+    const deletionDialog = page.getByRole("dialog", {
+      name: "Delete this guest-link record?",
+    });
+    await expect(deletionDialog).toBeVisible();
+    await deletionDialog.getByRole("button", {
+      name: "Delete and invalidate",
+    }).click();
+    await expect.poll(() => guestDeleted).toBe(true);
+    await expect(page.getByText("Guest link deleted")).toBeVisible();
+    await expectNoHorizontalPageOverflow(page);
+    await expectNoSeriousAccessibilityViolations(page);
+  },
+);
+
+test(
+  "inspects and controls a server workspace through the audited admin surface",
+  async ({ page }, testInfo) => {
+    skipUnlessProject(testInfo, [
+      PHONE_PROJECT,
+      DESKTOP_PROJECT,
+      WEBKIT_PHONE_PROJECT,
+      WEBKIT_TABLET_PROJECT,
+    ]);
+    const accountId = "usr_admin_inspector";
+    const workspaceId = "ws_admin_inspector";
+    const workspaceName = "Admin inspection workspace";
+    const timestamp = "2026-07-25T04:00:00.000Z";
+    const responseHeaders = {
+      [ACCOUNT_CONTEXT_HEADER]: accountId,
+    };
+    const state = {
+      activities: [{
+        actorId: "usr_workspace_owner",
+        commandId: "cmd_private_item",
+        id: "activity_private_item",
+        label: "Created Private tax records",
+        patches: [],
+        status: "applied",
+        subjectIds: ["item_private_records"],
+        timestamp,
+        undoneAt: null,
+      }],
+      audit: [{
+        actorId: "usr_workspace_owner",
+        id: "audit_private_item",
+        label: "Reapplied private records activity",
+        targetActivityIds: ["activity_private_item"],
+        timestamp,
+        type: "reapply",
+      }],
+      commandReceipts: ["cmd_compacted_private_records"],
+      items: [{
+        archivedAt: null,
+        category: "Records",
+        constraints: {
+          avoidHumidity: true,
+          avoidWarmth: false,
+          foodOnly: false,
+          keepTogether: null,
+          requiredTags: [],
+        },
+        createdAt: timestamp,
+        dimensions: null,
+        frequency: "rarely",
+        id: "item_private_records",
+        locationId: "loc_private_archive",
+        name: "Private tax records",
+        notes: "Inspector-only improvement clue",
+        order: 0,
+        quantity: 2,
+        tags: ["private"],
+        unit: "boxes",
+        updatedAt: timestamp,
+        version: 1,
+      }],
+      locations: [{
+        archivedAt: null,
+        captureStatus: "counted",
+        code: "ATTIC",
+        conditions: {
+          dark: false,
+          dry: true,
+          foodSafe: false,
+          humidity: "normal",
+          temperature: "normal",
+        },
+        createdAt: timestamp,
+        description: "Restricted household archive",
+        dimensions: null,
+        id: "loc_private_archive",
+        kind: "room",
+        name: "Private attic archive",
+        order: 0,
+        parentId: null,
+        tags: ["sensitive"],
+        updatedAt: timestamp,
+      }],
+      plans: [],
+      schemaVersion: 1,
+      workspace: {
+        createdAt: timestamp,
+        id: workspaceId,
+        name: workspaceName,
+        revision: 12,
+        updatedAt: timestamp,
+      },
+    };
+    const workspaceRequests: Array<{
+      accountId: string | undefined;
+      body: Record<string, unknown>;
+      method: string;
+    }> = [];
+
+    await page.route("**/api/auth/me", route => route.fulfill({
+      body: JSON.stringify({
+        configured: true,
+        providers: ["development"],
+        user: {
+          displayName: "Workspace inspector",
+          email: "inspector@example.test",
+          expiresAt: "2026-08-25T00:00:00.000Z",
+          globalRole: "admin",
+          userId: accountId,
+        },
+      }),
+      contentType: "application/json",
+      status: 200,
+    }));
+    await page.route("**/api/admin/overview*", route => route.fulfill({
+      body: JSON.stringify({
+        audit: [],
+        databaseInventory: {
+          entries: [],
+          generatedAt: timestamp,
+        },
+        deletions: [],
+        guestLinks: [],
+        identities: [],
+        memberships: [],
+        migrations: [],
+        oauthStates: [],
+        sessions: [],
+        users: [],
+        workspaces: [{
+          access_revision: 7,
+          active_guest_link_count: 2,
+          activity_count: state.activities.length,
+          activity_patch_count: 0,
+          audit_event_count: state.audit.length,
+          command_receipt_count: state.commandReceipts.length,
+          created_at: timestamp,
+          item_count: state.items.length,
+          location_count: state.locations.length,
+          member_count: 2,
+          owner_count: 1,
+          plan_count: 0,
+          plan_step_count: 0,
+          retained_guest_link_count: 2,
+          revision: state.workspace.revision,
+          snapshot_bytes: JSON.stringify(state).length,
+          updated_at: timestamp,
+          viewer_is_member: 0,
+          workspace_id: workspaceId,
+          workspace_name: workspaceName,
+        }],
+      }),
+      contentType: "application/json",
+      headers: responseHeaders,
+      status: 200,
+    }));
+    await page.route(
+      `**/api/admin/workspaces/${workspaceId}`,
+      async route => {
+        const request = route.request();
+        const body = request.postDataJSON() as Record<string, unknown>;
+        workspaceRequests.push({
+          accountId: request.headers()[ACCOUNT_CONTEXT_HEADER],
+          body,
+          method: request.method(),
+        });
+        if (request.method() === "POST" && body.action === "inspect") {
+          await route.fulfill({
+            body: JSON.stringify({
+              accessRevision: 7,
+              createdAt: timestamp,
+              inspectedAt: "2026-07-25T04:05:00.000Z",
+              operatorRole: null,
+              snapshotBytes: JSON.stringify(state).length,
+              state,
+              updatedAt: timestamp,
+              workspaceId,
+            }),
+            contentType: "application/json",
+            headers: responseHeaders,
+            status: 200,
+          });
+          return;
+        }
+        if (
+          request.method() === "POST" &&
+          body.action === "takeOwnership"
+        ) {
+          await route.fulfill({
+            body: JSON.stringify({
+              accessRevision: 8,
+              operatorRole: "owner",
+              workspaceId,
+            }),
+            contentType: "application/json",
+            headers: responseHeaders,
+            status: 200,
+          });
+          return;
+        }
+        if (request.method() === "DELETE") {
+          await route.fulfill({
+            body: JSON.stringify({
+              deleted: true,
+              deletedAt: "2026-07-25T04:10:00.000Z",
+              deletionId: "deletion_admin_inspector",
+              finalAccessRevision: 9,
+              finalSnapshotRevision: state.workspace.revision,
+              recovery: "not_available",
+              workspaceId,
+            }),
+            contentType: "application/json",
+            headers: responseHeaders,
+            status: 200,
+          });
+          return;
+        }
+        await route.fulfill({
+          body: JSON.stringify({ error: "Unexpected inspector request" }),
+          contentType: "application/json",
+          headers: responseHeaders,
+          status: 400,
+        });
+      },
+    );
+
+    await page.goto("/admin");
+    const inspectorLink = page.getByRole("link", {
+      name: "Inspect content (audited)",
+    });
+    await expect(page.getByText("No ordinary membership")).toBeVisible();
+    await expect(page.getByRole("link", {
+      name: "Open member settings",
+    })).toHaveCount(0);
+    await inspectorLink.focus();
+    await expect(inspectorLink).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(
+      new RegExp(`/admin/workspaces/${workspaceId}$`, "u"),
+    );
+    await expect(page.getByRole("heading", {
+      exact: true,
+      name: workspaceName,
+    })).toBeVisible();
+    await expect(page.getByText(
+      "did not add a workspace membership or local replica",
+    )).toBeVisible();
+    await expect.poll(() => workspaceRequests.filter(request =>
+      request.body.action === "inspect"
+    )).toEqual([{
+      accountId,
+      body: { action: "inspect" },
+      method: "POST",
+    }]);
+
+    const snapshot = page.getByRole("region", {
+      name: "Complete snapshot content",
+    }).getByLabel("Complete validated workspace snapshot");
+    await expect(snapshot).toContainText("Private attic archive");
+    await expect(snapshot).toContainText("Private tax records");
+    await expect(snapshot).toContainText("Inspector-only improvement clue");
+    await expect(snapshot).toContainText("Reapplied private records activity");
+    await expect(snapshot).toContainText("cmd_compacted_private_records");
+    await snapshot.focus();
+    await expect(snapshot).toBeFocused();
+    await expectNoHorizontalPageOverflow(page);
+    await expectNoSeriousAccessibilityViolations(page);
+
+    if (testInfo.project.name === DESKTOP_PROJECT) {
+      const downloadPromise = page.waitForEvent("download");
+      await page.getByRole("button", {
+        name: "Export inspected snapshot",
+      }).click();
+      const download = await downloadPromise;
+      expect(download.suggestedFilename()).toBe(
+        "admin-inspection-workspace-admin-inspection.json",
+      );
+      const stream = await download.createReadStream();
+      expect(stream).not.toBeNull();
+      let exportedText = "";
+      for await (const chunk of stream!) {
+        exportedText += chunk.toString();
+      }
+      const exported = JSON.parse(exportedText) as typeof state;
+      expect(exported.items[0]).toEqual(expect.objectContaining({
+        name: "Private tax records",
+        notes: "Inspector-only improvement clue",
+      }));
+      expect(exported.commandReceipts).toContain(
+        "cmd_compacted_private_records",
+      );
+    }
+
+    const custodyButton = page.getByRole("button", {
+      name: "Take owner custody",
+    });
+    await custodyButton.focus();
+    await page.keyboard.press("Enter");
+    const custodyDialog = page.getByRole("dialog", {
+      name: "Take owner custody?",
+    });
+    await expect(custodyDialog).toBeVisible();
+    await expect(custodyDialog.getByRole("button", {
+      exact: true,
+      name: "Cancel",
+    })).toBeFocused();
+    await page.keyboard.press("Tab");
+    const confirmCustody = custodyDialog.getByRole("button", {
+      name: "Add owner membership",
+    });
+    await expect(confirmCustody).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(page.getByText(
+      "Owner custody added and audited",
+    )).toBeVisible();
+    await expect(page.getByText("Owner custody is active")).toBeVisible();
+    await expect(page.getByRole("link", {
+      name: "Open member settings",
+    })).toHaveAttribute(
+      "href",
+      "/workspaces/admin-inspection-workspace@ws_admin_inspector/settings",
+    );
+    await expect(page.getByRole("region", {
+      name: "Operator controls",
+    })).toBeFocused();
+    await expect.poll(() => workspaceRequests.filter(request =>
+      request.body.action === "takeOwnership"
+    )).toEqual([{
+      accountId,
+      body: {
+        action: "takeOwnership",
+        expectedAccessRevision: 7,
+      },
+      method: "POST",
+    }]);
+
+    const deleteButton = page.getByRole("button", {
+      name: "Delete server workspace",
+    });
+    await deleteButton.focus();
+    await page.keyboard.press("Enter");
+    const deletionDialog = page.getByRole("dialog", {
+      name: "Delete this server workspace?",
+    });
+    await expect(deletionDialog).toContainText(
+      "no server-side recovery window",
+    );
+    const confirmation = deletionDialog.getByRole("textbox");
+    await expect(confirmation).toBeFocused();
+    const confirmDelete = deletionDialog.getByRole("button", {
+      name: "Delete server workspace",
+    });
+    await expect(confirmDelete).toBeDisabled();
+    await confirmation.fill("Admin inspection workspac");
+    await expect(confirmDelete).toBeDisabled();
+    await confirmation.fill(workspaceName);
+    await expect(confirmDelete).toBeEnabled();
+    await page.keyboard.press("Tab");
+    await expect(deletionDialog.getByRole("button", {
+      exact: true,
+      name: "Cancel",
+    })).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(confirmDelete).toBeFocused();
+    await expectNoHorizontalPageOverflow(page);
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("heading", {
+      name: "Server workspace deleted",
+    })).toBeVisible();
+    await expect(page.getByText(
+      "There is no server-side recovery window",
+    )).toBeVisible();
+    await expect(page.getByText(
+      "prevents stale devices, sync, membership changes, and guest redemption",
+    )).toBeVisible();
+    await expect.poll(() => workspaceRequests.filter(request =>
+      request.method === "DELETE"
+    )).toEqual([{
+      accountId,
+      body: {
+        confirmationName: workspaceName,
+        expectedAccessRevision: 8,
+        expectedRevision: state.workspace.revision,
+      },
+      method: "DELETE",
+    }]);
+    await expectNoHorizontalPageOverflow(page);
+    await expectNoSeriousAccessibilityViolations(page);
+  },
+);
+
+test(
+  "ignores an older inspection response after newer custody reconciliation",
+  async ({ page }, testInfo) => {
+    skipUnlessProject(testInfo, [DESKTOP_PROJECT]);
+    const accountId = "usr_admin_inspection_race";
+    const workspaceId = "ws_admin_inspection_race";
+    const workspaceName = "Inspection race workspace";
+    const initialTimestamp = "2026-07-25T05:00:00.000Z";
+    const newerTimestamp = "2026-07-25T05:05:00.000Z";
+    const responseHeaders = {
+      [ACCOUNT_CONTEXT_HEADER]: accountId,
+    };
+    const initialState = {
+      activities: [],
+      audit: [],
+      commandReceipts: [],
+      items: [],
+      locations: [],
+      plans: [],
+      schemaVersion: 1,
+      workspace: {
+        createdAt: initialTimestamp,
+        id: workspaceId,
+        name: workspaceName,
+        revision: 4,
+        updatedAt: initialTimestamp,
+      },
+    };
+    const newerState = {
+      ...initialState,
+      workspace: {
+        ...initialState.workspace,
+        revision: 5,
+        updatedAt: newerTimestamp,
+      },
+    };
+    let inspectionCalls = 0;
+    let staleRequestCompleted = false;
+    let releaseStaleRequest: () => void = () => undefined;
+    let releaseLatestRequest: () => void = () => undefined;
+    const staleRequestGate = new Promise<void>((resolve) => {
+      releaseStaleRequest = resolve;
+    });
+    const latestRequestGate = new Promise<void>((resolve) => {
+      releaseLatestRequest = resolve;
+    });
+
+    await page.route("**/api/auth/me", route => route.fulfill({
+      body: JSON.stringify({
+        configured: true,
+        providers: ["development"],
+        user: {
+          displayName: "Inspection race administrator",
+          email: "inspection-race@example.test",
+          expiresAt: "2026-08-25T00:00:00.000Z",
+          globalRole: "admin",
+          userId: accountId,
+        },
+      }),
+      contentType: "application/json",
+      status: 200,
+    }));
+    await page.route(
+      `**/api/admin/workspaces/${workspaceId}`,
+      async route => {
+        const body = route.request().postDataJSON() as {
+          action?: string;
+        };
+        if (
+          route.request().method() !== "POST" ||
+          body.action !== "inspect"
+        ) {
+          await route.fulfill({
+            body: JSON.stringify({ error: "Unexpected inspector request" }),
+            contentType: "application/json",
+            headers: responseHeaders,
+            status: 400,
+          });
+          return;
+        }
+        inspectionCalls += 1;
+        const requestNumber = inspectionCalls;
+        if (requestNumber === 2) await staleRequestGate;
+        if (requestNumber === 3) await latestRequestGate;
+        const latest = requestNumber === 3;
+        await route.fulfill({
+          body: JSON.stringify({
+            accessRevision: latest ? 8 : 7,
+            createdAt: initialTimestamp,
+            inspectedAt: latest ? newerTimestamp : initialTimestamp,
+            operatorRole: latest ? "owner" : null,
+            snapshotBytes: JSON.stringify(
+              latest ? newerState : initialState,
+            ).length,
+            state: latest ? newerState : initialState,
+            updatedAt: latest ? newerTimestamp : initialTimestamp,
+            workspaceId,
+          }),
+          contentType: "application/json",
+          headers: responseHeaders,
+          status: 200,
+        });
+        if (requestNumber === 2) staleRequestCompleted = true;
+      },
+    );
+
+    try {
+      await page.goto(`/admin/workspaces/${workspaceId}`);
+      await expect(page.getByRole("heading", {
+        exact: true,
+        name: workspaceName,
+      })).toBeVisible();
+      const refresh = page.getByRole("button", {
+        name: /Refresh/,
+      });
+      await refresh.evaluate((element) => {
+        const button = element as HTMLButtonElement;
+        button.click();
+        button.click();
+      });
+      await expect.poll(() => inspectionCalls).toBe(3);
+      await expect(refresh).toBeDisabled();
+      await expect(page.getByRole("button", {
+        name: "Take owner custody",
+      })).toBeDisabled();
+      await expect(page.getByRole("button", {
+        name: "Delete server workspace",
+      })).toBeDisabled();
+      releaseLatestRequest();
+      await expect(page.getByText("Owner custody is active")).toBeVisible();
+      await expect(page.getByText("Access revision").locator(".."))
+        .toContainText("8");
+      await expect(page.getByText("Snapshot revision").locator(".."))
+        .toContainText("5");
+
+      releaseStaleRequest();
+      await expect.poll(() => staleRequestCompleted).toBe(true);
+      await page.evaluate(() => new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      }));
+      await expect(page.getByText("Owner custody is active")).toBeVisible();
+      await expect(page.getByRole("button", {
+        name: "Take owner custody",
+      })).toHaveCount(0);
+      await expect(page.getByText("Access revision").locator(".."))
+        .toContainText("8");
+      await expect(page.getByText("Snapshot revision").locator(".."))
+        .toContainText("5");
+    } finally {
+      releaseLatestRequest();
+      releaseStaleRequest();
+    }
   },
 );

@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { ModalDialog } from "../../src/client/modal-dialog";
 import { workspacePath } from "../../src/domain/app-url";
 import {
   API_QUOTAS,
@@ -25,6 +26,8 @@ type Row = Record<string, unknown>;
 interface ListInfo {
   hasMore: boolean;
   limit: number;
+  nextOffset?: number | null;
+  offset?: number;
 }
 
 interface InventoryMetric {
@@ -41,30 +44,93 @@ interface InventoryEntry {
   table: string;
 }
 
+interface AdminMutationPreconditions {
+  expectedAccessRevision?: number;
+  expectedMembershipRevision?: number;
+}
+
 interface Overview {
   audit: Row[];
   databaseInventory?: {
     entries: InventoryEntry[];
     generatedAt: string;
   };
+  deletions?: Row[];
   guestLinks: Row[];
   identities: Row[];
   limits?: Record<ApiQuotaName, number>;
   listInfo?: Partial<Record<
     | "audit"
+    | "deletions"
     | "guestLinks"
     | "identities"
     | "memberships"
+    | "migrations"
+    | "oauthStates"
     | "sessions"
     | "users"
     | "workspaces",
     ListInfo
   >>;
   memberships: Row[];
+  migrations?: Row[];
+  oauthStates?: Row[];
   query?: string;
   sessions: Row[];
   users: Row[];
   workspaces?: Row[];
+}
+
+type AdminResource =
+  | "audit"
+  | "deletions"
+  | "guestLinks"
+  | "identities"
+  | "memberships"
+  | "migrations"
+  | "oauthStates"
+  | "sessions"
+  | "users"
+  | "workspaces";
+
+type OverviewListField = Exclude<
+  keyof Overview,
+  "databaseInventory" | "limits" | "listInfo" | "query"
+>;
+
+const OVERVIEW_FIELD_BY_RESOURCE = Object.freeze({
+  audit: "audit",
+  deletions: "deletions",
+  guestLinks: "guestLinks",
+  identities: "identities",
+  memberships: "memberships",
+  migrations: "migrations",
+  oauthStates: "oauthStates",
+  sessions: "sessions",
+  users: "users",
+  workspaces: "workspaces",
+} satisfies Record<AdminResource, OverviewListField>);
+
+const INVENTORY_SECTION_BY_KEY = Object.freeze({
+  "auth-audit-events": "admin-audit",
+  "guest-links": "admin-guest-links",
+  identities: "admin-identities",
+  "migration-stream": "admin-migrations",
+  "oauth-states": "admin-oauth-states",
+  sessions: "admin-sessions",
+  users: "admin-users",
+  "workspace-deletions": "admin-deletions",
+  "workspace-members": "admin-memberships",
+  "workspace-snapshots": "admin-workspaces",
+});
+
+function inventorySection(entry: InventoryEntry): string {
+  if (entry.key.startsWith("migration-ledger:")) {
+    return "admin-migrations";
+  }
+  return INVENTORY_SECTION_BY_KEY[
+    entry.key as keyof typeof INVENTORY_SECTION_BY_KEY
+  ] ?? "database-inventory-heading";
 }
 
 function stringValue(value: unknown): string {
@@ -119,16 +185,16 @@ function resultCount(
 
 function resultNote(info: ListInfo | undefined): string | null {
   return info?.hasMore
-    ? `Showing the first ${info.limit} matches. Search to narrow the list.`
+    ? "More matching records are available. Load the next bounded page or search to narrow the list."
     : null;
 }
 
-function guestLinkStatus(row: Row): "available" | "expired" | "revoked" | "used" {
+function guestLinkStatus(row: Row): "active" | "expired" | "revoked" | "used" {
   if (row.revoked_at) return "revoked";
   if (row.consumed_at) return "used";
   return new Date(stringValue(row.expires_at)).getTime() <= Date.now()
     ? "expired"
-    : "available";
+    : "active";
 }
 
 function sessionStatus(row: Row): "active" | "expired" | "revoked" {
@@ -150,6 +216,21 @@ function nearLimit(actual: number, limit: number): boolean {
   return limit > 0 && actual / limit >= 0.8;
 }
 
+function focusAdminFragment(): boolean {
+  const fragment = window.location.hash.slice(1);
+  if (!fragment) return false;
+  let id: string;
+  try {
+    id = decodeURIComponent(fragment);
+  } catch {
+    return false;
+  }
+  const destination = document.getElementById(id);
+  if (!(destination instanceof HTMLElement)) return false;
+  destination.focus();
+  return true;
+}
+
 export default function AdminPage() {
   const [data, setData] = useState<Overview | null>(null);
   const [draftQuery, setDraftQuery] = useState("");
@@ -159,7 +240,13 @@ export default function AdminPage() {
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
   const [pendingAction, setPendingAction] = useState("");
+  const [pendingPage, setPendingPage] = useState<AdminResource | null>(
+    null,
+  );
+  const [pendingGuestDeletion, setPendingGuestDeletion] =
+    useState<Row | null>(null);
   const accountId = useRef<string | null>(null);
+  const initialFragmentHandled = useRef(false);
   const loadRequest = useRef(0);
   const load = useCallback(async (search = "") => {
     const requestId = loadRequest.current + 1;
@@ -223,10 +310,24 @@ export default function AdminPage() {
     const timer = window.setTimeout(() => void load(query), 0);
     return () => window.clearTimeout(timer);
   }, [load, query]);
+  useEffect(() => {
+    const focusDestination = () => {
+      window.requestAnimationFrame(() => focusAdminFragment());
+    };
+    window.addEventListener("hashchange", focusDestination);
+    return () => window.removeEventListener("hashchange", focusDestination);
+  }, []);
+  useEffect(() => {
+    if (!data || initialFragmentHandled.current) return;
+    initialFragmentHandled.current = true;
+    const frame = window.requestAnimationFrame(() => focusAdminFragment());
+    return () => window.cancelAnimationFrame(frame);
+  }, [data]);
   const mutate = async (
     action: string,
     targetId: string,
     value?: string,
+    preconditions: AdminMutationPreconditions = {},
   ) => {
     const actionKey = `${action}:${targetId}`;
     if (pendingAction) return;
@@ -241,15 +342,22 @@ export default function AdminPage() {
         );
       }
       const response = await fetch("/api/admin/mutate", {
-        body: JSON.stringify({ action, targetId, value }),
+        body: JSON.stringify({
+          action,
+          targetId,
+          value,
+          ...preconditions,
+        }),
         headers: accountContextHeaders(expectedAccountId, {
           "content-type": "application/json",
         }),
         method: "POST",
       });
       const body = await response.json().catch(() => null) as {
+        currentSessionRevoked?: boolean;
         error?: string;
         message?: string;
+        revokedSessions?: number;
       } | null;
       if (!response.ok) {
         throw new Error(
@@ -261,25 +369,100 @@ export default function AdminPage() {
           "The signed-in account changed; the administrative change was not accepted",
         );
       }
+      if (body?.currentSessionRevoked) return true;
       const refreshed = await load(query);
+      const resultMessage = body?.revokedSessions === undefined
+        ? body?.message ?? "Administrative change saved"
+        : `${body.message ?? "User disabled"}; revoked ${body.revokedSessions.toLocaleString()} active sessions`;
       setNotice(
         refreshed
-          ? body?.message ?? "Administrative change saved"
-          : `${body?.message ?? "Administrative change saved"}, but the records could not be refreshed`,
+          ? resultMessage
+          : `${resultMessage}, but the records could not be refreshed`,
       );
+      return true;
     } catch (reason) {
       setActionError(
         reason instanceof Error && reason.message
           ? reason.message
           : "Admin mutation failed",
       );
+      return false;
     } finally {
       setPendingAction("");
     }
   };
-  const submitSearch = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const next = draftQuery.trim();
+  const loadMore = async (resource: AdminResource) => {
+    const info = data?.listInfo?.[resource];
+    if (
+      pendingPage ||
+      !info?.hasMore ||
+      typeof info.nextOffset !== "number"
+    ) {
+      return;
+    }
+    const requestId = loadRequest.current;
+    setActionError("");
+    setPendingPage(resource);
+    try {
+      const expectedAccountId = accountId.current;
+      if (!expectedAccountId) {
+        throw new Error(
+          "Administrative account context is not ready; reload the page",
+        );
+      }
+      const params = new URLSearchParams({
+        offset: String(info.nextOffset),
+        resource,
+      });
+      if (query) params.set("q", query);
+      const response = await fetch(
+        `/api/admin/overview?${params.toString()}`,
+        {
+          cache: "no-store",
+          headers: accountContextHeaders(expectedAccountId),
+        },
+      );
+      const body = await response.json().catch(() => null) as
+        | (Overview & { error?: string })
+        | null;
+      if (!response.ok) {
+        throw new Error(
+          body?.error ?? `Could not load more records (${response.status})`,
+        );
+      }
+      if (!responseMatchesAccount(response, expectedAccountId)) {
+        throw new Error(
+          "The signed-in account changed; reload the admin page",
+        );
+      }
+      if (!body || requestId !== loadRequest.current) return;
+      const field = OVERVIEW_FIELD_BY_RESOURCE[resource];
+      const incoming = body[field] as Row[] | undefined;
+      setData(current => {
+        if (!current) return current;
+        const next = { ...current } as Overview &
+          Partial<Record<OverviewListField, Row[]>>;
+        const existing = next[field] ?? [];
+        next[field] = [...existing, ...(incoming ?? [])];
+        next.listInfo = {
+          ...current.listInfo,
+          [resource]: body.listInfo?.[resource],
+        };
+        return next;
+      });
+    } catch (reason) {
+      setActionError(
+        reason instanceof Error && reason.message
+          ? reason.message
+          : "Could not load more administrative records",
+      );
+    } finally {
+      setPendingPage(null);
+    }
+  };
+  const applySearch = (value: string) => {
+    const next = value.trim();
+    setDraftQuery(next);
     setActionError("");
     setNotice("");
     if (next === query) {
@@ -288,9 +471,36 @@ export default function AdminPage() {
       setQuery(next);
     }
   };
+  const submitSearch = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    applySearch(draftQuery);
+  };
   const limits = data?.limits ?? API_QUOTAS;
   const inventoryEntries = data?.databaseInventory?.entries ?? [];
   const workspaces = data?.workspaces ?? [];
+  const deletions = data?.deletions ?? [];
+  const oauthStates = data?.oauthStates ?? [];
+  const migrations = data?.migrations ?? [];
+  const pendingGuestStatus = pendingGuestDeletion
+    ? guestLinkStatus(pendingGuestDeletion)
+    : null;
+  const moreButton = (
+    resource: AdminResource,
+    label: string,
+  ) => {
+    const info = data?.listInfo?.[resource];
+    if (!info?.hasMore || typeof info.nextOffset !== "number") {
+      return null;
+    }
+    return <button
+      className="admin-load-more"
+      disabled={Boolean(pendingPage)}
+      onClick={() => void loadMore(resource)}
+      type="button"
+    >
+      {pendingPage === resource ? "Loading..." : `Load more ${label}`}
+    </button>;
+  };
 
   return <main className="admin-page">
     <header>
@@ -377,10 +587,19 @@ export default function AdminPage() {
           Database inventory <small>{inventoryEntries.length}</small>
         </h2>
         <p className="admin-list-note">
-          Bounded aggregate metadata for durable application tables. Workspace contents, raw invite URLs, authentication secrets, and provider assertions are not included.
+          Every durable application table is indexed here. Open a row for bounded records, lifecycle state, and safe operational details. Credential values, hashes, OAuth verifier material, and provider assertions stay obscured.
         </p>
-        <div className="admin-table admin-workspaces">
-          {inventoryEntries.map(entry => <div key={entry.key}>
+        {query && <p className="admin-list-note">
+          Inventory row counts describe the full database. The search filter applies to the record lists below.
+        </p>}
+        <nav
+          aria-label="Database inventory drill-down"
+          className="admin-table admin-inventory"
+        >
+          {inventoryEntries.map(entry => <a
+            href={`#${inventorySection(entry)}`}
+            key={entry.key}
+          >
             <span>
               <strong>{entry.label}</strong>
               <small>{entry.table}</small>
@@ -388,18 +607,25 @@ export default function AdminPage() {
                 {entry.metrics.map(formatInventoryMetric).join(" · ")}
               </small>}
             </span>
-            <b>{entry.rowCount.toLocaleString()} rows</b>
-          </div>)}
+            <span className="admin-inventory-count">
+              <b>{entry.rowCount.toLocaleString()} rows</b>
+              <small>View records</small>
+            </span>
+          </a>)}
           {!inventoryEntries.length && <p className="admin-empty">
             Database inventory is unavailable
           </p>}
-        </div>
+        </nav>
         {data.databaseInventory?.generatedAt && <small>
           Generated {formatDate(data.databaseInventory.generatedAt)}
         </small>}
       </section>
-      <section>
-        <h2>
+      <section
+        aria-labelledby="admin-workspaces-heading"
+        id="admin-workspaces"
+        tabIndex={-1}
+      >
+        <h2 id="admin-workspaces-heading">
           Workspaces <small>{resultCount(
             workspaces,
             data.listInfo?.workspaces,
@@ -408,7 +634,11 @@ export default function AdminPage() {
         {resultNote(data.listInfo?.workspaces) && <p className="admin-list-note">
           {resultNote(data.listInfo?.workspaces)}
         </p>}
-        <div className="admin-table admin-workspaces">
+        <div
+          aria-label="Workspace records"
+          className="admin-table admin-workspaces"
+          role="list"
+        >
           {workspaces.map(workspace => {
             const workspaceId = stringValue(workspace.workspace_id);
             const workspaceName =
@@ -459,10 +689,21 @@ export default function AdminPage() {
                 commandReceiptCount,
                 limits.commandReceiptsPerSnapshot,
               );
-            return <div key={workspaceId}>
+            return <div
+              aria-label={`Workspace ${workspaceName}`}
+              key={workspaceId}
+              role="listitem"
+            >
               <span>
                 <strong>{workspaceName}</strong>
                 <small>{workspaceId}</small>
+                <small>
+                  Snapshot revision {numberValue(workspace.revision)}
+                  {" · "}
+                  access revision {numberValue(workspace.access_revision)}
+                  {" · "}
+                  created {formatDate(workspace.created_at)}
+                </small>
                 <small data-near-limit={
                   collaborationNearLimit ||
                   nearLimit(snapshotBytes, limits.storedSnapshotBytes)
@@ -496,22 +737,49 @@ export default function AdminPage() {
                   updated {formatDate(workspace.updated_at)}
                 </small>
               </span>
-              {numberValue(workspace.viewer_is_member) > 0
-                ? <Link href={workspacePath({
-                  view: "settings",
-                  workspaceId,
-                  workspaceLabel: workspaceName,
-                })}>
-                  Open settings
+              <span
+                aria-label={`Actions for workspace ${workspaceName}`}
+                className="admin-row-actions"
+                role="group"
+              >
+                <Link
+                  aria-label={`Inspect content (audited) for ${workspaceName}`}
+                  href={`/admin/workspaces/${encodeURIComponent(workspaceId)}`}
+                >
+                  Inspect content (audited)
                 </Link>
-                : <small className="admin-access-note">Not a member</small>}
+                {numberValue(workspace.viewer_is_member) > 0
+                  ? <Link
+                      aria-label={`Open member settings for ${workspaceName}`}
+                      href={workspacePath({
+                        view: "settings",
+                        workspaceId,
+                        workspaceLabel: workspaceName,
+                      })}
+                    >
+                      Open member settings
+                    </Link>
+                  : <small className="admin-access-note">
+                      No ordinary membership
+                    </small>}
+              </span>
             </div>;
           })}
-          {!workspaces.length && <p className="admin-empty">No matching workspaces</p>}
+          {!workspaces.length && <p
+            className="admin-empty"
+            role="listitem"
+          >
+            No matching workspaces
+          </p>}
         </div>
+        {moreButton("workspaces", "workspaces")}
       </section>
-      <section>
-        <h2>
+      <section
+        aria-labelledby="admin-users-heading"
+        id="admin-users"
+        tabIndex={-1}
+      >
+        <h2 id="admin-users-heading">
           Users <small>{resultCount(
             data.users,
             data.listInfo?.users,
@@ -520,22 +788,47 @@ export default function AdminPage() {
         {resultNote(data.listInfo?.users) && <p className="admin-list-note">
           {resultNote(data.listInfo?.users)}
         </p>}
-        <div className="admin-table">
+        <div
+          aria-label="User records"
+          className="admin-table"
+          role="list"
+        >
           {data.users.map(user => {
             const email = stringValue(user.email);
             const userId = stringValue(user.user_id);
             const role = stringValue(user.global_role);
             const status = stringValue(user.status);
-            return <div key={userId}>
+            const userLabel = email || userId;
+            return <div
+              aria-label={`User ${userLabel}`}
+              key={userId}
+              role="listitem"
+            >
               <span>
                 <strong>{stringValue(user.display_name)}</strong>
                 <small>{email}</small>
                 <small>
+                  {userId}
+                  {" · "}
+                  {role}
+                  {" · "}
+                  {status}
+                  {" · "}
+                  membership revision {numberValue(user.membership_revision)}
+                </small>
+                <small>
                   {numberValue(user.owned_workspace_count)}/{limits.ownedWorkspacesPerUser} owned workspaces
+                </small>
+                <small>
+                  Created {formatDate(user.created_at)}
+                  {" · "}
+                  updated {formatDate(user.updated_at)}
+                  {" · "}
+                  last server activity {formatDate(user.last_seen_at)}
                 </small>
               </span>
               <select
-                aria-label={`Role for ${email}`}
+                aria-label={`Role for ${userLabel}`}
                 disabled={Boolean(pendingAction)}
                 onChange={event =>
                   void mutate("user.role", userId, event.target.value)}
@@ -545,22 +838,45 @@ export default function AdminPage() {
                 <option>admin</option>
               </select>
               <button
+                aria-label={status === "active"
+                  ? `Disable and sign out ${userLabel}`
+                  : `Enable ${userLabel}`}
+                className={status === "active" ? "danger" : undefined}
                 disabled={Boolean(pendingAction)}
-                onClick={() => void mutate(
-                  "user.status",
-                  userId,
-                  status === "active" ? "disabled" : "active",
-                )}
+                onClick={() => {
+                  const nextStatus =
+                    status === "active" ? "disabled" : "active";
+                  if (
+                    nextStatus === "active" ||
+                    confirm(
+                      `Disable ${userLabel} and revoke all of their active sessions? Re-enabling the account will not revive those sessions.`,
+                    )
+                  ) {
+                    void mutate("user.status", userId, nextStatus);
+                  }
+                }}
               >
-                {status === "active" ? "Disable" : "Enable"}
+                {status === "active"
+                  ? "Disable and sign out"
+                  : "Enable"}
               </button>
             </div>;
           })}
-          {!data.users.length && <p className="admin-empty">No matching users</p>}
+          {!data.users.length && <p
+            className="admin-empty"
+            role="listitem"
+          >
+            No matching users
+          </p>}
         </div>
+        {moreButton("users", "users")}
       </section>
-      <section>
-        <h2>
+      <section
+        aria-labelledby="admin-identities-heading"
+        id="admin-identities"
+        tabIndex={-1}
+      >
+        <h2 id="admin-identities-heading">
           Linked identities <small>{resultCount(
             data.identities,
             data.listInfo?.identities,
@@ -569,17 +885,44 @@ export default function AdminPage() {
         {resultNote(data.listInfo?.identities) && <p className="admin-list-note">
           {resultNote(data.listInfo?.identities)}
         </p>}
-        <div className="admin-table">
+        <div
+          aria-label="Linked identity records"
+          className="admin-table"
+          role="list"
+        >
           {data.identities.map(identity => {
             const identityId = stringValue(identity.identity_id);
             const identityEmail = stringValue(identity.email);
             const provider = stringValue(identity.provider);
-            return <div key={identityId}>
+            const identityLabel =
+              `${provider} ${identityEmail || identityId}`.trim();
+            return <div
+              aria-label={`Linked identity ${identityLabel}`}
+              key={identityId}
+              role="listitem"
+            >
               <span>
                 <strong>{provider} · {identityEmail}</strong>
-                <small>User {stringValue(identity.user_email)} · last used {formatDate(identity.last_used_at)}</small>
+                <small>
+                  User {stringValue(identity.user_display_name)}
+                  {" · "}
+                  {stringValue(identity.user_email)}
+                  {" · "}
+                  {stringValue(identity.user_status)}
+                </small>
+                <small>
+                  Identity {identityId}
+                  {" · "}
+                  provider subject {stringValue(identity.provider_subject)}
+                </small>
+                <small>
+                  Created {formatDate(identity.created_at)}
+                  {" · "}
+                  last used {formatDate(identity.last_used_at)}
+                </small>
               </span>
               <button
+                aria-label={`Unlink ${identityLabel}`}
                 className="danger"
                 disabled={Boolean(pendingAction)}
                 onClick={() => {
@@ -596,11 +939,21 @@ export default function AdminPage() {
               </button>
             </div>;
           })}
-          {!data.identities.length && <p className="admin-empty">No matching identities</p>}
+          {!data.identities.length && <p
+            className="admin-empty"
+            role="listitem"
+          >
+            No matching identities
+          </p>}
         </div>
+        {moreButton("identities", "identities")}
       </section>
-      <section>
-        <h2>
+      <section
+        aria-labelledby="admin-memberships-heading"
+        id="admin-memberships"
+        tabIndex={-1}
+      >
+        <h2 id="admin-memberships-heading">
           Workspace access <small>{resultCount(
             data.memberships,
             data.listInfo?.memberships,
@@ -609,7 +962,11 @@ export default function AdminPage() {
         {resultNote(data.listInfo?.memberships) && <p className="admin-list-note">
           {resultNote(data.listInfo?.memberships)}
         </p>}
-        <div className="admin-table">
+        <div
+          aria-label="Workspace membership records"
+          className="admin-table"
+          role="list"
+        >
           {data.memberships.map(membership => {
             const workspaceId = stringValue(membership.workspace_id);
             const workspaceName =
@@ -617,16 +974,53 @@ export default function AdminPage() {
             const userId = stringValue(membership.user_id);
             const email = stringValue(membership.email);
             const target = `${workspaceId}::${userId}`;
-            return <div key={target}>
+            const memberLabel = email || userId;
+            return <div
+              aria-label={`Workspace membership for ${memberLabel} in ${workspaceName}`}
+              key={target}
+              role="listitem"
+            >
               <span>
                 <strong>{workspaceName}</strong>
-                <small>{email}</small>
+                <small>
+                  {stringValue(membership.display_name)}
+                  {" · "}
+                  {email}
+                  {" · "}
+                  {stringValue(membership.user_status)}
+                </small>
+                <small>
+                  Workspace {workspaceId}
+                  {" · "}
+                  user {userId}
+                  {" · "}
+                  created {formatDate(membership.created_at)}
+                </small>
+                <small>
+                  Workspace revision {numberValue(membership.workspace_revision)}
+                  {" · "}
+                  access revision {numberValue(membership.workspace_access_revision)}
+                  {" · "}
+                  user membership revision {numberValue(membership.membership_revision)}
+                </small>
               </span>
               <select
-                aria-label={`Workspace role for ${email} in ${workspaceName}`}
+                aria-label={`Workspace role for ${memberLabel} in ${workspaceName}`}
                 disabled={Boolean(pendingAction)}
                 onChange={event =>
-                  void mutate("member.role", target, event.target.value)}
+                  void mutate(
+                    "member.role",
+                    target,
+                    event.target.value,
+                    {
+                      expectedAccessRevision: numberValue(
+                        membership.workspace_access_revision,
+                      ),
+                      expectedMembershipRevision: numberValue(
+                        membership.membership_revision,
+                      ),
+                    },
+                  )}
                 value={stringValue(membership.role)}
               >
                 <option>viewer</option>
@@ -634,15 +1028,28 @@ export default function AdminPage() {
                 <option>owner</option>
               </select>
               <button
+                aria-label={`Remove ${memberLabel} from ${workspaceName}`}
                 className="danger"
                 disabled={Boolean(pendingAction)}
                 onClick={() => {
                   if (
                     confirm(
-                      `Remove ${email} from ${workspaceName}?`,
+                      `Remove ${memberLabel} from ${workspaceName}?`,
                     )
                   ) {
-                    void mutate("member.remove", target);
+                    void mutate(
+                      "member.remove",
+                      target,
+                      undefined,
+                      {
+                        expectedAccessRevision: numberValue(
+                          membership.workspace_access_revision,
+                        ),
+                        expectedMembershipRevision: numberValue(
+                          membership.membership_revision,
+                        ),
+                      },
+                    );
                   }
                 }}
               >
@@ -650,11 +1057,21 @@ export default function AdminPage() {
               </button>
             </div>;
           })}
-          {!data.memberships.length && <p className="admin-empty">No matching memberships</p>}
+          {!data.memberships.length && <p
+            className="admin-empty"
+            role="listitem"
+          >
+            No matching memberships
+          </p>}
         </div>
+        {moreButton("memberships", "memberships")}
       </section>
-      <section>
-        <h2>
+      <section
+        aria-labelledby="admin-sessions-heading"
+        id="admin-sessions"
+        tabIndex={-1}
+      >
+        <h2 id="admin-sessions-heading">
           Sessions <small>{resultCount(
             data.sessions,
             data.listInfo?.sessions,
@@ -663,30 +1080,104 @@ export default function AdminPage() {
         {resultNote(data.listInfo?.sessions) && <p className="admin-list-note">
           {resultNote(data.listInfo?.sessions)}
         </p>}
-        <div className="admin-table">
+        <p className="admin-list-note">
+          The session used to load this page is identified as the current browser session. Revoking it signs this browser out immediately.
+        </p>
+        <div
+          aria-label="Session records"
+          className="admin-table"
+          role="list"
+        >
           {data.sessions.map(session => {
             const sessionId = stringValue(session.session_id);
             const status = sessionStatus(session);
-            return <div key={sessionId}>
+            const email = stringValue(session.email);
+            const displayName = stringValue(session.display_name);
+            const sessionUser =
+              email || displayName || stringValue(session.user_id);
+            const isCurrent =
+              numberValue(session.viewer_is_current) > 0;
+            return <div
+              aria-label={`Session ${sessionId} for ${sessionUser}`}
+              key={sessionId}
+              role="listitem"
+            >
               <span>
-                <strong>{stringValue(session.email)}</strong>
-                <small>Last seen {formatDate(session.last_seen_at)} · expires {formatDate(session.expires_at)}</small>
+                <strong>
+                  {displayName}
+                  {" · "}
+                  {email}
+                </strong>
+                {isCurrent && <small className="admin-current-session">
+                  Current browser session
+                </small>}
+                <small>
+                  Session {sessionId}
+                  {" · "}
+                  user {stringValue(session.user_id)}
+                  {" · "}
+                  {stringValue(session.global_role)}
+                  {" · "}
+                  account {stringValue(session.status)}
+                </small>
+                <small>
+                  {stringValue(session.user_agent) || "Browser or device not recorded"}
+                </small>
+                <small>
+                  Coarse network {stringValue(session.ip_prefix) || "not recorded"}
+                </small>
+                <small>
+                  Created {formatDate(session.created_at)}
+                  {" · "}
+                  last server activity {formatDate(session.last_seen_at)}
+                  {" · "}
+                  expires {formatDate(session.expires_at)}
+                  {session.revoked_at
+                    ? ` · revoked ${formatDate(session.revoked_at)}`
+                    : ""}
+                </small>
               </span>
               <b data-status={status}>{status}</b>
               <button
+                aria-label={isCurrent
+                  ? `Revoke current session ${sessionId} for ${sessionUser} and sign out`
+                  : `Revoke session ${sessionId} for ${sessionUser}`}
+                className="danger"
                 disabled={Boolean(pendingAction) || status !== "active"}
-                onClick={() =>
-                  void mutate("session.revoke", sessionId)}
+                onClick={() => {
+                  const message = isCurrent
+                    ? `Revoke your current browser session ${sessionId}? This signs you out immediately. Local workspace data stays on this device.`
+                    : `Revoke session ${sessionId} for ${sessionUser}? That browser or device will be signed out and must sign in again.`;
+                  if (!confirm(message)) return;
+                  void mutate("session.revoke", sessionId).then(saved => {
+                    if (saved && isCurrent) {
+                      window.location.assign(
+                        "/account?returnTo=/admin",
+                      );
+                    }
+                  });
+                }}
+                type="button"
               >
-                Revoke
+                {isCurrent ? "Revoke and sign out" : "Revoke"}
               </button>
             </div>;
           })}
-          {!data.sessions.length && <p className="admin-empty">No matching sessions</p>}
+          {!data.sessions.length && <p
+            className="admin-empty"
+            role="listitem"
+          >
+            No matching sessions
+          </p>}
         </div>
+        {moreButton("sessions", "sessions")}
       </section>
-      <section>
-        <h2>
+      <section
+        aria-labelledby="admin-guest-links-heading"
+        id="admin-guest-links"
+        tabIndex={-1}
+      >
+        <h2 id="admin-guest-links-heading">
           Single-use enrollment links <small>{resultCount(
             data.guestLinks,
             data.listInfo?.guestLinks,
@@ -695,58 +1186,424 @@ export default function AdminPage() {
         {resultNote(data.listInfo?.guestLinks) && <p className="admin-list-note">
           {resultNote(data.listInfo?.guestLinks)}
         </p>}
-        <div className="admin-table">
+        <div
+          aria-label="Enrollment link records"
+          className="admin-table"
+          role="list"
+        >
           {data.guestLinks.map(link => {
             const guestLinkId = stringValue(link.guest_link_id);
             const status = guestLinkStatus(link);
             const workspaceName =
               stringValue(link.workspace_name) ||
               stringValue(link.workspace_id);
-            return <div key={guestLinkId}>
+            const redeemedByUserId =
+              stringValue(link.redeemed_by_user_id);
+            const redeemedByDisplayName =
+              stringValue(link.redeemed_by_display_name);
+            const redeemedByEmail =
+              stringValue(link.redeemed_by_email);
+            const redeemedByLabel =
+              redeemedByDisplayName || redeemedByEmail ||
+              redeemedByUserId;
+            const acceptedAt = stringValue(link.accepted_at);
+            return <div
+              aria-label={`Enrollment link ${guestLinkId} for ${workspaceName}`}
+              key={guestLinkId}
+              role="listitem"
+            >
               <span>
                 <strong>{stringValue(link.role)} · {workspaceName}</strong>
-                <small>Expires {formatDate(link.expires_at)}</small>
+                <small>
+                  Link {guestLinkId}
+                  {" · "}
+                  workspace {stringValue(link.workspace_id)}
+                </small>
+                <small>
+                  Created by {stringValue(link.created_by_display_name)}
+                  {" · "}
+                  {stringValue(link.created_by_email)}
+                  {" · "}
+                  {stringValue(link.created_by_user_id)}
+                </small>
+                <small>
+                  Creator {stringValue(link.created_by_global_role)}
+                  {" · "}
+                  account {stringValue(link.created_by_status)}
+                  {" · "}
+                  membership revision {numberValue(link.created_by_membership_revision)}
+                </small>
+                <small>
+                  Workspace revision {numberValue(link.workspace_revision)}
+                  {" · "}
+                  access revision {numberValue(link.workspace_access_revision)}
+                  {" · "}
+                  updated {formatDate(link.workspace_updated_at)}
+                </small>
+                <small>
+                  Created {formatDate(link.created_at)}
+                  {" · "}
+                  expires {formatDate(link.expires_at)}
+                  {link.consumed_at
+                    ? ` · used ${formatDate(link.consumed_at)}`
+                    : ""}
+                  {link.revoked_at
+                    ? ` · revoked ${formatDate(link.revoked_at)}`
+                    : ""}
+                </small>
+                {Boolean(link.redemption_id) && <small>
+                  Redemption {stringValue(link.redemption_id)}
+                </small>}
+                {status === "used" && redeemedByUserId && <>
+                  <small>
+                    Accepted by {redeemedByDisplayName || "Unnamed user"}
+                    {" · "}
+                    {redeemedByEmail || "Email unavailable"}
+                    {" · "}
+                    user {redeemedByUserId}
+                    {acceptedAt
+                      ? ` · accepted ${formatDate(acceptedAt)}`
+                      : ""}
+                  </small>
+                  <span
+                    aria-label={`Find accepted member ${redeemedByLabel}`}
+                    className="admin-row-actions"
+                    role="group"
+                  >
+                    <a
+                      aria-label={`Find user ${redeemedByLabel}`}
+                      href="#admin-users"
+                      onClick={() => applySearch(redeemedByUserId)}
+                    >
+                      Find user
+                    </a>
+                    <a
+                      aria-label={`Find membership for ${redeemedByLabel}`}
+                      href="#admin-memberships"
+                      onClick={() => applySearch(redeemedByUserId)}
+                    >
+                      Find membership
+                    </a>
+                  </span>
+                </>}
               </span>
               <b data-status={status}>{status}</b>
-              <button
-                disabled={Boolean(pendingAction) || status !== "available"}
-                onClick={() => void mutate("guest.revoke", guestLinkId)}
+              <span
+                aria-label={`Actions for enrollment link ${guestLinkId}`}
+                className="admin-row-actions"
+                role="group"
               >
-                Revoke
-              </button>
+                <button
+                  aria-label={`Revoke enrollment link ${guestLinkId} for ${workspaceName}`}
+                  disabled={Boolean(pendingAction) || status !== "active"}
+                  onClick={() => void mutate("guest.revoke", guestLinkId)}
+                  type="button"
+                >
+                  Revoke
+                </button>
+                <button
+                  aria-label={`Delete record for enrollment link ${guestLinkId} in ${workspaceName}`}
+                  className="danger"
+                  disabled={Boolean(pendingAction)}
+                  onClick={() => setPendingGuestDeletion(link)}
+                  type="button"
+                >
+                  Delete record
+                </button>
+              </span>
             </div>;
           })}
-          {!data.guestLinks.length && <p className="admin-empty">No matching enrollment links</p>}
+          {!data.guestLinks.length && <p
+            className="admin-empty"
+            role="listitem"
+          >
+            No matching enrollment links
+          </p>}
         </div>
+        {moreButton("guestLinks", "enrollment links")}
       </section>
-      <section>
-        <h2>
+      <section
+        aria-labelledby="admin-deletions-heading"
+        id="admin-deletions"
+        tabIndex={-1}
+      >
+        <h2 id="admin-deletions-heading">
+          Workspace deletion tombstones <small>{resultCount(
+            deletions,
+            data.listInfo?.deletions,
+          )}</small>
+        </h2>
+        <p className="admin-list-note">
+          Tombstones are retained to prevent deleted server workspaces from being recreated by stale devices.
+        </p>
+        {resultNote(data.listInfo?.deletions) && <p className="admin-list-note">
+          {resultNote(data.listInfo?.deletions)}
+        </p>}
+        <div
+          aria-label="Workspace deletion records"
+          className="admin-table admin-records"
+          role="list"
+        >
+          {deletions.map(deletion => {
+            const deletionId = stringValue(deletion.deletion_id);
+            const workspaceId = stringValue(deletion.workspace_id);
+            return <div
+              aria-label={`Deletion ${deletionId} for workspace ${workspaceId}`}
+              key={deletionId}
+              role="listitem"
+            >
+              <span>
+                <strong>{workspaceId}</strong>
+                <small>Deletion {deletionId}</small>
+                <small>
+                  Deleted {formatDate(deletion.deleted_at)}
+                  {" · "}
+                  by {stringValue(deletion.deleted_by_display_name) || "system"}
+                  {" · "}
+                  {stringValue(deletion.deleted_by_email)}
+                  {" · "}
+                  {stringValue(deletion.deleted_by_user_id)}
+                </small>
+                <small>
+                  Final snapshot revision {numberValue(deletion.final_snapshot_revision)}
+                  {" · "}
+                  final access revision {numberValue(deletion.final_access_revision)}
+                </small>
+              </span>
+            </div>;
+          })}
+          {!deletions.length && <p
+            className="admin-empty"
+            role="listitem"
+          >
+            No matching deletion tombstones
+          </p>}
+        </div>
+        {moreButton("deletions", "deletion tombstones")}
+      </section>
+      <section
+        aria-labelledby="admin-oauth-states-heading"
+        id="admin-oauth-states"
+        tabIndex={-1}
+      >
+        <h2 id="admin-oauth-states-heading">
+          OAuth diagnostics <small>{resultCount(
+            oauthStates,
+            data.listInfo?.oauthStates,
+          )}</small>
+        </h2>
+        <p className="admin-list-note">
+          Lifecycle metadata is visible without state hashes, PKCE verifiers, authorization codes, tokens, or return paths that could contain an invite.
+        </p>
+        {resultNote(data.listInfo?.oauthStates) && <p className="admin-list-note">
+          {resultNote(data.listInfo?.oauthStates)}
+        </p>}
+        <div
+          aria-label="OAuth diagnostic records"
+          className="admin-table admin-records"
+          role="list"
+        >
+          {oauthStates.map((oauth, index) => {
+            const status = stringValue(oauth.status);
+            const key = [
+              stringValue(oauth.provider),
+              stringValue(oauth.created_at),
+              String(index),
+            ].join(":");
+            return <div
+              aria-label={`OAuth ${stringValue(oauth.provider)} ${status} record`}
+              key={key}
+              role="listitem"
+            >
+              <span>
+                <strong>{stringValue(oauth.provider)}</strong>
+                <small>
+                  Created {formatDate(oauth.created_at)}
+                  {" · "}
+                  expires {formatDate(oauth.expires_at)}
+                  {Boolean(oauth.consumed_at)
+                    ? ` · consumed ${formatDate(oauth.consumed_at)}`
+                    : ""}
+                </small>
+              </span>
+              <b data-status={status}>{status}</b>
+            </div>;
+          })}
+          {!oauthStates.length && <p
+            className="admin-empty"
+            role="listitem"
+          >
+            No matching OAuth state rows
+          </p>}
+        </div>
+        {moreButton("oauthStates", "OAuth records")}
+      </section>
+      <section
+        aria-labelledby="admin-migrations-heading"
+        id="admin-migrations"
+        tabIndex={-1}
+      >
+        <h2 id="admin-migrations-heading">
+          Migration records <small>{resultCount(
+            migrations,
+            data.listInfo?.migrations,
+          )}</small>
+        </h2>
+        {resultNote(data.listInfo?.migrations) && <p className="admin-list-note">
+          {resultNote(data.listInfo?.migrations)}
+        </p>}
+        <div
+          aria-label="Migration records"
+          className="admin-table admin-records"
+          role="list"
+        >
+          {migrations.map((migration, index) => {
+            const table = stringValue(migration.ledger_table);
+            const record = stringValue(migration.name) ||
+              stringValue(migration.migration_id) ||
+              `record ${index + 1}`;
+            return <div
+              aria-label={`Migration ${record} in ${table}`}
+              key={`${table}:${record}:${index}`}
+              role="listitem"
+            >
+              <span>
+                <strong>{record}</strong>
+                <small>{table}</small>
+                <small>Applied {formatDate(migration.applied_at)}</small>
+              </span>
+            </div>;
+          })}
+          {!migrations.length && <p
+            className="admin-empty"
+            role="listitem"
+          >
+            No matching migration ledger rows
+          </p>}
+        </div>
+        {moreButton("migrations", "migration records")}
+      </section>
+      <section
+        aria-labelledby="admin-audit-heading"
+        id="admin-audit"
+        tabIndex={-1}
+      >
+        <h2 id="admin-audit-heading">
           Auth audit <small>{resultCount(
             data.audit,
             data.listInfo?.audit,
           )}</small>
         </h2>
+        <p className="admin-list-note">
+          Successful security and control-plane changes are retained indefinitely unless an operator applies a documented retention policy.
+        </p>
         {resultNote(data.listInfo?.audit) && <p className="admin-list-note">
           {resultNote(data.listInfo?.audit)}
         </p>}
-        <div className="admin-table admin-audit">
+        <div
+          aria-label="Authentication audit records"
+          className="admin-table admin-audit"
+          role="list"
+        >
           {data.audit.map(event => {
             const eventId = stringValue(event.event_id);
             const detail = prettyDetail(event.detail_json);
-            return <div key={eventId}>
+            const action = stringValue(event.action);
+            return <div
+              aria-label={`Audit event ${eventId}: ${action}`}
+              key={eventId}
+              role="listitem"
+            >
               <span>
-                <strong>{stringValue(event.action)}</strong>
-                <small>{formatDate(event.created_at)} · {stringValue(event.actor_email) || "system"} · {stringValue(event.target_type)} · {stringValue(event.target_id)}</small>
+                <strong>{action}</strong>
+                <small>
+                  {formatDate(event.created_at)}
+                  {" · "}
+                  {stringValue(event.actor_display_name) || "system"}
+                  {" · "}
+                  {stringValue(event.actor_email)}
+                  {" · "}
+                  {stringValue(event.actor_user_id)}
+                </small>
+                <small>
+                  {stringValue(event.target_type)}
+                  {" · "}
+                  {stringValue(event.target_id)}
+                </small>
+                {Boolean(event.ip_prefix) && <small>
+                  Coarse network {stringValue(event.ip_prefix)}
+                </small>}
               </span>
               {detail && <details>
-                <summary>Details</summary>
+                <summary
+                  aria-label={`Details for audit event ${eventId}: ${action}`}
+                >
+                  Details
+                </summary>
                 <pre>{detail}</pre>
               </details>}
             </div>;
           })}
-          {!data.audit.length && <p className="admin-empty">No matching audit events</p>}
+          {!data.audit.length && <p
+            className="admin-empty"
+            role="listitem"
+          >
+            No matching audit events
+          </p>}
         </div>
+        {moreButton("audit", "audit events")}
       </section>
+      <ModalDialog
+        busy={Boolean(pendingAction)}
+        description={<>
+          <p>
+            This permanently removes the retained guest-link record and invalidates the link if it is still active. The raw invite URL cannot be recovered.
+          </p>
+          {pendingGuestDeletion && <p>
+            Link {stringValue(pendingGuestDeletion.guest_link_id)} for {stringValue(pendingGuestDeletion.workspace_name) || stringValue(pendingGuestDeletion.workspace_id)} will be deleted.
+          </p>}
+          {Boolean(pendingGuestDeletion?.consumed_at) && <p>
+            This link was already used. Deleting its record does not remove the resulting workspace member.
+          </p>}
+        </>}
+        destructive
+        onClose={() => {
+          if (!pendingAction) setPendingGuestDeletion(null);
+        }}
+        open={Boolean(pendingGuestDeletion)}
+        title="Delete this guest-link record?"
+      >
+        <div className="admin-dialog-actions">
+          <button
+            data-dialog-initial-focus
+            disabled={Boolean(pendingAction)}
+            onClick={() => setPendingGuestDeletion(null)}
+            type="button"
+          >
+            Cancel
+          </button>
+          <button
+            className="danger"
+            disabled={Boolean(pendingAction)}
+            onClick={() => {
+              const guestLinkId = stringValue(
+                pendingGuestDeletion?.guest_link_id,
+              );
+              if (!guestLinkId) return;
+              void mutate("guest.delete", guestLinkId).then(saved => {
+                if (saved) setPendingGuestDeletion(null);
+              });
+            }}
+            type="button"
+          >
+            {pendingAction
+              ? "Deleting..."
+              : pendingGuestStatus === "active"
+                ? "Delete and invalidate"
+                : "Delete retained record"}
+          </button>
+        </div>
+      </ModalDialog>
     </>}
   </main>;
 }

@@ -9,6 +9,7 @@ import type {
   WorkspaceState,
 } from "../domain/types";
 import { API_QUOTAS } from "../shared/api-quotas";
+import { safeAuditDetailJson } from "./audit-detail";
 
 export type WorkspaceInitializationStatus =
   | "created"
@@ -133,7 +134,7 @@ export async function initializeOwnedWorkspace(
       newId("audit"),
       userId,
       workspaceId,
-      JSON.stringify({ role: "owner" }),
+      safeAuditDetailJson("workspace.claim", { role: "owner" }),
       now,
     ),
     database.prepare(
@@ -262,13 +263,16 @@ export async function restoreOwnedWorkspace(
         newId("audit"),
         userId,
         workspaceId,
-        JSON.stringify({
-          fromRevision: sourceRevision,
-          items: state.items.length,
-          locations: state.locations.length,
-          plans: state.plans.length,
-          toRevision: state.workspace.revision,
-        }),
+        safeAuditDetailJson(
+          "snapshot.restore",
+          {
+            fromRevision: sourceRevision,
+            items: state.items.length,
+            locations: state.locations.length,
+            plans: state.plans.length,
+            toRevision: state.workspace.revision,
+          },
+        ),
         now,
       ),
       database.prepare(

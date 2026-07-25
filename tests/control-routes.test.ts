@@ -8,18 +8,23 @@ const OWNER_ACCOUNT_ID = "usr_owner";
 const mocks = vi.hoisted(() => ({
   adminMutation: vi.fn(),
   adminOverview: vi.fn(),
+  adminOverviewPage: vi.fn(),
   authenticate: vi.fn(),
   authorizeAdmin: vi.fn(),
+  beginOAuth: vi.fn(),
   consumeGuestLink: vi.fn(),
   createWorkspaceGuestLink: vi.fn(),
   createOrLinkUser: vi.fn(),
   getWorkspaceAccess: vi.fn(),
   issueSession: vi.fn(),
+  isTrustedMutation: vi.fn(() => true),
+  provider: vi.fn(),
 }));
 
 vi.mock("../src/server/admin", () => ({
   adminMutation: mocks.adminMutation,
   adminOverview: mocks.adminOverview,
+  adminOverviewPage: mocks.adminOverviewPage,
   audit: vi.fn(),
 }));
 
@@ -27,10 +32,12 @@ vi.mock("../src/server/auth", async (importOriginal) => ({
   ...await importOriginal<typeof import("../src/server/auth")>(),
   authenticate: mocks.authenticate,
   authorizeAdmin: mocks.authorizeAdmin,
+  beginOAuth: mocks.beginOAuth,
   consumeGuestLink: mocks.consumeGuestLink,
   createOrLinkUser: mocks.createOrLinkUser,
-  isTrustedMutation: vi.fn(() => true),
+  isTrustedMutation: mocks.isTrustedMutation,
   issueSession: mocks.issueSession,
+  provider: mocks.provider,
   sessionCookie: vi.fn(() => "session=test"),
 }));
 
@@ -51,7 +58,9 @@ import { POST as postGuestLink } from "../app/api/admin/guest-links/route";
 import { POST as postAdminMutation } from "../app/api/admin/mutate/route";
 import { GET as getAdminOverview } from "../app/api/admin/overview/route";
 import { POST as postDevelopmentSignIn } from "../app/api/auth/dev/route";
+import { POST as postGuestConfirmation } from "../app/api/auth/guest/route";
 import { POST as postGuestInvitation } from "../app/api/auth/guest/[token]/route";
+import { GET as getOAuthStart } from "../app/api/auth/[provider]/start/route";
 import { ApiProblem } from "../src/server/api-problem";
 
 function oversizedRequest(path: string): Request {
@@ -75,7 +84,15 @@ describe("control route request limits", () => {
       globalRole: "admin",
       userId: OWNER_ACCOUNT_ID,
     });
-    mocks.authorizeAdmin.mockResolvedValue({ userId: "usr_admin" });
+    mocks.authorizeAdmin.mockResolvedValue({
+      sessionId: "ses_current_admin",
+      userId: "usr_admin",
+    });
+    mocks.beginOAuth.mockResolvedValue(
+      "https://identity.example.test/authorize?state=opaque",
+    );
+    mocks.provider.mockReturnValue({ id: "google" });
+    mocks.adminOverviewPage.mockReturnValue(undefined);
     mocks.adminOverview.mockResolvedValue({
       audit: [],
       databaseInventory: {
@@ -113,6 +130,7 @@ describe("control route request limits", () => {
   it.each([
     ["/api/admin/guest-links", postGuestLink],
     ["/api/admin/mutate", postAdminMutation],
+    ["/api/auth/guest", postGuestConfirmation],
     ["/api/auth/dev", postDevelopmentSignIn],
   ])("rejects an oversized %s body before mutation", async (path, post) => {
     const response = await post(oversizedRequest(path));
@@ -127,6 +145,7 @@ describe("control route request limits", () => {
     expect(mocks.adminMutation).not.toHaveBeenCalled();
     expect(mocks.createWorkspaceGuestLink).not.toHaveBeenCalled();
     expect(mocks.createOrLinkUser).not.toHaveBeenCalled();
+    expect(mocks.consumeGuestLink).not.toHaveBeenCalled();
     expect(mocks.issueSession).not.toHaveBeenCalled();
   });
 
@@ -142,7 +161,12 @@ describe("control route request limits", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(mocks.adminOverview).toHaveBeenCalledWith(
       expect.anything(),
-      { query: "retention", viewerUserId: "usr_admin" },
+      {
+        page: undefined,
+        query: "retention",
+        viewerSessionId: "ses_current_admin",
+        viewerUserId: "usr_admin",
+      },
     );
     await expect(response.json()).resolves.toMatchObject({
       databaseInventory: {
@@ -152,6 +176,55 @@ describe("control route request limits", () => {
           table: "sessions",
         }],
       },
+    });
+  });
+
+  it("keeps OAuth start redirects with one-time state uncached", async () => {
+    const response = await getOAuthStart(
+      new Request(
+        "https://stowplan.test/api/auth/google/start?returnTo=%2Faccount",
+      ),
+      { params: Promise.resolve({ provider: "google" }) },
+    );
+
+    expect(response.status).toBe(302);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("location")).toBe(
+      "https://identity.example.test/authorize?state=opaque",
+    );
+    expect(mocks.beginOAuth).toHaveBeenCalledWith(
+      expect.anything(),
+      { id: "google" },
+      "https://stowplan.test",
+      "/account",
+    );
+  });
+
+  it("clears the cookie after an administrator revokes the current session", async () => {
+    mocks.adminMutation.mockResolvedValue({
+      message: "Session revoked",
+    });
+    const response = await postAdminMutation(new Request(
+      "https://stowplan.test/api/admin/mutate",
+      {
+        body: JSON.stringify({
+          action: "session.revoke",
+          targetId: "ses_current_admin",
+        }),
+        headers: {
+          "content-type": "application/json",
+          [ACCOUNT_CONTEXT_HEADER]: "usr_admin",
+        },
+        method: "POST",
+      },
+    ));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("set-cookie")).toContain("Max-Age=0");
+    await expect(response.json()).resolves.toMatchObject({
+      currentSessionRevoked: true,
+      message: "Session revoked",
+      ok: true,
     });
   });
 
@@ -211,10 +284,130 @@ describe("control route request limits", () => {
     expect(response.status).toBe(303);
     expect(response.headers.get("cache-control")).toBe("no-store");
     const location = new URL(response.headers.get("location")!);
-    expect(location.pathname).toBe("/account");
-    expect(location.searchParams.get("returnTo")).toBe(
-      "/guest/raw_token?returnTo=%2Fworkspaces%2Fws_invited%2Fsettings",
+    expect(location.pathname).toBe("/guest");
+    expect(location.search).toBe("");
+    expect(new URLSearchParams(location.hash.slice(1)).get("token"))
+      .toBe("raw_token");
+    expect(new URLSearchParams(location.hash.slice(1)).get("returnTo"))
+      .toBe("/workspaces/ws_invited/settings");
+    expect(mocks.consumeGuestLink).not.toHaveBeenCalled();
+  });
+
+  it("returns a structured sign-in refusal from the fixed invitation endpoint", async () => {
+    mocks.authenticate.mockResolvedValueOnce(null);
+    const response = await postGuestConfirmation(new Request(
+      "https://stowplan.test/api/auth/guest",
+      {
+        body: JSON.stringify({
+          expectedAccountId: OWNER_ACCOUNT_ID,
+          returnTo: "/workspaces/ws_invited/settings",
+          token: "raw_token",
+        }),
+        headers: {
+          "content-type": "application/json",
+          origin: "https://stowplan.test",
+          [ACCOUNT_CONTEXT_HEADER]: OWNER_ACCOUNT_ID,
+        },
+        method: "POST",
+      },
+    ));
+
+    expect(response.status).toBe(401);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("location")).toBeNull();
+    await expect(response.json()).resolves.toEqual({
+      code: "AUTHENTICATION_REQUIRED",
+      error: "Sign in before accepting this invitation",
+    });
+    expect(mocks.consumeGuestLink).not.toHaveBeenCalled();
+  });
+
+  it("confirms an invitation at a fixed URL without replacing the session", async () => {
+    const response = await postGuestConfirmation(new Request(
+      "https://stowplan.test/api/auth/guest",
+      {
+        body: JSON.stringify({
+          expectedAccountId: OWNER_ACCOUNT_ID,
+          returnTo: "/workspaces/ws_invited/settings",
+          token: "raw_token",
+        }),
+        headers: {
+          "content-type": "application/json",
+          origin: "https://stowplan.test",
+          [ACCOUNT_CONTEXT_HEADER]: OWNER_ACCOUNT_ID,
+        },
+        method: "POST",
+      },
+    ));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expect(response.headers.get(ACCOUNT_CONTEXT_HEADER)).toBe(
+      OWNER_ACCOUNT_ID,
     );
+    await expect(response.json()).resolves.toEqual({
+      accepted: true,
+      returnTo: "/workspaces/ws_invited/settings",
+      workspaceId: "ws_invited",
+    });
+    expect(mocks.consumeGuestLink).toHaveBeenCalledWith(
+      expect.anything(),
+      "raw_token",
+      OWNER_ACCOUNT_ID,
+    );
+  });
+
+  it("refuses changed account context before consuming a fixed-path invitation", async () => {
+    const response = await postGuestConfirmation(new Request(
+      "https://stowplan.test/api/auth/guest",
+      {
+        body: JSON.stringify({
+          expectedAccountId: "usr_previous",
+          token: "raw_token",
+        }),
+        headers: {
+          "content-type": "application/json",
+          origin: "https://stowplan.test",
+          [ACCOUNT_CONTEXT_HEADER]: OWNER_ACCOUNT_ID,
+        },
+        method: "POST",
+      },
+    ));
+
+    expect(response.status).toBe(409);
+    expect(response.headers.get(ACCOUNT_CONTEXT_HEADER)).toBe(
+      OWNER_ACCOUNT_ID,
+    );
+    await expect(response.json()).resolves.toMatchObject({
+      code: "ACCOUNT_CONTEXT_CHANGED",
+    });
+    expect(mocks.consumeGuestLink).not.toHaveBeenCalled();
+  });
+
+  it("origin-protects fixed-path invitation confirmation", async () => {
+    mocks.isTrustedMutation.mockReturnValueOnce(false);
+    const response = await postGuestConfirmation(new Request(
+      "https://stowplan.test/api/auth/guest",
+      {
+        body: JSON.stringify({
+          expectedAccountId: OWNER_ACCOUNT_ID,
+          token: "raw_token",
+        }),
+        headers: {
+          "content-type": "application/json",
+          origin: "https://attacker.test",
+          [ACCOUNT_CONTEXT_HEADER]: OWNER_ACCOUNT_ID,
+        },
+        method: "POST",
+      },
+    ));
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "CROSS_ORIGIN_DENIED",
+    });
+    expect(mocks.authenticate).not.toHaveBeenCalled();
     expect(mocks.consumeGuestLink).not.toHaveBeenCalled();
   });
 
@@ -320,6 +513,57 @@ describe("control route request limits", () => {
       code: "INVALID_REQUEST",
       error: "Session is already revoked",
     });
+  });
+
+  it("preserves structured stale admin membership revisions", async () => {
+    mocks.adminMutation.mockRejectedValue(
+      new ApiProblem(
+        "ACCESS_STALE",
+        "Workspace access or membership changed; refresh and try again",
+        409,
+        {
+          accessRevision: 9,
+          membershipRevision: 14,
+        },
+      ),
+    );
+
+    const response = await postAdminMutation(new Request(
+      "https://stowplan.test/api/admin/mutate",
+      {
+        body: JSON.stringify({
+          action: "member.role",
+          expectedAccessRevision: 8,
+          expectedMembershipRevision: 13,
+          targetId: "ws_target::usr_target",
+          value: "editor",
+        }),
+        headers: {
+          "content-type": "application/json",
+          [ACCOUNT_CONTEXT_HEADER]: "usr_admin",
+        },
+        method: "POST",
+      },
+    ));
+
+    expect(response.status).toBe(409);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    await expect(response.json()).resolves.toMatchObject({
+      accessRevision: 9,
+      code: "ACCESS_STALE",
+      membershipRevision: 14,
+    });
+    expect(mocks.adminMutation).toHaveBeenCalledWith(
+      expect.anything(),
+      "usr_admin",
+      {
+        action: "member.role",
+        expectedAccessRevision: 8,
+        expectedMembershipRevision: 13,
+        targetId: "ws_target::usr_target",
+        value: "editor",
+      },
+    );
   });
 
   it("does not treat a global admin as a workspace member", async () => {
@@ -438,6 +682,12 @@ describe("control route request limits", () => {
 
     expect(response.status).toBe(201);
     expect(response.headers.get("cache-control")).toBe("no-store");
+    const body = await response.json() as { url: string };
+    const invitation = new URL(body.url);
+    expect(invitation.pathname).toBe("/guest");
+    expect(invitation.search).toBe("");
+    expect(new URLSearchParams(invitation.hash.slice(1)).get("token"))
+      .toBe("guest_token");
     expect(mocks.authorizeAdmin).not.toHaveBeenCalled();
     expect(mocks.createWorkspaceGuestLink).toHaveBeenCalledWith(
       {},

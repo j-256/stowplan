@@ -12,6 +12,7 @@ import {
 import {
   AuthorizationError,
   authorizeAdmin,
+  clearSessionCookie,
   isTrustedMutation,
 } from "../../../../src/server/auth";
 import {
@@ -27,6 +28,8 @@ import { runtimeEnv } from "../../../../src/server/runtime";
 
 interface AdminMutationBody {
   action: string;
+  expectedAccessRevision?: number;
+  expectedMembershipRevision?: number;
   targetId: string;
   value?: string;
 }
@@ -46,16 +49,38 @@ function parseAdminMutationBody(value: unknown): AdminMutationBody {
     (
       value.value !== undefined &&
       typeof value.value !== "string"
+    ) ||
+    (
+      value.expectedAccessRevision !== undefined &&
+      (
+        typeof value.expectedAccessRevision !== "number" ||
+        !Number.isSafeInteger(value.expectedAccessRevision) ||
+        value.expectedAccessRevision < 0
+      )
+    ) ||
+    (
+      value.expectedMembershipRevision !== undefined &&
+      (
+        typeof value.expectedMembershipRevision !== "number" ||
+        !Number.isSafeInteger(value.expectedMembershipRevision) ||
+        value.expectedMembershipRevision < 0
+      )
     )
   ) {
     throw new ApiProblem(
       "INVALID_REQUEST",
-      "action and targetId are required strings, and value must be a string when provided",
+      "action and targetId are required strings; value must be a string and expected revisions must be non-negative safe integers when provided",
       400,
     );
   }
   return {
     action: value.action,
+    ...(value.expectedAccessRevision === undefined
+      ? {}
+      : { expectedAccessRevision: value.expectedAccessRevision }),
+    ...(value.expectedMembershipRevision === undefined
+      ? {}
+      : { expectedMembershipRevision: value.expectedMembershipRevision }),
     targetId: value.targetId,
     ...(value.value === undefined ? {} : { value: value.value }),
   };
@@ -97,7 +122,22 @@ export async function POST(request: Request) {
       ),
     );
     const result = await adminMutation(env.DB, user.userId, body);
-    return accountScopedJson({ ok: true, ...result }, user.userId);
+    const currentSessionRevoked =
+      body.action === "session.revoke" &&
+      body.targetId === user.sessionId;
+    return accountScopedJson(
+      {
+        ok: true,
+        ...result,
+        ...(currentSessionRevoked
+          ? { currentSessionRevoked: true }
+          : {}),
+      },
+      user.userId,
+      currentSessionRevoked
+        ? { headers: { "set-cookie": clearSessionCookie() } }
+        : undefined,
+    );
   } catch (error) {
     if (error instanceof ApiProblem) {
       return withAccountContext(

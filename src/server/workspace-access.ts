@@ -27,6 +27,7 @@ import {
   privateJson,
 } from "./api-problem";
 import { requireExpectedAccount } from "./account-context";
+import { safeAuditDetailJson } from "./audit-detail";
 import {
   QuotaExceededError,
   quotaProblem,
@@ -635,7 +636,7 @@ function auditStatement(
     action,
     targetType,
     targetId,
-    JSON.stringify(detail),
+    safeAuditDetailJson(action, detail),
     at,
     requiredChanges,
   );

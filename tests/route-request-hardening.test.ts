@@ -4,6 +4,10 @@ import {
   INVITATION_REQUEST_MAX_BYTES,
 } from "../src/server/request-body";
 import { ACCOUNT_CONTEXT_HEADER } from "../src/shared/account-context";
+import {
+  GUEST_INVITATION_RETURN_TO_MAX_CHARACTERS,
+  GUEST_INVITATION_TOKEN_MAX_CHARACTERS,
+} from "../src/domain/app-url";
 
 const mocks = vi.hoisted(() => ({
   adminMutation: vi.fn(),
@@ -47,7 +51,11 @@ import { POST as postAdminMutation } from "../app/api/admin/mutate/route";
 import { POST as postAccessAuthentication } from "../app/api/auth/access/route";
 import { GET as getOAuthCallback } from "../app/api/auth/[provider]/callback/route";
 import { POST as postDevelopmentSignIn } from "../app/api/auth/dev/route";
-import { POST as postGuestInvitation } from "../app/api/auth/guest/[token]/route";
+import { POST as postGuestConfirmation } from "../app/api/auth/guest/route";
+import {
+  GET as getGuestInvitation,
+  POST as postGuestInvitation,
+} from "../app/api/auth/guest/[token]/route";
 
 function jsonRequest(
   path: string,
@@ -240,6 +248,33 @@ describe("private route request hardening", () => {
     expect(mocks.consumeGuestLink).not.toHaveBeenCalled();
   });
 
+  it.each([
+    {
+      request: "https://stowplan.test/api/auth/guest/raw_token?returnTo=" +
+        "x".repeat(GUEST_INVITATION_RETURN_TO_MAX_CHARACTERS + 1),
+      token: "raw_token",
+    },
+    {
+      request: "https://stowplan.test/api/auth/guest/oversized",
+      token: "x".repeat(GUEST_INVITATION_TOKEN_MAX_CHARACTERS + 1),
+    },
+  ])("returns a coded malformed legacy invitation redirect", async ({
+    request,
+    token,
+  }) => {
+    const response = await getGuestInvitation(
+      new Request(request),
+      { params: Promise.resolve({ token }) },
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    await expect(response.json()).resolves.toMatchObject({
+      code: "INVALID_REQUEST",
+      error: "Invitation URL is invalid",
+    });
+  });
+
   it("validates invitation media type before redirecting", async () => {
     const response = await postGuestInvitation(
       new Request(
@@ -263,4 +298,72 @@ describe("private route request hardening", () => {
     expect(mocks.authenticate).not.toHaveBeenCalled();
     expect(mocks.consumeGuestLink).not.toHaveBeenCalled();
   });
+
+  it("bounds fixed-path invitation JSON before authentication", async () => {
+    const request = jsonRequest(
+      "/api/auth/guest",
+      JSON.stringify({
+        expectedAccountId: "usr_invited",
+        token: "raw_token",
+      }),
+    );
+    request.headers.set(
+      "content-length",
+      String(INVITATION_REQUEST_MAX_BYTES + 1),
+    );
+
+    const response = await postGuestConfirmation(request);
+
+    expect(response.status).toBe(413);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    await expect(response.json()).resolves.toMatchObject({
+      code: "BODY_TOO_LARGE",
+      error: expect.stringContaining("byte limit"),
+    });
+    expect(mocks.authenticate).not.toHaveBeenCalled();
+    expect(mocks.consumeGuestLink).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      body: "{",
+      contentType: "application/json",
+      label: "malformed JSON",
+      status: 400,
+    },
+    {
+      body: JSON.stringify({
+        expectedAccountId: "usr_invited",
+        token: "raw_token",
+      }),
+      contentType: "text/plain",
+      label: "a non-JSON content type",
+      status: 415,
+    },
+    {
+      body: JSON.stringify({
+        expectedAccountId: "usr_invited",
+        token: " raw_token ",
+      }),
+      contentType: "application/json",
+      label: "a whitespace-padded token",
+      status: 400,
+    },
+  ])(
+    "returns a structured fixed invitation refusal for $label",
+    async ({ body, contentType, status }) => {
+      const response = await postGuestConfirmation(
+        jsonRequest("/api/auth/guest", body, contentType),
+      );
+
+      expect(response.status).toBe(status);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      await expect(response.json()).resolves.toMatchObject({
+        code: "INVALID_REQUEST",
+        error: expect.any(String),
+      });
+      expect(mocks.authenticate).not.toHaveBeenCalled();
+      expect(mocks.consumeGuestLink).not.toHaveBeenCalled();
+    },
+  );
 });

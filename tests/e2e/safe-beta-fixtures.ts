@@ -467,18 +467,26 @@ export const test = base.extend<{ safeBeta: SafeBetaFixture }>({
       label: string,
     ): Promise<SyntheticIdentity> => {
       const invite = new URL(oneTimeUrl);
-      const token = decodeURIComponent(invite.pathname.split("/").at(-1) ?? "");
-      const returnTo = invite.searchParams.get("returnTo") ?? "/workspaces";
+      const fragment = new URLSearchParams(invite.hash.slice(1));
+      const token = fragment.get("token") ?? "";
+      const returnTo = fragment.get("returnTo") ?? "/workspaces";
       const user = await signIn(context, label);
       const response = await context.request.post(
-        `${origin}/api/auth/guest/${encodeURIComponent(token)}?returnTo=${encodeURIComponent(returnTo)}`,
+        `${origin}/api/auth/guest`,
         {
-          form: { expectedAccountId: user.userId },
-          headers: { origin },
+          data: {
+            expectedAccountId: user.userId,
+            returnTo,
+            token,
+          },
+          headers: {
+            [ACCOUNT_CONTEXT_HEADER]: user.userId,
+            origin,
+          },
           maxRedirects: 0,
         },
       );
-      if (response.status() !== 303) {
+      if (response.status() !== 200) {
         throw new Error(
           `Invite redemption returned ${response.status()}: ${(await response.text()).slice(0, 800)}`,
         );

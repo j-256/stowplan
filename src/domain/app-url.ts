@@ -1,4 +1,9 @@
 export const DEFAULT_WORKSPACE_VIEW = "capture";
+export const GUEST_INVITATION_PATH = "/guest";
+export const GUEST_INVITATION_RETURN_TO_MAX_CHARACTERS = 2_048;
+export const GUEST_INVITATION_TOKEN_MAX_CHARACTERS = 512;
+export const INVITATION_CONTINUATION_STORAGE_KEY =
+  "stowplan_invitation_return_to";
 export const INVITATION_OAUTH_RESUME_PATH =
   "/account?resume=invitation";
 export const WORKSPACE_LIST_PATH = "/workspaces";
@@ -42,7 +47,64 @@ const LOCATION_PATH_SEGMENT = "locations";
 const ITEM_PATH_SEGMENT = "items";
 const WORKSPACE_VIEW_SET = new Set<string>(WORKSPACE_VIEWS);
 const PARSE_BASE_URL = "https://stowplan.invalid";
-const RETURN_TO_DECODE_PASSES = 4;
+const INVITATION_PATH_PATTERN = /\/guest(?:[/?#]|$)/u;
+
+export interface GuestInvitationFragment {
+  returnTo: string | null;
+  token: string;
+}
+
+export function guestInvitationUrl(
+  base: string | URL,
+  token: string,
+  returnTo?: string | null,
+): string {
+  if (
+    !token ||
+    token.trim() !== token ||
+    token.length > GUEST_INVITATION_TOKEN_MAX_CHARACTERS ||
+    (
+      returnTo !== undefined &&
+      returnTo !== null &&
+      returnTo.length > GUEST_INVITATION_RETURN_TO_MAX_CHARACTERS
+    )
+  ) {
+    throw new Error("Invitation URL is invalid");
+  }
+  const url = new URL(GUEST_INVITATION_PATH, base);
+  const fragment = new URLSearchParams({ token });
+  if (returnTo) fragment.set("returnTo", returnTo);
+  url.hash = fragment.toString();
+  return url.toString();
+}
+
+export function parseGuestInvitationFragment(
+  fragment: string,
+): GuestInvitationFragment | null {
+  const value = fragment.startsWith("#")
+    ? fragment.slice(1)
+    : fragment;
+  const parameters = new URLSearchParams(value);
+  const tokens = parameters.getAll("token");
+  const returns = parameters.getAll("returnTo");
+  if (
+    tokens.length !== 1 ||
+    returns.length > 1 ||
+    !tokens[0] ||
+    tokens[0].trim() !== tokens[0] ||
+    tokens[0].length > GUEST_INVITATION_TOKEN_MAX_CHARACTERS ||
+    (
+      returns.length === 1 &&
+      returns[0].length > GUEST_INVITATION_RETURN_TO_MAX_CHARACTERS
+    )
+  ) {
+    return null;
+  }
+  return {
+    returnTo: returns[0] || null,
+    token: tokens[0],
+  };
+}
 
 function decodedSegment(segment: string | undefined): string | null {
   if (!segment) return null;
@@ -245,27 +307,32 @@ export function workspaceReturnTo(
 export function oauthReturnTo(
   requested: string | null | undefined,
 ): string {
-  if (!requested?.startsWith("/")) return "/";
+  if (
+    !requested?.startsWith("/") ||
+    requested.length > GUEST_INVITATION_RETURN_TO_MAX_CHARACTERS
+  ) {
+    return "/";
+  }
   try {
     const resolved = new URL(requested, PARSE_BASE_URL);
     if (resolved.origin !== PARSE_BASE_URL) return "/";
     let decoded = requested;
+    const maximumDecodePasses = Math.floor(requested.length / 2) + 1;
     for (
       let pass = 0;
-      pass < RETURN_TO_DECODE_PASSES;
+      pass < maximumDecodePasses;
       pass += 1
     ) {
-      if (decoded.toLowerCase().includes("/guest/")) {
+      if (INVITATION_PATH_PATTERN.test(decoded.toLowerCase())) {
         return INVITATION_OAUTH_RESUME_PATH;
       }
       const next = decodeURIComponent(decoded);
-      if (next === decoded) break;
+      if (next === decoded) {
+        return `${resolved.pathname}${resolved.search}${resolved.hash}`;
+      }
       decoded = next;
     }
-    if (decoded.toLowerCase().includes("/guest/")) {
-      return INVITATION_OAUTH_RESUME_PATH;
-    }
-    return `${resolved.pathname}${resolved.search}${resolved.hash}`;
+    return "/";
   } catch {
     return "/";
   }

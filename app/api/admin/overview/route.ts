@@ -1,4 +1,7 @@
-import { adminOverview } from "../../../../src/server/admin";
+import {
+  adminOverview,
+  adminOverviewPage,
+} from "../../../../src/server/admin";
 import {
   accountScopedJson,
   requireExpectedAccount,
@@ -32,9 +35,15 @@ export async function GET(request: Request) {
     if (request.headers.has(ACCOUNT_CONTEXT_HEADER)) {
       requireExpectedAccount(request, user.userId);
     }
-    const query = new URL(request.url).searchParams.get("q") ?? "";
+    const searchParams = new URL(request.url).searchParams;
+    const query = searchParams.get("q") ?? "";
     return accountScopedJson(
-      await adminOverview(env.DB, { query, viewerUserId: user.userId }),
+      await adminOverview(env.DB, {
+        page: adminOverviewPage(searchParams),
+        query,
+        viewerSessionId: user.sessionId,
+        viewerUserId: user.userId,
+      }),
       user.userId,
     );
   } catch (error) {

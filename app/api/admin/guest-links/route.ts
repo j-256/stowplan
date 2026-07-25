@@ -2,6 +2,7 @@ import {
   authenticate,
   isTrustedMutation,
 } from "../../../../src/server/auth";
+import { guestInvitationUrl } from "../../../../src/domain/app-url";
 import {
   ApiProblem,
 } from "../../../../src/server/api-problem";
@@ -154,10 +155,9 @@ export async function POST(request: Request) {
       },
     );
     const base = env.AUTH_BASE_URL ?? request.url;
-    const url = new URL(`/guest/${link.raw}`, base);
-    url.searchParams.set("returnTo", link.returnTo);
+    const url = guestInvitationUrl(base, link.raw, link.returnTo);
     return accountScopedJson(
-      { url: url.toString(), expiresAt: link.guestLink.expiresAt },
+      { url, expiresAt: link.guestLink.expiresAt },
       user.userId,
       { status: 201 },
     );

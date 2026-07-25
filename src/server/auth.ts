@@ -9,6 +9,9 @@ import {
   API_QUOTAS,
   GUEST_LINK_EXPIRY_HOURS,
 } from "../shared/api-quotas";
+import { revokeAccountSession } from "./account-sessions";
+import { ApiProblem } from "./api-problem";
+import { safeAuditDetailJson } from "./audit-detail";
 import { QuotaExceededError } from "./quotas";
 import type { RuntimeEnv } from "./runtime";
 
@@ -20,9 +23,13 @@ interface AuthDb extends D1DatabaseLike {
   prepare(query: string): Statement;
 }
 export interface SessionUser { userId:string; email:string; displayName:string; globalRole:"admin"|"user"; expiresAt:string }
+export interface AuthenticatedSessionUser extends SessionUser {
+  sessionId: string;
+}
 export interface ProviderProfile { provider:string; subject:string; email:string; displayName:string }
 
 export const AUTH_CLEANUP_BATCH_SIZE = 64;
+export const SESSION_ACTIVITY_TOUCH_INTERVAL_MS = 5 * 60 * 1_000;
 const GUEST_LINK_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
 const OAUTH_STATE_RETENTION_MS = 24 * 60 * 60 * 1_000;
 const SESSION_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
@@ -43,6 +50,11 @@ function normalize(email:string){return email.trim().toLowerCase()}
 function adminEmails(env:RuntimeEnv){return new Set((env.AUTH_ADMIN_EMAILS??"").split(",").map(normalize).filter(Boolean))}
 function resultChanges(result: D1ResultLike | undefined): number {
   return result?.success ? result.meta?.changes ?? 0 : 0;
+}
+function activityNeedsTouch(value: string | null, now: number): boolean {
+  const timestamp = value ? Date.parse(value) : Number.NaN;
+  return !Number.isFinite(timestamp)
+    || timestamp <= now - SESSION_ACTIVITY_TOUCH_INTERVAL_MS;
 }
 function sessionSeconds(env: RuntimeEnv): number {
   const configured = Number(env.AUTH_SESSION_TTL_SECONDS);
@@ -202,6 +214,18 @@ export async function cleanupAuthRecords(
        )`,
     ).bind(oauthCutoff, AUTH_CLEANUP_BATCH_SIZE),
     db.prepare(
+      `UPDATE oauth_states
+       SET verifier_ciphertext='', return_to='/'
+       WHERE state_hash IN (
+         SELECT state_hash
+         FROM oauth_states
+         WHERE expires_at <= ?
+           AND (verifier_ciphertext <> '' OR return_to <> '/')
+         ORDER BY expires_at
+         LIMIT ?
+       )`,
+    ).bind(now, AUTH_CLEANUP_BATCH_SIZE),
+    db.prepare(
       `UPDATE auth_audit_events
        SET actor_user_id = NULL
        WHERE actor_user_id IN (
@@ -289,15 +313,15 @@ export async function cleanupAuthRecords(
        )`,
     ).bind(guestLinkCutoff, AUTH_CLEANUP_BATCH_SIZE),
   ]);
-  if (results.length !== 5 || results.some((result) => !result.success)) {
+  if (results.length !== 6 || results.some((result) => !result.success)) {
     throw new Error("Authentication record cleanup did not complete");
   }
   return {
     sessions: resultChanges(results[0]),
     oauthStates: resultChanges(results[1]),
     guestMemberships: 0,
-    guestUsers: resultChanges(results[3]),
-    guestLinks: resultChanges(results[4]),
+    guestUsers: resultChanges(results[4]),
+    guestLinks: resultChanges(results[5]),
   };
 }
 
@@ -449,25 +473,134 @@ export async function issueSession(
 ) {
   await maintainAuthRecords(db);
   const session = await createSessionRecord(env, request, maximumSeconds);
-  await db.prepare(
-    `INSERT INTO sessions(
-       session_id, user_id, token_hash, created_at, expires_at, last_seen_at,
-       user_agent, ip_prefix
-     ) VALUES(?,?,?,?,?,?,?,?)`,
-  ).bind(
-    session.sessionId,
-    user.userId,
-    session.tokenHash,
-    session.createdAt,
-    session.expiresAt,
-    session.lastSeenAt,
-    session.userAgent,
-    session.ipPrefix,
-  ).run();
-  return { raw: session.raw, maxAge: session.maxAge };
+  const [, auditResult] = await db.batch([
+    db.prepare(
+      `INSERT INTO sessions(
+         session_id, user_id, token_hash, created_at, expires_at,
+         last_seen_at, user_agent, ip_prefix
+       )
+       SELECT ?,user_id,?,?,?,?,?,?
+       FROM users
+       WHERE user_id=? AND status='active'`,
+    ).bind(
+      session.sessionId,
+      session.tokenHash,
+      session.createdAt,
+      session.expiresAt,
+      session.lastSeenAt,
+      session.userAgent,
+      session.ipPrefix,
+      user.userId,
+    ),
+    db.prepare(
+      `INSERT INTO auth_audit_events(
+         event_id,actor_user_id,action,target_type,target_id,detail_json,
+         created_at
+       )
+       SELECT ?,?,'session.issue','session',?,'{}',?
+       WHERE changes()=1`,
+    ).bind(
+      newId("aud"),
+      user.userId,
+      session.sessionId,
+      session.createdAt,
+    ),
+    db.prepare(
+      `UPDATE users
+       SET last_seen_at=?
+       WHERE user_id=? AND status='active'
+         AND (last_seen_at IS NULL OR last_seen_at<?)`,
+    ).bind(session.createdAt, user.userId, session.createdAt),
+  ]);
+  if (resultChanges(auditResult) !== 1) {
+    throw new Error("The session could not be issued");
+  }
+  return {
+    maxAge: session.maxAge,
+    raw: session.raw,
+    sessionId: session.sessionId,
+  };
 }
-export async function authenticate(db:AuthDb,request:Request):Promise<SessionUser|null>{const raw=cookieValue(request,"stowplan_session");if(!raw)return null;const row=await db.prepare("SELECT u.user_id,u.email,u.display_name,u.global_role,u.status,s.expires_at FROM sessions s JOIN users u ON u.user_id=s.user_id WHERE s.token_hash=? AND s.revoked_at IS NULL AND s.expires_at>?").bind(await hash(raw),nowIso()).first<{user_id:string;email:string;display_name:string;global_role:"admin"|"user";status:string;expires_at:string}>();if(!row||row.status!=="active")return null;return {userId:row.user_id,email:row.email,displayName:row.display_name,globalRole:row.global_role,expiresAt:row.expires_at}}
-export async function authorizeAdmin(db:AuthDb,env:RuntimeEnv,request:Request):Promise<SessionUser>{
+export async function authenticate(
+  db: AuthDb,
+  request: Request,
+): Promise<AuthenticatedSessionUser | null> {
+  const raw = cookieValue(request, "stowplan_session");
+  if (!raw) return null;
+  const now = new Date();
+  const nowValue = now.toISOString();
+  const row = await db.prepare(
+    `SELECT u.user_id,u.email,u.display_name,u.global_role,u.status,
+            u.last_seen_at AS user_last_seen_at,s.session_id,s.expires_at,
+            s.last_seen_at AS session_last_seen_at
+     FROM sessions s
+     JOIN users u ON u.user_id=s.user_id
+     WHERE s.token_hash=?
+       AND s.revoked_at IS NULL
+       AND s.expires_at>?`,
+  ).bind(await hash(raw), nowValue).first<{
+    display_name: string;
+    email: string;
+    expires_at: string;
+    global_role: "admin" | "user";
+    session_id: string;
+    session_last_seen_at: string;
+    status: string;
+    user_id: string;
+    user_last_seen_at: string | null;
+  }>();
+  if (!row || row.status !== "active") return null;
+  const statements: Statement[] = [];
+  if (activityNeedsTouch(row.session_last_seen_at, now.getTime())) {
+    statements.push(db.prepare(
+      `UPDATE sessions
+       SET last_seen_at=?
+       WHERE session_id=? AND user_id=?
+         AND last_seen_at=?
+         AND revoked_at IS NULL
+         AND expires_at>?
+         AND EXISTS (
+           SELECT 1 FROM users
+           WHERE users.user_id=sessions.user_id
+             AND users.status='active'
+         )`,
+    ).bind(
+      nowValue,
+      row.session_id,
+      row.user_id,
+      row.session_last_seen_at,
+      nowValue,
+    ));
+  }
+  if (activityNeedsTouch(row.user_last_seen_at, now.getTime())) {
+    statements.push(db.prepare(
+      `UPDATE users
+       SET last_seen_at=?
+       WHERE user_id=? AND status='active'
+         AND (
+           last_seen_at=?
+           OR (last_seen_at IS NULL AND ? IS NULL)
+         )`,
+    ).bind(
+      nowValue,
+      row.user_id,
+      row.user_last_seen_at,
+      row.user_last_seen_at,
+    ));
+  }
+  if (statements.length > 0) {
+    await db.batch(statements).catch(() => []);
+  }
+  return {
+    displayName: row.display_name,
+    email: row.email,
+    expiresAt: row.expires_at,
+    globalRole: row.global_role,
+    sessionId: row.session_id,
+    userId: row.user_id,
+  };
+}
+export async function authorizeAdmin(db:AuthDb,env:RuntimeEnv,request:Request):Promise<AuthenticatedSessionUser>{
  const user=await authenticate(db,request);
  if(!user)throw new AuthorizationError("Authentication required",401);
  if(user.globalRole!=="admin")throw new AuthorizationError("Admin scope required",403);
@@ -496,7 +629,33 @@ export function isTrustedMutation(request:Request,configuredBaseUrl?:string):boo
 }
 export async function workspaceRole(db:AuthDb,userId:string,workspaceId:string){const row=await db.prepare("SELECT member.role FROM workspace_members member JOIN workspace_snapshots snapshot ON snapshot.workspace_id=member.workspace_id JOIN users actor ON actor.user_id=member.user_id AND actor.status='active' WHERE member.workspace_id=? AND member.user_id=? AND NOT EXISTS (SELECT 1 FROM workspace_deletions deleted WHERE deleted.workspace_id=member.workspace_id)").bind(workspaceId,userId).first<{role:"owner"|"editor"|"viewer"}>();return row?.role??null}
 export async function canReadWorkspace(db:AuthDb,userId:string,workspaceId:string){return (await workspaceRole(db,userId,workspaceId))!==null}
-export async function revokeCurrentSession(db:AuthDb,request:Request){const raw=cookieValue(request,"stowplan_session");if(raw)await db.prepare("UPDATE sessions SET revoked_at=? WHERE token_hash=? AND revoked_at IS NULL").bind(nowIso(),await hash(raw)).run()}
+export async function revokeCurrentSession(
+  db: AuthDb,
+  request: Request,
+): Promise<boolean> {
+  const principal = await authenticate(db, request);
+  if (!principal) return false;
+  try {
+    await revokeAccountSession(
+      db,
+      principal,
+      principal.sessionId,
+      "logout",
+    );
+  } catch (error) {
+    if (
+      error instanceof ApiProblem
+      && (
+        error.status === 404
+        || error.status === 409
+      )
+    ) {
+      return false;
+    }
+    throw error;
+  }
+  return true;
+}
 export async function canWriteWorkspace(db:AuthDb,userId:string,workspaceId:string){const role=await workspaceRole(db,userId,workspaceId);return role==="owner"||role==="editor"}
 export async function canOwnWorkspace(db:AuthDb,userId:string,workspaceId:string){return await workspaceRole(db,userId,workspaceId)==="owner"}
 export async function claimWorkspace(
@@ -666,7 +825,10 @@ export async function createGuestLink(
       newId("aud"),
       creator,
       id,
-      JSON.stringify({ expiresAt: end, role, workspaceId }),
+      safeAuditDetailJson(
+        "guest.create",
+        { expiresAt: end, role, workspaceId },
+      ),
       now,
     ),
   ]);
@@ -812,11 +974,14 @@ export async function consumeGuestLink(
       auditId,
       userId,
       userId,
-      JSON.stringify({
-        guestLinkId: row.guest_link_id,
-        role: row.role,
-        workspaceId: row.workspace_id,
-      }),
+      safeAuditDetailJson(
+        "member.invite.accept",
+        {
+          guestLinkId: row.guest_link_id,
+          role: row.role,
+          workspaceId: row.workspace_id,
+        },
+      ),
       now,
       userId,
       row.guest_link_id,
@@ -898,5 +1063,5 @@ export interface OAuthProvider { id:"google"|"github"; authorizationUrl:string; 
 export function provider(env:RuntimeEnv,id:string):OAuthProvider|null {if(id==="google"&&env.AUTH_GOOGLE_CLIENT_ID&&env.AUTH_GOOGLE_CLIENT_SECRET)return{id,authorizationUrl:"https://accounts.google.com/o/oauth2/v2/auth",tokenUrl:"https://oauth2.googleapis.com/token",scopes:"openid email profile",clientId:env.AUTH_GOOGLE_CLIENT_ID,clientSecret:env.AUTH_GOOGLE_CLIENT_SECRET};if(id==="github"&&env.AUTH_GITHUB_CLIENT_ID&&env.AUTH_GITHUB_CLIENT_SECRET)return{id,authorizationUrl:"https://github.com/login/oauth/authorize",tokenUrl:"https://github.com/login/oauth/access_token",scopes:"read:user user:email",clientId:env.AUTH_GITHUB_CLIENT_ID,clientSecret:env.AUTH_GITHUB_CLIENT_SECRET};return null}
 function b64url(data:Uint8Array){return btoa(String.fromCharCode(...data)).replaceAll("+","-").replaceAll("/","_").replaceAll("=","")}
 export async function beginOAuth(db:AuthDb,p:OAuthProvider,base:string,returnTo:string){await maintainAuthRecords(db);const state=token(),verifier=b64url(bytes(48)),challenge=b64url(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(verifier)))),end=new Date(Date.now()+10*60_000).toISOString();await db.prepare("INSERT INTO oauth_states(state_hash,provider,verifier_ciphertext,return_to,created_at,expires_at) VALUES(?,?,?,?,?,?)").bind(await hash(state),p.id,verifier,returnTo,nowIso(),end).run();const u=new URL(p.authorizationUrl);u.searchParams.set("client_id",p.clientId);u.searchParams.set("redirect_uri",`${base}/api/auth/${p.id}/callback`);u.searchParams.set("response_type","code");u.searchParams.set("scope",p.scopes);u.searchParams.set("state",state);u.searchParams.set("code_challenge",challenge);u.searchParams.set("code_challenge_method","S256");return u.toString()}
-export async function finishOAuth(db:AuthDb,p:OAuthProvider,base:string,state:string,code:string):Promise<{profile:ProviderProfile;returnTo:string}>{const stateHash=await hash(state),row=await db.prepare("SELECT verifier_ciphertext,return_to FROM oauth_states WHERE state_hash=? AND provider=? AND consumed_at IS NULL AND expires_at>?").bind(stateHash,p.id,nowIso()).first<{verifier_ciphertext:string;return_to:string}>();if(!row)throw new Error("OAuth state is invalid or expired");const claimed=await db.prepare("UPDATE oauth_states SET consumed_at=? WHERE state_hash=? AND provider=? AND consumed_at IS NULL").bind(nowIso(),stateHash,p.id).run();if((claimed.meta?.changes??0)!==1)throw new Error("OAuth state is invalid or expired");const body=new URLSearchParams({client_id:p.clientId,client_secret:p.clientSecret,code,redirect_uri:`${base}/api/auth/${p.id}/callback`,code_verifier:row.verifier_ciphertext,grant_type:"authorization_code"});const tokenResponse=await fetch(p.tokenUrl,{method:"POST",headers:{accept:"application/json","content-type":"application/x-www-form-urlencoded"},body});if(!tokenResponse.ok)throw new Error("OAuth token exchange failed");const tokens=await tokenResponse.json() as {access_token?:string;id_token?:string};if(p.id==="google"){if(!tokens.id_token)throw new Error("Google did not return an ID token");const jwks=createRemoteJWKSet(new URL("https://www.googleapis.com/oauth2/v3/certs"));const {payload}=await jwtVerify(tokens.id_token,jwks,{audience:p.clientId,issuer:["https://accounts.google.com","accounts.google.com"]});const email=String(payload.email??"");if(!payload.sub||!email)throw new Error("Google identity lacks required claims");return{profile:{provider:p.id,subject:payload.sub,email,displayName:String(payload.name??email)},returnTo:row.return_to}}if(!tokens.access_token)throw new Error("GitHub did not return an access token");const headers={authorization:`Bearer ${tokens.access_token}`,accept:"application/vnd.github+json","user-agent":"Stowplan"};const [account,emails]=await Promise.all([fetch("https://api.github.com/user",{headers}).then(r=>r.json()) as Promise<{id:number;login:string;name?:string;email?:string}>,fetch("https://api.github.com/user/emails",{headers}).then(r=>r.json()) as Promise<{email:string;primary:boolean;verified:boolean}[]>]);const email=account.email??emails.find(x=>x.primary&&x.verified)?.email??emails.find(x=>x.verified)?.email;if(!email)throw new Error("GitHub account has no verified email");return{profile:{provider:p.id,subject:String(account.id),email,displayName:account.name??account.login},returnTo:row.return_to}}
+export async function finishOAuth(db:AuthDb,p:OAuthProvider,base:string,state:string,code:string):Promise<{profile:ProviderProfile;returnTo:string}>{const stateHash=await hash(state),row=await db.prepare("SELECT verifier_ciphertext,return_to FROM oauth_states WHERE state_hash=? AND provider=? AND consumed_at IS NULL AND expires_at>?").bind(stateHash,p.id,nowIso()).first<{verifier_ciphertext:string;return_to:string}>();if(!row)throw new Error("OAuth state is invalid or expired");const claimed=await db.prepare("UPDATE oauth_states SET consumed_at=?, verifier_ciphertext='', return_to='/' WHERE state_hash=? AND provider=? AND consumed_at IS NULL").bind(nowIso(),stateHash,p.id).run();if((claimed.meta?.changes??0)!==1)throw new Error("OAuth state is invalid or expired");const body=new URLSearchParams({client_id:p.clientId,client_secret:p.clientSecret,code,redirect_uri:`${base}/api/auth/${p.id}/callback`,code_verifier:row.verifier_ciphertext,grant_type:"authorization_code"});const tokenResponse=await fetch(p.tokenUrl,{method:"POST",headers:{accept:"application/json","content-type":"application/x-www-form-urlencoded"},body});if(!tokenResponse.ok)throw new Error("OAuth token exchange failed");const tokens=await tokenResponse.json() as {access_token?:string;id_token?:string};if(p.id==="google"){if(!tokens.id_token)throw new Error("Google did not return an ID token");const jwks=createRemoteJWKSet(new URL("https://www.googleapis.com/oauth2/v3/certs"));const {payload}=await jwtVerify(tokens.id_token,jwks,{audience:p.clientId,issuer:["https://accounts.google.com","accounts.google.com"]});const email=String(payload.email??"");if(!payload.sub||!email)throw new Error("Google identity lacks required claims");return{profile:{provider:p.id,subject:payload.sub,email,displayName:String(payload.name??email)},returnTo:row.return_to}}if(!tokens.access_token)throw new Error("GitHub did not return an access token");const headers={authorization:`Bearer ${tokens.access_token}`,accept:"application/vnd.github+json","user-agent":"Stowplan"};const [account,emails]=await Promise.all([fetch("https://api.github.com/user",{headers}).then(r=>r.json()) as Promise<{id:number;login:string;name?:string;email?:string}>,fetch("https://api.github.com/user/emails",{headers}).then(r=>r.json()) as Promise<{email:string;primary:boolean;verified:boolean}[]>]);const email=account.email??emails.find(x=>x.primary&&x.verified)?.email??emails.find(x=>x.verified)?.email;if(!email)throw new Error("GitHub account has no verified email");return{profile:{provider:p.id,subject:String(account.id),email,displayName:account.name??account.login},returnTo:row.return_to}}
 export async function verifyAccess(env:RuntimeEnv,assertion:string):Promise<ProviderProfile>{if(!env.AUTH_CLOUDFLARE_ACCESS_TEAM_DOMAIN||!env.AUTH_CLOUDFLARE_ACCESS_AUD)throw new Error("Cloudflare Access is not configured");const domain=env.AUTH_CLOUDFLARE_ACCESS_TEAM_DOMAIN.replace(/^https?:\/\//,"").replace(/\/$/,"");const jwks=createRemoteJWKSet(new URL(`https://${domain}/cdn-cgi/access/certs`));const {payload}=await jwtVerify(assertion,jwks,{audience:env.AUTH_CLOUDFLARE_ACCESS_AUD,issuer:`https://${domain}`});const email=String(payload.email??"");if(!payload.sub||!email)throw new Error("Access assertion lacks identity claims");return{provider:"cloudflare-access",subject:payload.sub,email,displayName:String(payload.name??email)}}

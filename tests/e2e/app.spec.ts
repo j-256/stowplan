@@ -3697,11 +3697,280 @@ test("surfaces transport failures from admin mutations", async ({
   );
 
   await page.goto("/admin");
-  await page.getByRole("button", { name: "Revoke" }).click();
+  let confirmation = "";
+  page.once("dialog", async (dialog) => {
+    confirmation = dialog.message();
+    await dialog.accept();
+  });
+  await page.getByRole("button", {
+    exact: true,
+    name: "Revoke session session_test for owner@example.test",
+  }).click();
+  await expect.poll(() => confirmation).toContain(
+    "session_test for owner@example.test",
+  );
 
   await expect(page.locator(".admin-error strong")).toContainText(
     "Failed to fetch",
   );
+});
+
+test("sends concurrency revisions with global membership changes", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "desktop-chromium",
+    "One desktop project covers administrative membership preconditions",
+  );
+  const mutations: Record<string, unknown>[] = [];
+  await page.route("**/api/admin/overview*", (route) => route.fulfill({
+    body: JSON.stringify({
+      audit: [],
+      guestLinks: [],
+      identities: [],
+      memberships: [{
+        created_at: "2026-07-25T00:00:00.000Z",
+        display_name: "Workspace member",
+        email: "member@example.test",
+        membership_revision: 12,
+        role: "viewer",
+        user_id: "usr_member",
+        user_status: "active",
+        workspace_access_revision: 7,
+        workspace_id: "ws_membership",
+        workspace_name: "Membership workspace",
+        workspace_revision: 5,
+      }],
+      sessions: [],
+      users: [],
+      workspaces: [],
+    }),
+    contentType: "application/json",
+    headers: MOCK_ACCOUNT_HEADERS,
+    status: 200,
+  }));
+  await page.route("**/api/admin/mutate", async (route) => {
+    mutations.push(
+      route.request().postDataJSON() as Record<string, unknown>,
+    );
+    await route.fulfill({
+      body: JSON.stringify({
+        message: "Workspace membership changed",
+      }),
+      contentType: "application/json",
+      headers: MOCK_ACCOUNT_HEADERS,
+      status: 200,
+    });
+  });
+
+  await page.goto("/admin");
+  const membership = page.getByRole("listitem", {
+    name: "Workspace membership for member@example.test in Membership workspace",
+  });
+  await membership.getByRole("combobox", {
+    name: "Workspace role for member@example.test in Membership workspace",
+  }).selectOption("editor");
+  await expect.poll(() => mutations[0]).toEqual({
+    action: "member.role",
+    expectedAccessRevision: 7,
+    expectedMembershipRevision: 12,
+    targetId: "ws_membership::usr_member",
+    value: "editor",
+  });
+
+  page.once("dialog", async (dialog) => {
+    await dialog.accept();
+  });
+  await membership.getByRole("button", {
+    exact: true,
+    name: "Remove member@example.test from Membership workspace",
+  }).click();
+  await expect.poll(() => mutations[1]).toEqual({
+    action: "member.remove",
+    expectedAccessRevision: 7,
+    expectedMembershipRevision: 12,
+    targetId: "ws_membership::usr_member",
+  });
+});
+
+test("shows and searches the member who accepted a retained guest link", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "desktop-chromium",
+    "One desktop project covers retained guest-link attribution",
+  );
+  const requestedQueries: string[] = [];
+  await page.route("**/api/admin/overview*", (route) => {
+    const query = new URL(route.request().url()).searchParams.get("q");
+    if (query) requestedQueries.push(query);
+    return route.fulfill({
+      body: JSON.stringify({
+        audit: [],
+        guestLinks: [{
+          accepted_at: "2026-07-25T01:00:00.000Z",
+          consumed_at: "2026-07-25T01:00:00.000Z",
+          created_at: "2026-07-25T00:00:00.000Z",
+          created_by_display_name: "Owner",
+          created_by_email: "owner@example.test",
+          created_by_user_id: "usr_owner",
+          expires_at: "2026-07-26T00:00:00.000Z",
+          guest_link_id: "guest_attributed",
+          redeemed_by_display_name: "Accepted member",
+          redeemed_by_email: "accepted@example.test",
+          redeemed_by_user_id: "usr_accepted",
+          redemption_id: "redemption_attributed",
+          revoked_at: null,
+          role: "viewer",
+          workspace_id: "ws_attributed",
+          workspace_name: "Attributed workspace",
+        }],
+        identities: [],
+        memberships: [{
+          created_at: "2026-07-25T01:00:00.000Z",
+          display_name: "Accepted member",
+          email: "accepted@example.test",
+          membership_revision: 3,
+          role: "viewer",
+          user_id: "usr_accepted",
+          user_status: "active",
+          workspace_access_revision: 5,
+          workspace_id: "ws_attributed",
+          workspace_name: "Attributed workspace",
+          workspace_revision: 2,
+        }],
+        sessions: [],
+        users: [{
+          created_at: "2026-07-25T00:30:00.000Z",
+          display_name: "Accepted member",
+          email: "accepted@example.test",
+          global_role: "user",
+          membership_revision: 3,
+          status: "active",
+          updated_at: "2026-07-25T01:00:00.000Z",
+          user_id: "usr_accepted",
+        }],
+        workspaces: [],
+      }),
+      contentType: "application/json",
+      headers: MOCK_ACCOUNT_HEADERS,
+      status: 200,
+    });
+  });
+
+  await page.goto("/admin");
+  const acceptedLink = page.getByRole("listitem", {
+    name: "Enrollment link guest_attributed for Attributed workspace",
+  });
+  await expect(acceptedLink).toContainText(
+    "Accepted by Accepted member",
+  );
+  await expect(acceptedLink).toContainText("accepted@example.test");
+  await expect(acceptedLink).toContainText("user usr_accepted");
+  await expect(acceptedLink).not.toContainText("token");
+
+  const search = page.getByLabel("Search server records");
+  await search.fill("guest_attributed");
+  await page.keyboard.press("Enter");
+  await expect.poll(() => requestedQueries).toContain(
+    "guest_attributed",
+  );
+
+  await acceptedLink.getByRole("link", {
+    exact: true,
+    name: "Find user Accepted member",
+  }).click();
+  await expect.poll(() => requestedQueries).toContain("usr_accepted");
+  await expect(page).toHaveURL(/#admin-users$/u);
+  await expect(page.locator("#admin-users")).toBeFocused();
+
+  await page.getByRole("listitem", {
+    name: "Enrollment link guest_attributed for Attributed workspace",
+  }).getByRole("link", {
+    exact: true,
+    name: "Find membership for Accepted member",
+  }).click();
+  await expect(page).toHaveURL(/#admin-memberships$/u);
+  await expect(page.locator("#admin-memberships")).toBeFocused();
+});
+
+test("lets a global administrator delete a retained guest-link record", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "desktop-chromium",
+    "One desktop project covers the destructive admin confirmation",
+  );
+  let mutation: Record<string, unknown> | null = null;
+  const overview = {
+    audit: [],
+    deletions: [],
+    guestLinks: [{
+      consumed_at: "2026-07-25T01:00:00.000Z",
+      created_at: "2026-07-25T00:00:00.000Z",
+      created_by_display_name: "Owner",
+      created_by_email: "owner@example.test",
+      created_by_user_id: "usr_owner",
+      expires_at: "2026-07-26T00:00:00.000Z",
+      guest_link_id: "guest_retained",
+      redemption_id: "redemption_retained",
+      revoked_at: null,
+      role: "viewer",
+      workspace_id: "ws_guest",
+      workspace_name: "Guest workspace",
+    }],
+    identities: [],
+    memberships: [],
+    migrations: [],
+    oauthStates: [],
+    sessions: [],
+    users: [],
+    workspaces: [],
+  };
+  await page.route("**/api/admin/overview*", (route) => route.fulfill({
+    body: JSON.stringify(overview),
+    contentType: "application/json",
+    headers: MOCK_ACCOUNT_HEADERS,
+    status: 200,
+  }));
+  await page.route("**/api/admin/mutate", async (route) => {
+    mutation = route.request().postDataJSON() as Record<string, unknown>;
+    await route.fulfill({
+      body: JSON.stringify({ message: "Guest link deleted", ok: true }),
+      contentType: "application/json",
+      headers: MOCK_ACCOUNT_HEADERS,
+      status: 200,
+    });
+  });
+
+  await page.goto("/admin");
+  await page.getByRole("button", {
+    exact: true,
+    name: "Delete record for enrollment link guest_retained in Guest workspace",
+  }).focus();
+  await page.keyboard.press("Enter");
+  const dialog = page.getByRole("dialog", {
+    name: "Delete this guest-link record?",
+  });
+  await expect(dialog).toContainText(
+    "does not remove the resulting workspace member",
+  );
+  await expect(dialog.getByRole("button", {
+    exact: true,
+    name: "Cancel",
+  })).toBeFocused();
+  await expect(dialog.getByRole("button", {
+    exact: true,
+    name: "Delete retained record",
+  })).toBeVisible();
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Enter");
+  await expect.poll(() => mutation).toEqual({
+    action: "guest.delete",
+    targetId: "guest_retained",
+  });
+  await expect(page.getByText("Guest link deleted")).toBeVisible();
+  await expect(dialog).toHaveCount(0);
 });
 
 test("keeps server administration searchable and responsive", async ({
@@ -3747,22 +4016,77 @@ test("keeps server administration searchable and responsive", async ({
           metrics: [],
           rowCount: 5,
           table: "d1_migrations",
-        }],
+        }, ...[
+          ["workspace-deletions", "Deletion tombstones", "workspace_deletions"],
+          ["users", "Users", "users"],
+          ["identities", "Linked identities", "identities"],
+          ["workspace-members", "Workspace memberships", "workspace_members"],
+          ["guest-links", "One-time invite links", "guest_links"],
+          ["oauth-states", "OAuth state rows", "oauth_states"],
+          ["auth-audit-events", "Authentication audit rows", "auth_audit_events"],
+          ["migration-stream", "Migration stream marker", "stowplan_migration_stream"],
+        ].map(([key, label, table]) => ({
+          key,
+          label,
+          metrics: [],
+          rowCount: 1,
+          table,
+        }))],
         generatedAt: new Date().toISOString(),
       },
+      deletions: [{
+        deleted_at: "2026-07-25T01:00:00.000Z",
+        deleted_by_display_name: "Owner",
+        deleted_by_email: "owner@example.test",
+        deleted_by_user_id: "usr_owner",
+        deletion_id: "deletion_test",
+        final_access_revision: 9,
+        final_snapshot_revision: 8,
+        workspace_id: "ws_deleted",
+      }],
       guestLinks: [],
       identities: [],
       listInfo: {
         audit: { hasMore: false, limit: 250 },
+        deletions: { hasMore: false, limit: 250 },
         guestLinks: { hasMore: false, limit: 250 },
         identities: { hasMore: false, limit: 500 },
         memberships: { hasMore: false, limit: 500 },
+        migrations: { hasMore: false, limit: 250 },
+        oauthStates: { hasMore: false, limit: 250 },
         sessions: { hasMore: false, limit: 250 },
         users: { hasMore: false, limit: 250 },
         workspaces: { hasMore: false, limit: 250 },
       },
       memberships: [],
-      sessions: [],
+      migrations: [{
+        applied_at: "2026-07-25T00:00:00.000Z",
+        ledger_table: "d1_migrations",
+        migration_id: "5",
+        name: null,
+      }],
+      oauthStates: [{
+        consumed_at: null,
+        created_at: "2026-07-25T00:00:00.000Z",
+        expires_at: "2026-07-25T00:10:00.000Z",
+        provider: "github",
+        status: "expired",
+      }],
+      sessions: [{
+        created_at: "2026-07-25T00:00:00.000Z",
+        display_name: "Owner",
+        email: "owner@example.test",
+        expires_at: "2099-07-25T00:00:00.000Z",
+        global_role: "admin",
+        ip_prefix: "192.0.2.0/24",
+        last_seen_at: "2026-07-25T00:05:00.000Z",
+        revoked_at: null,
+        session_id: "ses_capacity",
+        status: "active",
+        user_agent: "Capacity browser",
+        user_id: "usr_capacity",
+        viewer_is_current: 1,
+      }],
       users: [],
       workspaces: [{
         active_guest_link_count: 2,
@@ -3795,7 +4119,7 @@ test("keeps server administration searchable and responsive", async ({
     name: "Stowplan administration",
   })).toBeVisible();
   await expect(page.getByRole("link", {
-    name: "Open settings",
+    name: "Open member settings",
   })).toHaveAttribute(
     "href",
     "/workspaces/capacity-workspace@ws_capacity/settings",
@@ -3809,6 +4133,49 @@ test("keeps server administration searchable and responsive", async ({
   await expect(databaseInventory).toContainText("active: 2");
   await expect(databaseInventory).toContainText("d1_migrations");
   await expect(databaseInventory).toContainText("5 rows");
+  for (const [label, section] of [
+    ["Workspace snapshots", "admin-workspaces"],
+    ["Deletion tombstones", "admin-deletions"],
+    ["Users", "admin-users"],
+    ["Linked identities", "admin-identities"],
+    ["Workspace memberships", "admin-memberships"],
+    ["Sessions", "admin-sessions"],
+    ["One-time invite links", "admin-guest-links"],
+    ["OAuth state rows", "admin-oauth-states"],
+    ["Authentication audit rows", "admin-audit"],
+    ["Migration stream marker", "admin-migrations"],
+    ["Migration ledger", "admin-migrations"],
+  ]) {
+    await expect(databaseInventory.getByRole("link").filter({
+      hasText: label,
+    })).toHaveAttribute("href", `#${section}`);
+  }
+  await expect(page.locator("#admin-sessions")).toContainText(
+    "Capacity browser",
+  );
+  await expect(page.locator("#admin-sessions")).toContainText(
+    "192.0.2.0/24",
+  );
+  const sessionRecords = page.getByRole("list", {
+    name: "Session records",
+  });
+  const currentSession = sessionRecords.getByRole("listitem", {
+    name: "Session ses_capacity for owner@example.test",
+  });
+  await expect(currentSession).toContainText("Current browser session");
+  await expect(currentSession.getByRole("button", {
+    exact: true,
+    name: "Revoke current session ses_capacity for owner@example.test and sign out",
+  })).toHaveClass(/danger/u);
+  await expect(page.locator("#admin-deletions")).toContainText(
+    "deletion_test",
+  );
+  await expect(page.locator("#admin-oauth-states")).toContainText(
+    "github",
+  );
+  await expect(page.locator("#admin-migrations")).toContainText(
+    "d1_migrations",
+  );
   const workspaceCapacity = page.locator(".admin-workspaces", {
     hasText: "Capacity workspace",
   });
@@ -3845,9 +4212,35 @@ test("keeps server administration searchable and responsive", async ({
   await page.keyboard.press("Enter");
   await expect(page.locator(".admin-filter-note"))
     .toContainText("capacity");
+  await expect(databaseInventory).toContainText(
+    "Inventory row counts describe the full database",
+  );
+  const clearSearch = page.locator(".admin-filter-note").getByRole(
+    "button",
+    { name: "Clear" },
+  );
+  await expect.poll(() => clearSearch.evaluate((element) =>
+    Number.parseFloat(getComputedStyle(element).minHeight)
+  )).toBeGreaterThanOrEqual(44);
   await page.getByText("Details", { exact: true }).click();
   await expect(page.locator(".admin-audit pre")).toContainText(
     '"role": "admin"',
+  );
+  await databaseInventory.getByRole("link").filter({
+    hasText: "Sessions",
+  }).click();
+  await expect(page.locator("#admin-sessions")).toBeFocused();
+  let currentSessionConfirmation = "";
+  page.once("dialog", async (dialog) => {
+    currentSessionConfirmation = dialog.message();
+    await dialog.dismiss();
+  });
+  await currentSession.getByRole("button", {
+    exact: true,
+    name: "Revoke current session ses_capacity for owner@example.test and sign out",
+  }).click();
+  await expect.poll(() => currentSessionConfirmation).toContain(
+    "This signs you out immediately",
   );
 });
 

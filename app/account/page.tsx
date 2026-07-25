@@ -1,18 +1,18 @@
 "use client";
 
-import {
-  LogOut,
-  ShieldCheck,
-} from "lucide-react";
+import { ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import {
+  GUEST_INVITATION_PATH,
+  INVITATION_CONTINUATION_STORAGE_KEY,
   INVITATION_OAUTH_RESUME_PATH,
   workspacePath,
 } from "../../src/domain/app-url";
 import {
   clearActiveServerWorkspaceCatalogAccount,
 } from "../../src/client/local-replica";
+import { AccountSessions } from "../../src/client/account-sessions";
 import styles from "./account.module.css";
 
 interface User {
@@ -45,8 +45,6 @@ const INITIAL_NAVIGATION: NavigationState = {
   workspace: null,
 };
 const MAX_RETURN_TO_DECODE_PASSES = 4;
-const INVITATION_CONTINUATION_KEY =
-  "stowplan_invitation_return_to";
 const WORKSPACE_CHANNEL_NAME = "stowplan-workspaces-v1";
 const RETURN_TO_ORIGIN = "https://stowplan.invalid";
 const SERVER_NAVIGATION_HREF = "";
@@ -158,9 +156,9 @@ function readNavigation(href: string): NavigationState {
 
 function isInvitationReturnTo(value: string): boolean {
   try {
-    return new URL(value, RETURN_TO_ORIGIN).pathname.startsWith(
-      "/guest/",
-    );
+    const path = new URL(value, RETURN_TO_ORIGIN).pathname;
+    return path === GUEST_INVITATION_PATH ||
+      path.startsWith(`${GUEST_INVITATION_PATH}/`);
   } catch {
     return false;
   }
@@ -169,7 +167,10 @@ function isInvitationReturnTo(value: string): boolean {
 function rememberInvitationReturnTo(value: string): boolean {
   if (!isInvitationReturnTo(value)) return false;
   try {
-    sessionStorage.setItem(INVITATION_CONTINUATION_KEY, value);
+    sessionStorage.setItem(
+      INVITATION_CONTINUATION_STORAGE_KEY,
+      value,
+    );
     return true;
   } catch {
     return false;
@@ -178,9 +179,13 @@ function rememberInvitationReturnTo(value: string): boolean {
 
 function takeInvitationReturnTo(): string | null {
   try {
-    const saved = sessionStorage.getItem(INVITATION_CONTINUATION_KEY);
+    const saved = sessionStorage.getItem(
+      INVITATION_CONTINUATION_STORAGE_KEY,
+    );
     if (!saved || !isInvitationReturnTo(saved)) return null;
-    sessionStorage.removeItem(INVITATION_CONTINUATION_KEY);
+    sessionStorage.removeItem(
+      INVITATION_CONTINUATION_STORAGE_KEY,
+    );
     return saved;
   } catch {
     return null;
@@ -232,11 +237,13 @@ export default function Account() {
       setConfigured(account.configured);
       setProviders(account.providers ?? []);
       if (account.user) broadcastAccountChange();
-      const invitationDestination = resumeInvitation
-        ? takeInvitationReturnTo()
-        : invitationReturn
-          ? returnTo
-          : null;
+      const invitationDestination = account.user
+        ? resumeInvitation
+          ? takeInvitationReturnTo()
+          : invitationReturn
+            ? returnTo
+            : null
+        : null;
       if (account.user && invitationDestination) {
         setMessage("Signed in. Returning to the invitation.");
         location.replace(invitationDestination);
@@ -268,24 +275,28 @@ export default function Account() {
     returnTo,
   ]);
 
-  const signOut = async () => {
+  const signOut = async (): Promise<string | null> => {
     setMessage("");
     try {
       const response = await fetch("/api/auth/logout", { method: "POST" });
       if (!response.ok) {
         const body = await response.json().catch(() => null) as { error?: string } | null;
-        setMessage(body?.error ?? "Could not sign out");
-        return;
+        const failure = body?.error ?? "Could not sign out";
+        setMessage(failure);
+        return failure;
       }
       await clearActiveServerWorkspaceCatalogAccount().catch(() => undefined);
       broadcastAccountChange();
       if (providers.includes("cloudflare-access")) {
         location.assign(ACCESS_LOGOUT_PATH);
-        return;
+        return null;
       }
       location.reload();
+      return null;
     } catch (error) {
-      setMessage(actionError(error, "Could not sign out"));
+      const failure = actionError(error, "Could not sign out");
+      setMessage(failure);
+      return failure;
     }
   };
 
@@ -305,9 +316,9 @@ export default function Account() {
         "Development sign-in failed",
       );
       broadcastAccountChange();
-      location.href = resumeInvitation
+      location.replace(resumeInvitation
         ? takeInvitationReturnTo() ?? DEFAULT_RETURN_TO
-        : returnTo;
+        : returnTo);
     } catch (error) {
       setMessage(actionError(error, "Development sign-in failed"));
     }
@@ -333,6 +344,10 @@ export default function Account() {
                   <small>{user.globalRole} account, session expires {new Date(user.expiresAt).toLocaleString()}</small>
                 </span>
               </p>
+              <AccountSessions
+                accountId={user.userId}
+                onSignOut={signOut}
+              />
               <section className={styles.guestPanel}>
                 <h2>Workspace collaboration</h2>
                 <p>Member roles, invite-link enrollment expiry and revocation, leaving, and server deletion are managed from the workspace access page.</p>
@@ -346,7 +361,6 @@ export default function Account() {
                   : <small>Open Account from a workspace to reach its access page.</small>}
               </section>
               <div className={styles.accountActions}>
-                <button onClick={() => void signOut()}><LogOut /> Sign out</button>
                 {user.globalRole === "admin" && <Link href="/admin">Open admin control panel</Link>}
               </div>
             </>

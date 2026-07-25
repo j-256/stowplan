@@ -131,7 +131,8 @@ const actions = {
   createGuestLink: async (input) => ({
     accessRevision: input.expectedAccessRevision + 1,
     guestLink: guestLinks[0]!,
-    oneTimeUrl: "https://example.test/guest/one-time",
+    oneTimeUrl:
+      "https://example.test/guest#token=one-time&returnTo=%2Fworkspaces%2Fws_shared%2Faccess",
   }),
   deleteServerWorkspace: async (input) => ({
     deleted: true as const,
@@ -313,7 +314,9 @@ describe("workspace access surface", () => {
     expect(markup).toContain("Load more members");
     expect(markup).toContain("Load more invite links");
     expect(markup).toContain(">Delete server workspace</button>");
-    expect(markup).not.toContain("https://example.test/guest/one-time");
+    expect(markup).not.toContain(
+      "https://example.test/guest#token=one-time",
+    );
   });
 
   it.each(["editor", "viewer"] as const)(

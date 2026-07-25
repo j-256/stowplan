@@ -33,6 +33,24 @@ describe("Cloudflare edge configuration", () => {
     }
   });
 
+  it("rate-limits fixed and legacy guest confirmation APIs", () => {
+    const rules = Object.values(configuration.profiles).flatMap(
+      profile => profile.phases.http_ratelimit.filter(
+        candidate => candidate.description ===
+          "[stowplan] Limit guest redemption requests by source",
+      ),
+    );
+    expect(rules.length).toBeGreaterThan(0);
+    for (const rule of rules) {
+      expect(rule.expression).toContain(
+        'http.request.uri.path eq "/api/auth/guest"',
+      );
+      expect(rule.expression).toContain(
+        'starts_with(http.request.uri.path, "/api/auth/guest/")',
+      );
+    }
+  });
+
   it("keeps the Enterprise workspace body limit aligned with the server", () => {
     expect(configuration.workspace_access_request_body_limit_bytes)
       .toBe(WORKSPACE_ACCESS_REQUEST_MAX_BYTES);

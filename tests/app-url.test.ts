@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  GUEST_INVITATION_RETURN_TO_MAX_CHARACTERS,
+  guestInvitationUrl,
   INVITATION_OAUTH_RESUME_PATH,
   oauthReturnTo,
   parseAppUrl,
+  parseGuestInvitationFragment,
   WORKSPACE_LIST_PATH,
   workspaceReturnTo,
   workspacePath,
@@ -201,6 +204,49 @@ describe("workspace URLs", () => {
     expect(oauthReturnTo(
       "/account?returnTo=%252Fguest%252Fraw_invite",
     )).toBe(INVITATION_OAUTH_RESUME_PATH);
+    expect(oauthReturnTo(
+      "/guest#token=raw_invite&returnTo=%2Fworkspaces",
+    )).toBe(INVITATION_OAUTH_RESUME_PATH);
+    let deeplyEncodedInvitation = "/guest#token=raw_invite";
+    for (let pass = 0; pass < 12; pass += 1) {
+      deeplyEncodedInvitation = encodeURIComponent(
+        deeplyEncodedInvitation,
+      );
+    }
+    expect(oauthReturnTo(
+      `/account?returnTo=${deeplyEncodedInvitation}`,
+    )).toBe(INVITATION_OAUTH_RESUME_PATH);
     expect(oauthReturnTo("//attacker.test/guest/raw_invite")).toBe("/");
+  });
+
+  it("keeps new invitation credentials in a fixed-path fragment", () => {
+    const token = "raw_invite_secret";
+    const invitation = new URL(guestInvitationUrl(
+      "https://stowplan.test/api/workspaces/ws_home/guest-links",
+      token,
+      "/workspaces/ws_home/settings",
+    ));
+
+    expect(invitation.pathname).toBe("/guest");
+    expect(invitation.search).toBe("");
+    expect(invitation.href.slice(0, invitation.href.indexOf("#")))
+      .not.toContain(token);
+    expect(parseGuestInvitationFragment(invitation.hash)).toEqual({
+      returnTo: "/workspaces/ws_home/settings",
+      token,
+    });
+    expect(parseGuestInvitationFragment("#token=one&token=two")).toBeNull();
+    expect(parseGuestInvitationFragment("#returnTo=%2Fworkspaces")).toBeNull();
+    const oversizedReturn = "x".repeat(
+      GUEST_INVITATION_RETURN_TO_MAX_CHARACTERS + 1,
+    );
+    expect(parseGuestInvitationFragment(
+      `#token=raw&returnTo=${oversizedReturn}`,
+    )).toBeNull();
+    expect(() => guestInvitationUrl(
+      "https://stowplan.test",
+      "raw",
+      oversizedReturn,
+    )).toThrow("Invitation URL is invalid");
   });
 });

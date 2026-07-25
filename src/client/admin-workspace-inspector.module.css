@@ -1,0 +1,218 @@
+.page {
+  display: grid;
+  gap: 1.25rem;
+  margin: 0 auto;
+  max-width: 84rem;
+  min-width: 0;
+  padding: clamp(1rem, 3vw, 2.25rem);
+}
+
+.header {
+  align-items: start;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+}
+
+.header h1,
+.header p,
+.intro p,
+.sectionHeading h2,
+.sectionHeading p,
+.controls h2,
+.controls p {
+  margin: 0;
+}
+
+.header h1 {
+  overflow-wrap: anywhere;
+}
+
+.eyebrow {
+  color: var(--sage);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.intro,
+.controls,
+.deleted {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 0.9rem;
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem;
+}
+
+.summary,
+.deleted dl {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+}
+
+.summary > div,
+.deleted dl > div {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+  padding: 0.8rem;
+}
+
+.summary dt,
+.deleted dt {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.summary dd,
+.deleted dd {
+  font-weight: 700;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.sectionHeading {
+  align-items: end;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+}
+
+.sectionHeading > div {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.sectionHeading p,
+.intro,
+.controls > p,
+.deleted > p {
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.snapshot {
+  background: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  color: var(--bg);
+  font: 0.78rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  margin: 0.75rem 0 0;
+  max-height: min(65vh, 52rem);
+  max-width: 100%;
+  min-width: 0;
+  overflow: auto;
+  padding: 1rem;
+  tab-size: 2;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.actions {
+  align-items: stretch;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.sectionActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.actions button,
+.sectionHeading button,
+.error button,
+.dialogActions button,
+.confirmation input {
+  min-height: 44px;
+}
+
+.ownerStatus {
+  align-items: center;
+  background: var(--sage2);
+  border: 1px solid var(--sage);
+  border-radius: 0.65rem;
+  color: var(--sage);
+  display: inline-flex;
+  font-weight: 750;
+  min-height: 44px;
+  padding: 0.5rem 0.8rem;
+}
+
+.error,
+.notice {
+  border-radius: 0.75rem;
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.8rem;
+}
+
+.error {
+  background: color-mix(in srgb, var(--danger-bg) 50%, transparent);
+  border: 1px solid var(--danger);
+  color: var(--danger);
+}
+
+.error button {
+  justify-self: start;
+}
+
+.notice {
+  background: var(--sage2);
+  border: 1px solid color-mix(in srgb, var(--sage) 48%, var(--line));
+}
+
+.confirmation {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.confirmation input {
+  width: 100%;
+}
+
+.dialogActions {
+  display: grid;
+  gap: 0.6rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 0.8rem;
+}
+
+@media (max-width: 900px) {
+  .summary,
+  .deleted dl {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 600px) {
+  .header,
+  .sectionHeading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .summary,
+  .deleted dl,
+  .dialogActions {
+    grid-template-columns: 1fr;
+  }
+
+  .actions,
+  .actions button,
+  .sectionActions,
+  .sectionActions button,
+  .sectionHeading button {
+    width: 100%;
+  }
+}

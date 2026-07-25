@@ -1,3 +1,4 @@
+import { guestInvitationUrl } from "../../../../../src/domain/app-url";
 import { accountScopedJson } from "../../../../../src/server/account-context";
 import {
   createWorkspaceGuestLink,
@@ -38,16 +39,16 @@ export async function POST(
       principal.user.userId,
       body,
     );
-    const url = new URL(
-      `/guest/${encodeURIComponent(result.raw)}`,
+    const oneTimeUrl = guestInvitationUrl(
       principal.baseUrl,
+      result.raw,
+      result.returnTo,
     );
-    url.searchParams.set("returnTo", result.returnTo);
     return accountScopedJson(
       {
         accessRevision: result.accessRevision,
         guestLink: result.guestLink,
-        oneTimeUrl: url.toString(),
+        oneTimeUrl,
       },
       principal.user.userId,
       { status: 201 },

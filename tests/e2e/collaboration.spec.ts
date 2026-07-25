@@ -1,8 +1,12 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Route } from "@playwright/test";
 
 const DATABASE_NAME = "stowplan-v1";
+const OWNER_ID = "usr_collaboration_owner";
 const OWNER_EMAIL = "collaboration-owner@example.test";
 const OWNER_NAME = "Collaboration Owner";
+const OWNER_HEADERS = {
+  "x-stowplan-account-id": OWNER_ID,
+};
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/");
@@ -11,6 +15,30 @@ test.beforeEach(async ({ page }) => {
     request.onsuccess = request.onerror = request.onblocked = () => resolve();
   }), DATABASE_NAME);
   await page.reload();
+  await page.route("**/api/auth/sessions*", (route) => route.fulfill({
+    body: JSON.stringify({
+      currentSession: {
+        createdAt: "2026-07-25T00:00:00.000Z",
+        current: true,
+        expiresAt: "2026-08-25T00:00:00.000Z",
+        id: "ses_current",
+        ipPrefix: "192.0.2.0/24",
+        lastSeenAt: "2026-07-25T00:05:00.000Z",
+        revokedAt: null,
+        status: "active",
+        userAgent: "Test browser",
+      },
+      otherSessions: [],
+      page: {
+        hasMore: false,
+        limit: 25,
+        nextCursor: null,
+      },
+    }),
+    contentType: "application/json",
+    headers: OWNER_HEADERS,
+    status: 200,
+  }));
 });
 
 test("shows an action-specific error for an empty account status response", async ({
@@ -74,6 +102,7 @@ test("reloads after development sign-out without visiting the Access logout endp
         email: OWNER_EMAIL,
         expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
         globalRole: "admin",
+        userId: OWNER_ID,
       },
     }),
     contentType: "application/json",
@@ -92,13 +121,67 @@ test("reloads after development sign-out without visiting the Access logout endp
   const reloaded = page.waitForEvent("framenavigated", (frame) => (
     frame === page.mainFrame()
   ));
-  await page.getByRole("button", { name: "Sign out" }).click();
+  await page.getByRole("button", {
+    exact: true,
+    name: "Sign out this session",
+  }).click();
+  await page.getByRole("button", {
+    exact: true,
+    name: "Sign out",
+  }).click();
   await reloaded;
   await expect(page.getByRole("heading", {
     name: `Signed in as ${OWNER_NAME}`,
   })).toBeVisible();
   expect(accountNavigations).toBe(2);
   expect(accessLogoutRequests).toBe(0);
+});
+
+test("keeps a failed current-session sign-out in its dialog context", async ({
+  page,
+}) => {
+  await page.route("**/api/auth/me", (route) => route.fulfill({
+    body: JSON.stringify({
+      configured: true,
+      providers: ["development"],
+      user: {
+        displayName: OWNER_NAME,
+        email: OWNER_EMAIL,
+        expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+        globalRole: "admin",
+        userId: OWNER_ID,
+      },
+    }),
+    contentType: "application/json",
+    status: 200,
+  }));
+  await page.route("**/api/auth/logout", (route) => route.fulfill({
+    body: JSON.stringify({
+      error: "Sign-out service is unavailable",
+    }),
+    contentType: "application/json",
+    status: 503,
+  }));
+
+  await page.goto("/account");
+  await page.getByRole("button", {
+    exact: true,
+    name: "Sign out this session",
+  }).click();
+  const dialog = page.getByRole("dialog", {
+    name: "Sign out this session?",
+  });
+  await dialog.getByRole("button", {
+    exact: true,
+    name: "Sign out",
+  }).click();
+
+  await expect(dialog).toBeVisible();
+  await expect(page.getByRole("region", {
+    name: "Your sessions",
+  }).getByRole("alert")).toContainText(
+    "Sign-out service is unavailable",
+  );
 });
 
 test("clears the Access cookie after an Access-configured app sign-out", async ({
@@ -119,6 +202,7 @@ test("clears the Access cookie after an Access-configured app sign-out", async (
         email: OWNER_EMAIL,
         expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
         globalRole: "admin",
+        userId: OWNER_ID,
       },
     }),
     contentType: "application/json",
@@ -138,11 +222,146 @@ test("clears the Access cookie after an Access-configured app sign-out", async (
     request.isNavigationRequest() &&
     new URL(request.url()).pathname === "/cdn-cgi/access/logout"
   ));
-  await page.getByRole("button", { name: "Sign out" }).click();
+  await page.getByRole("button", {
+    exact: true,
+    name: "Sign out this session",
+  }).click();
+  await page.getByRole("button", {
+    exact: true,
+    name: "Sign out",
+  }).click();
   await accessLogout;
   await expect(page).toHaveURL(/\/cdn-cgi\/access\/logout$/);
   await page.waitForLoadState("domcontentloaded");
   expect(accessExchanges).toBe(0);
+});
+
+test("lists and revokes another account session with keyboard-safe confirmation", async ({
+  page,
+}) => {
+  await page.unroute("**/api/auth/sessions*");
+  let revokedSessionId: string | null = null;
+  await page.route("**/api/auth/me", (route) => route.fulfill({
+    body: JSON.stringify({
+      configured: true,
+      providers: ["development"],
+      user: {
+        displayName: OWNER_NAME,
+        email: OWNER_EMAIL,
+        expiresAt: "2026-08-25T00:00:00.000Z",
+        globalRole: "admin",
+        userId: OWNER_ID,
+      },
+    }),
+    contentType: "application/json",
+    status: 200,
+  }));
+  const sessionRoute = (route: Route) => {
+    if (route.request().method() === "DELETE") {
+      revokedSessionId = decodeURIComponent(
+        new URL(route.request().url()).pathname.split("/").at(-1) ?? "",
+      );
+      return route.fulfill({
+        body: JSON.stringify({
+          current: false,
+          revoked: true,
+          revokedAt: "2026-07-25T02:00:00.000Z",
+          sessionId: revokedSessionId,
+        }),
+        contentType: "application/json",
+        headers: OWNER_HEADERS,
+        status: 200,
+      });
+    }
+    return route.fulfill({
+      body: JSON.stringify({
+        currentSession: {
+          createdAt: "2026-07-25T00:00:00.000Z",
+          current: true,
+          expiresAt: "2026-08-25T00:00:00.000Z",
+          id: "ses_current",
+          ipPrefix: "192.0.2.0/24",
+          lastSeenAt: "2026-07-25T01:55:00.000Z",
+          revokedAt: null,
+          status: "active",
+          userAgent: "Current browser",
+        },
+        otherSessions: [
+          {
+            createdAt: "2026-07-24T00:00:00.000Z",
+            current: false,
+            expiresAt: "2026-08-24T00:00:00.000Z",
+            id: "ses_other",
+            ipPrefix: "2001:db8:abcd::/48",
+            lastSeenAt: "2026-07-24T03:00:00.000Z",
+            revokedAt: null,
+            status: "active",
+            userAgent: "Other tablet",
+          },
+          {
+            createdAt: "2026-07-23T00:00:00.000Z",
+            current: false,
+            expiresAt: "2026-08-23T00:00:00.000Z",
+            id: "ses_other_two",
+            ipPrefix: null,
+            lastSeenAt: "2026-07-23T03:00:00.000Z",
+            revokedAt: null,
+            status: "active",
+            userAgent: "Other laptop",
+          },
+        ],
+        page: {
+          hasMore: false,
+          limit: 25,
+          nextCursor: null,
+        },
+      }),
+      contentType: "application/json",
+      headers: OWNER_HEADERS,
+      status: 200,
+    });
+  };
+  await page.route("**/api/auth/sessions*", sessionRoute);
+  await page.route("**/api/auth/sessions/**", sessionRoute);
+
+  await page.goto("/account");
+  const otherSession = page.getByRole("article").filter({
+    has: page.getByText("ses_other", { exact: true }),
+  });
+  const secondOtherSession = page.getByRole("article").filter({
+    has: page.getByText("ses_other_two", { exact: true }),
+  });
+  await expect(otherSession).toContainText("Other tablet");
+  await expect(otherSession).toContainText("2001:db8:abcd::/48");
+  await expect(secondOtherSession.getByRole("button", {
+    exact: true,
+    name: "Revoke session Other laptop (ses_other_two)",
+  })).toBeVisible();
+  await otherSession.getByRole("button", {
+    exact: true,
+    name: "Revoke session Other tablet (ses_other)",
+  }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("dialog", {
+    name: "Revoke this session?",
+  })).toBeVisible();
+  await expect(page.getByRole("dialog", {
+    name: "Revoke this session?",
+  })).toContainText("Other tablet (ses_other)");
+  await expect(page.getByRole("button", {
+    exact: true,
+    name: "Cancel",
+  })).toBeFocused();
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Enter");
+  await expect.poll(() => revokedSessionId).toBe("ses_other");
+  await expect(otherSession).toContainText("revoked");
+  await expect(page.getByText(
+    "Session revoked. Local work on that device was not deleted.",
+  )).toBeVisible();
+  await expect(otherSession.getByRole("button", {
+    name: "Revoke session Other tablet",
+  })).toHaveCount(0);
 });
 
 test("keeps return destinations on the local origin after repeated decoding", async ({

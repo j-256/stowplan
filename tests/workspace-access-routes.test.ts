@@ -483,9 +483,15 @@ describe("workspace access routes", () => {
     const creationBody = await created.json() as {
       oneTimeUrl: string;
     };
-    expect(creationBody.oneTimeUrl).toMatch(
-      /^https:\/\/stowplan\.test\/guest\//u,
-    );
+    const invitation = new URL(creationBody.oneTimeUrl);
+    expect(invitation.pathname).toBe("/guest");
+    expect(invitation.search).toBe("");
+    const rawToken = new URLSearchParams(
+      invitation.hash.slice(1),
+    ).get("token");
+    expect(rawToken).toBeTruthy();
+    expect(invitation.href.slice(0, invitation.href.indexOf("#")))
+      .not.toContain(rawToken);
 
     const listed = await getGuestLinks(
       new Request(
@@ -508,8 +514,6 @@ describe("workspace access routes", () => {
       fixture.owner.userId,
     );
     const listingText = await listed.text();
-    expect(listingText).not.toContain(
-      new URL(creationBody.oneTimeUrl).pathname.split("/").at(-1),
-    );
+    expect(listingText).not.toContain(rawToken);
   });
 });

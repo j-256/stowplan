@@ -24,7 +24,16 @@ export async function GET(
   const url = new URL(request.url);
   const base = env.AUTH_BASE_URL ?? url.origin;
   const returnTo = oauthReturnTo(url.searchParams.get("returnTo"));
-  return Response.redirect(
-    await beginOAuth(env.DB, configuredProvider, base, returnTo),
-  );
+  return new Response(null, {
+    headers: {
+      "cache-control": "no-store",
+      location: await beginOAuth(
+        env.DB,
+        configuredProvider,
+        base,
+        returnTo,
+      ),
+    },
+    status: 302,
+  });
 }

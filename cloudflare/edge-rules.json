@@ -131,7 +131,7 @@
           },
           {
             "description": "[stowplan] Limit guest redemption requests by source",
-            "expression": "http.host eq \"stowplan.jklein.dev\" and starts_with(http.request.uri.path, \"/api/auth/guest/\")",
+            "expression": "http.host eq \"stowplan.jklein.dev\" and (http.request.uri.path eq \"/api/auth/guest\" or starts_with(http.request.uri.path, \"/api/auth/guest/\"))",
             "action": "block",
             "action_parameters": {
               "response": {
@@ -263,7 +263,7 @@
           },
           {
             "description": "[stowplan] Limit guest redemption requests by source",
-            "expression": "http.host eq \"stowplan.jklein.dev\" and starts_with(http.request.uri.path, \"/api/auth/guest/\")",
+            "expression": "http.host eq \"stowplan.jklein.dev\" and (http.request.uri.path eq \"/api/auth/guest\" or starts_with(http.request.uri.path, \"/api/auth/guest/\"))",
             "action": "block",
             "action_parameters": {
               "response": {
