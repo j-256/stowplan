@@ -17,6 +17,17 @@ interface PreparedStatement {
   values: SQLInputValue[];
 }
 
+interface SqliteD1Options {
+  triggerInclusiveChanges?: boolean;
+}
+
+function totalChanges(sqlite: DatabaseSync): number {
+  const row = sqlite.prepare(
+    "SELECT total_changes() AS count",
+  ).get() as { count: number };
+  return Number(row.count);
+}
+
 export function applySqlDirectory(
   sqlite: DatabaseSync,
   directory: URL,
@@ -32,7 +43,10 @@ export function applySqlDirectory(
   }
 }
 
-export function sqliteD1Database(sqlite: DatabaseSync): D1DatabaseLike {
+export function sqliteD1Database(
+  sqlite: DatabaseSync,
+  options: SqliteD1Options = {},
+): D1DatabaseLike {
   const preparedStatements = new WeakMap<
     D1StatementLike,
     PreparedStatement
@@ -43,21 +57,28 @@ export function sqliteD1Database(sqlite: DatabaseSync): D1DatabaseLike {
       const wrapped = (
         values: SQLInputValue[] = [],
       ): D1StatementLike => {
-        const result: D1StatementLike & {
-          all<T>(): Promise<{ results: T[] }>;
-        } = {
+        const result: D1StatementLike = {
           bind(...next: unknown[]) {
             return wrapped(next as SQLInputValue[]);
           },
           first: async <T>() =>
-            statement.get(...values) as T | null,
+            statement.get(...values) as T | undefined ?? null,
           all: async <T>() => ({
+            meta: { changes: 0 },
             results: statement.all(...values) as T[],
+            success: true,
           }),
           run: async () => {
+            const before = options.triggerInclusiveChanges
+              ? totalChanges(sqlite)
+              : 0;
             const execution = statement.run(...values);
             return {
-              meta: { changes: Number(execution.changes) },
+              meta: {
+                changes: options.triggerInclusiveChanges
+                  ? totalChanges(sqlite) - before
+                  : Number(execution.changes),
+              },
               success: true,
             };
           },
@@ -76,9 +97,24 @@ export function sqliteD1Database(sqlite: DatabaseSync): D1DatabaseLike {
           if (!prepared) {
             throw new Error("Batch statement belongs to another database");
           }
+          if (prepared.statement.columns().length > 0) {
+            results.push({
+              meta: { changes: 0 },
+              results: prepared.statement.all(...prepared.values),
+              success: true,
+            });
+            continue;
+          }
+          const before = options.triggerInclusiveChanges
+            ? totalChanges(sqlite)
+            : 0;
           const execution = prepared.statement.run(...prepared.values);
           results.push({
-            meta: { changes: Number(execution.changes) },
+            meta: {
+              changes: options.triggerInclusiveChanges
+                ? totalChanges(sqlite) - before
+                : Number(execution.changes),
+            },
             success: true,
           });
         }
@@ -92,7 +128,9 @@ export function sqliteD1Database(sqlite: DatabaseSync): D1DatabaseLike {
   };
 }
 
-export function numberedMigrationDatabase(): {
+export function numberedMigrationDatabase(
+  options: SqliteD1Options = {},
+): {
   database: D1DatabaseLike;
   sqlite: DatabaseSync;
 } {
@@ -101,5 +139,5 @@ export function numberedMigrationDatabase(): {
     sqlite,
     new URL("../../migrations/", import.meta.url),
   );
-  return { database: sqliteD1Database(sqlite), sqlite };
+  return { database: sqliteD1Database(sqlite, options), sqlite };
 }

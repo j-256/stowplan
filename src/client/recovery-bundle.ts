@@ -35,6 +35,14 @@ export function parseRecoveryUpload(text: string): ParsedRecoveryUpload {
       !isRecord(entry) ||
       !isRecord(entry.envelope) ||
       (entry.status !== "pending" && entry.status !== "blocked") ||
+      (
+        entry.accountId !== undefined &&
+        entry.accountId !== null &&
+        (
+          typeof entry.accountId !== "string" ||
+          !entry.accountId.trim()
+        )
+      ) ||
       (entry.error !== undefined && typeof entry.error !== "string")
     ) {
       throw new Error("Recovery bundle is malformed");

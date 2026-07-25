@@ -1,6 +1,4 @@
 import { expect, test } from "@playwright/test";
-import { parseAppUrl, workspacePath } from "../../src/domain/app-url";
-import { projectContextOptions } from "./project-context";
 
 const DATABASE_NAME = "stowplan-v1";
 const OWNER_EMAIL = "collaboration-owner@example.test";
@@ -13,126 +11,6 @@ test.beforeEach(async ({ page }) => {
     request.onsuccess = request.onerror = request.onblocked = () => resolve();
   }), DATABASE_NAME);
   await page.reload();
-});
-
-test("signs in, backs up, and opens an exact workspace view through a one-time guest link", async ({
-  browser,
-  page,
-}, testInfo) => {
-  await page.getByRole("button", {
-    name: "Explore the kitchen demo instead",
-  }).click();
-  await expect(page).toHaveURL(/\/workspaces\/[^/]+\//);
-  const route = parseAppUrl(page.url());
-  if (route.kind !== "workspace") throw new Error("Expected a workspace URL");
-  const workspaceId = route.workspaceId;
-
-  const settingsPath = workspacePath({
-    view: "settings",
-    workspaceId,
-    workspaceLabel: "Kitchen reset",
-  });
-  await page.goto(settingsPath);
-  await page.getByRole("link", {
-    name: "Sign in, sync, or create a guest link to this view",
-  }).click();
-
-  await expect(page).toHaveURL(new RegExp(
-    `/account\\?workspace=${encodeURIComponent(workspaceId)}`,
-  ));
-  await page.getByLabel("Name").fill(OWNER_NAME);
-  await page.getByLabel("Email", { exact: true }).fill(OWNER_EMAIL);
-  await page.getByRole("button", { name: "Sign in locally" }).click();
-
-  await expect(page).toHaveURL(new RegExp(`${settingsPath}$`));
-  await expect(page.locator(".sync")).toContainText("Backed up", {
-    timeout: 15_000,
-  });
-  await page.getByRole("link", {
-    name: "Sign in, sync, or create a guest link to this view",
-  }).click();
-  await expect(page.getByRole("heading", {
-    name: `Signed in as ${OWNER_NAME}`,
-  })).toBeVisible();
-
-  await page.getByRole("button", { name: "Create guest link" }).click();
-  await expect(page.getByText(
-    "Guest link created. It can be used once during the next 24 hours.",
-  )).toBeVisible();
-  const guestUrl = await page.getByLabel("One-time guest link").inputValue();
-  expect(new URL(guestUrl).searchParams.get("returnTo")).toBe(settingsPath);
-  expect(await page.evaluate(
-    () => document.documentElement.scrollWidth <= window.innerWidth,
-  )).toBe(true);
-  await page.goto(settingsPath);
-  await expect(page.getByRole("heading", {
-    name: "Settings",
-    exact: true,
-  })).toBeVisible();
-
-  const collaboratorContext = await browser.newContext(
-    projectContextOptions(page, testInfo),
-  );
-  try {
-    const collaborator = await collaboratorContext.newPage();
-    await collaborator.goto(guestUrl);
-    await expect(collaborator.getByRole("heading", {
-      name: "Open the shared workspace?",
-    })).toBeVisible();
-    await collaborator.getByRole("button", {
-      name: "Open shared workspace",
-    }).click();
-
-    await expect(collaborator).toHaveURL(new RegExp(`${settingsPath}$`));
-    await expect(collaborator.getByRole("heading", {
-      name: "Settings",
-      exact: true,
-    })).toBeVisible();
-    await expect(collaborator.getByText("Kitchen reset", {
-      exact: true,
-    })).toBeVisible();
-    await expect(collaborator.getByText(
-      "Shared workspace opened. Your previous local workspace is still available from the main menu.",
-    )).toBeVisible();
-    expect(collaborator.viewportSize()).toEqual(page.viewportSize());
-    expect(await collaborator.evaluate(() => ({
-      devicePixelRatio,
-      maxTouchPoints: navigator.maxTouchPoints,
-    }))).toEqual(await page.evaluate(() => ({
-      devicePixelRatio,
-      maxTouchPoints: navigator.maxTouchPoints,
-    })));
-
-    await expect(collaborator.locator(".sync")).toContainText("Backed up", {
-      timeout: 15_000,
-    });
-    const sharedName = `Shared ${testInfo.project.name} kitchen`;
-    const collaboratorSync = collaborator.waitForResponse((response) =>
-      response.ok() &&
-      response.request().method() === "POST" &&
-      new URL(response.url()).pathname === "/api/sync"
-    );
-    await collaborator.getByLabel("Workspace name").fill(sharedName);
-    await collaborator.getByRole("button", {
-      name: "Rename workspace",
-    }).click();
-    await collaboratorSync;
-
-    const ownerReconciliation = page.waitForResponse((response) =>
-      response.ok() &&
-      response.request().method() === "POST" &&
-      new URL(response.url()).pathname === "/api/sync"
-    );
-    await page.bringToFront();
-    await page.evaluate(() =>
-      document.dispatchEvent(new Event("visibilitychange"))
-    );
-    await ownerReconciliation;
-    await expect(page.locator(".app-shell > main > header .eyebrow"))
-      .toHaveText(sharedName);
-  } finally {
-    await collaboratorContext.close();
-  }
 });
 
 test("shows an action-specific error for an empty account status response", async ({
@@ -170,46 +48,6 @@ test("shows an action-specific error when Access refuses an empty exchange", asy
   await expect(page.locator("output")).toContainText(
     "Cloudflare Access could not create an app session: the server returned an empty or unreadable response",
   );
-});
-
-test("closes a canceled guest-link share without extra feedback", async ({ page }) => {
-  await page.addInitScript(() => {
-    Object.defineProperty(navigator, "share", {
-      configurable: true,
-      value: async () => {
-        throw new DOMException("Canceled", "AbortError");
-      },
-    });
-  });
-  await page.route("**/api/auth/me", (route) => route.fulfill({
-    body: JSON.stringify({
-      configured: true,
-      providers: [],
-      user: {
-        displayName: OWNER_NAME,
-        email: OWNER_EMAIL,
-        expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
-        globalRole: "admin",
-      },
-    }),
-    contentType: "application/json",
-    status: 200,
-  }));
-  await page.route("**/api/admin/guest-links", (route) => route.fulfill({
-    body: JSON.stringify({
-      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
-      url: "http://127.0.0.1:3100/guest/example",
-    }),
-    contentType: "application/json",
-    status: 201,
-  }));
-  await page.goto(
-    "/account?workspace=ws_feedback&returnTo=%2Fworkspaces%2Fws_feedback%2Fsettings",
-  );
-
-  await page.getByRole("button", { name: "Create guest link" }).click();
-  await page.getByRole("button", { name: "Share" }).click();
-  await expect(page.locator("output")).toHaveCount(0);
 });
 
 test("reloads after development sign-out without visiting the Access logout endpoint", async ({

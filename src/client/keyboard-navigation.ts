@@ -18,7 +18,7 @@ const FOCUSABLE_SELECTOR = [
 ].join(",");
 const NATIVE_ARROW_SELECTOR = [
   "audio[controls]",
-  "input:not([type='checkbox'])",
+  "input",
   "select",
   "textarea",
   "video[controls]",

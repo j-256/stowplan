@@ -1,0 +1,86 @@
+.backdrop {
+  align-items: center;
+  background: rgb(5 10 20 / 68%);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding:
+    max(1rem, env(safe-area-inset-top))
+    max(1rem, env(safe-area-inset-right))
+    max(1rem, env(safe-area-inset-bottom))
+    max(1rem, env(safe-area-inset-left));
+  position: fixed;
+  z-index: 1000;
+}
+
+.dialog {
+  background: var(--panel, Canvas);
+  border: 1px solid var(--border, ButtonBorder);
+  border-radius: 1rem;
+  box-shadow: 0 1.5rem 4rem rgb(0 0 0 / 28%);
+  color: var(--text, CanvasText);
+  display: grid;
+  gap: 1rem;
+  max-height: calc(100dvh - 2rem);
+  max-width: 42rem;
+  min-width: 0;
+  overflow: auto;
+  padding: clamp(1rem, 4vw, 1.5rem);
+  width: min(100%, 42rem);
+}
+
+.dialog[data-destructive="true"] {
+  border-color: var(--danger, #b42318);
+}
+
+.dialog header {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.dialog h2 {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.description {
+  color: var(--muted, GrayText);
+}
+
+.description > :first-child {
+  margin-top: 0;
+}
+
+.description > :last-child {
+  margin-bottom: 0;
+}
+
+.content {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+
+@media (max-width: 520px), (max-height: 520px) and (pointer: coarse) {
+  .backdrop {
+    align-items: end;
+    padding:
+      max(0.5rem, env(safe-area-inset-top))
+      max(0.5rem, env(safe-area-inset-right))
+      max(0.5rem, env(safe-area-inset-bottom))
+      max(0.5rem, env(safe-area-inset-left));
+  }
+
+  .dialog {
+    border-radius: 1rem 1rem 0.5rem 0.5rem;
+    max-height: calc(100dvh - 1rem);
+    padding: 1rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .backdrop,
+  .dialog {
+    scroll-behavior: auto;
+  }
+}

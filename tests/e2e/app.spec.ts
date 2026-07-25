@@ -1,23 +1,92 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { projectContextOptions } from "./project-context";
 
 const MAX_FACING_CONTENT_GAP = 54;
 const MAX_PANEL_GUTTER = 16;
 const MAX_PANEL_PADDING = 18;
 const MAX_PANEL_SHELL_PADDING = 22;
 const MIN_RESIZE_TARGET = 32;
+const MOCK_ACCOUNT_ID = "user_test";
+const MOCK_ACCOUNT_HEADERS = Object.freeze({
+  "x-stowplan-account-id": MOCK_ACCOUNT_ID,
+});
+const MOCK_OWNER_CAPABILITIES = Object.freeze({
+  delete: true,
+  leave: false,
+  manageAccess: true,
+  read: true,
+  write: true,
+});
+
+function mockOwnerSyncResponse(
+  state: {
+    workspace: {
+      id: string;
+      name: string;
+      revision: number;
+      updatedAt: string;
+    };
+  },
+  commands: readonly { id: string }[],
+) {
+  return {
+    authorization: {
+      accessRevision: 1,
+      accountId: MOCK_ACCOUNT_ID,
+      capabilities: MOCK_OWNER_CAPABILITIES,
+      checkedAt: state.workspace.updatedAt,
+      kind: "server",
+      membershipRevision: 1,
+      role: "owner",
+      status: "active",
+    },
+    receipts: commands.map((command) => ({
+      commandId: command.id,
+      revision: state.workspace.revision,
+      status: "applied",
+    })),
+    state,
+    workspace: {
+      accessRevision: 1,
+      accountId: MOCK_ACCOUNT_ID,
+      capabilities: MOCK_OWNER_CAPABILITIES,
+      id: state.workspace.id,
+      membershipRevision: 1,
+      name: state.workspace.name,
+      revision: state.workspace.revision,
+      role: "owner",
+      updatedAt: state.workspace.updatedAt,
+    },
+  };
+}
 
 async function localReplica(page: Page) {
-  return page.evaluate(() => new Promise<Record<string, unknown>>((resolve, reject) => {
-    const open = indexedDB.open("stowplan-v1", 1);
-    open.onerror = () => reject(open.error);
-    open.onsuccess = () => {
-      const request = open.result.transaction("records").objectStore("records").get("active");
-      request.onerror = () => reject(request.error);
-      request.onsuccess = () => resolve(request.result as Record<string, unknown>);
-    };
-  }));
+  const handle = await page.waitForFunction(() =>
+    new Promise<false | Record<string, unknown>>((resolve, reject) => {
+      const open = indexedDB.open("stowplan-v1", 1);
+      open.onerror = () => reject(open.error);
+      open.onsuccess = () => {
+        const database = open.result;
+        const request = database.transaction("records")
+          .objectStore("records")
+          .get("active");
+        request.onerror = () => {
+          database.close();
+          reject(request.error);
+        };
+        request.onsuccess = () => {
+          const replica = request.result as Record<string, unknown> | undefined;
+          database.close();
+          resolve(replica ?? false);
+        };
+      };
+    })
+  );
+  try {
+    return await handle.jsonValue() as Record<string, unknown>;
+  } finally {
+    await handle.dispose();
+  }
 }
 
 async function expectCompactPanelSpacing(panel: Locator): Promise<void> {
@@ -199,9 +268,12 @@ test.beforeEach(async ({ page }) => {
 });
 
 test("names a new workspace during first run", async ({ page }) => {
-  await page.getByLabel("Workspace name").fill("Jamie's apartment");
-  await page.getByRole("button", { name: "Start my workspace" }).click();
+  await page.getByRole("textbox", {
+    name: "New device workspace",
+  }).fill("Jamie's apartment");
+  await page.getByRole("button", { name: "Create" }).click();
 
+  await expect(page.getByRole("heading", { name: "Capture" })).toBeVisible();
   await expect(page.getByText("Jamie's apartment", { exact: true })).toBeVisible();
   const replica = await localReplica(page) as { state: { workspace: { name: string } } };
   expect(replica.state.workspace.name).toBe("Jamie's apartment");
@@ -209,7 +281,7 @@ test("names a new workspace during first run", async ({ page }) => {
 
 test("starts workspaces and primary views at the top", async ({ page }) => {
   const demo = page.getByRole("button", {
-    name: "Explore the kitchen demo instead",
+    name: "Open kitchen demo",
   });
   await demo.scrollIntoViewIfNeeded();
   await demo.click();
@@ -235,7 +307,7 @@ test("starts workspaces and primary views at the top", async ({ page }) => {
 });
 
 test("gives tabs, spaces, filters, and item editors restorable URLs", async ({ page }) => {
-  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
   const replica = await localReplica(page) as {
     state: { workspace: { id: string } };
   };
@@ -306,7 +378,7 @@ test("closes item routes without duplicating Inventory history", async ({
   page,
 }) => {
   await page.getByRole("button", {
-    name: "Explore the kitchen demo instead",
+    name: "Open kitchen demo",
   }).click();
   await expect(page).toHaveURL(/\/capture\/locations\//);
   const captureUrl = page.url();
@@ -322,6 +394,23 @@ test("closes item routes without duplicating Inventory history", async ({
   await page.getByRole("button", { name: "Close item editor" }).click();
   await expect(page).toHaveURL(inventoryUrl);
   await page.goBack();
+  await expect(page.getByRole("heading", {
+    name: "Capture",
+    exact: true,
+  })).toBeVisible();
+  await expect(page).toHaveURL(captureUrl);
+
+  await page.goForward();
+  await expect(page.getByRole("heading", {
+    name: "Inventory",
+    exact: true,
+  })).toBeVisible();
+  await expect(page).toHaveURL(inventoryUrl);
+  await page.goBack();
+  await expect(page.getByRole("heading", {
+    name: "Capture",
+    exact: true,
+  })).toBeVisible();
   await expect(page).toHaveURL(captureUrl);
 
   await page.goto(itemUrl);
@@ -329,6 +418,10 @@ test("closes item routes without duplicating Inventory history", async ({
   await page.getByRole("button", { name: "Close item editor" }).click();
   await expect(page).toHaveURL(inventoryUrl);
   await page.goBack();
+  await expect(page.getByRole("heading", {
+    name: "Capture",
+    exact: true,
+  })).toBeVisible();
   await expect(page).toHaveURL(captureUrl);
 });
 
@@ -336,7 +429,7 @@ test("refuses stale item and space targets without rewriting their URLs", async 
   page,
 }) => {
   await page.getByRole("button", {
-    name: "Explore the kitchen demo instead",
+    name: "Open kitchen demo",
   }).click();
   const replica = await localReplica(page) as {
     state: { workspace: { id: string } };
@@ -387,48 +480,8 @@ test("refuses stale item and space targets without rewriting their URLs", async 
   await expect(page.locator(".workspace-notice")).toHaveCount(0);
 });
 
-test("opens a shared workspace URL on a clean collaborator device", async ({ page, browser }, testInfo) => {
-  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
-  await page.locator(".nav:visible", { hasText: "Spaces" }).click();
-  await page.locator('[data-location-id="loc_bin"] .tree-select').click();
-  const sharedUrl = page.url();
-  const replica = await localReplica(page) as {
-    state: {
-      workspace: { id: string };
-    };
-  };
-
-  const collaboratorContext = await browser.newContext(
-    projectContextOptions(page, testInfo),
-  );
-  try {
-    const collaborator = await collaboratorContext.newPage();
-    await collaborator.route(
-      `**/api/snapshot?workspaceId=${encodeURIComponent(replica.state.workspace.id)}`,
-      (route) => route.fulfill({
-        body: JSON.stringify({ state: replica.state }),
-        contentType: "application/json",
-        status: 200,
-      }),
-    );
-    await collaborator.goto(sharedUrl);
-    await expect(collaborator.getByRole("heading", { name: "Spaces" })).toBeVisible();
-    await expect(collaborator.getByRole("region", { name: "Edit Baking bin" }))
-      .toBeVisible();
-    await expect(collaborator).toHaveURL(sharedUrl);
-    const collaboratorReplica = await localReplica(collaborator) as {
-      state: { workspace: { id: string } };
-    };
-    expect(collaboratorReplica.state.workspace.id).toBe(
-      replica.state.workspace.id,
-    );
-  } finally {
-    await collaboratorContext.close();
-  }
-});
-
 test("announces share outcomes without reporting an ordinary cancel", async ({ page }) => {
-  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await page.evaluate(() => {
     Object.defineProperty(navigator, "share", {
       configurable: true,
@@ -486,7 +539,7 @@ test("collapses the desktop sidebar and persists the icon-only preference", asyn
       testInfo.project.name === "mobile-landscape",
     "Phone, narrow-tablet, and short touch layouts use compact navigation",
   );
-  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
 
   const shell = page.locator(".app-shell");
   const sidebar = page.getByRole("complementary", { name: "Workspace navigation" });
@@ -507,7 +560,7 @@ test("collapses the desktop sidebar and persists the icon-only preference", asyn
 
 test("keeps short touch landscape navigation fully visible", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "mobile-landscape", "The landscape phone project covers short touch navigation");
-  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
 
   const sidebar = page.getByRole("complementary", {
     name: "Workspace navigation",
@@ -549,7 +602,7 @@ test("keeps short touch landscape navigation fully visible", async ({ page }, te
 
 test("uses a compact icon rail at both narrow-tablet boundaries and orientations", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "tablet-portrait", "The portrait tablet project covers the 761 to 799 pixel band");
-  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
 
   for (const viewport of [
     { width: 761, height: 1024 },
@@ -576,7 +629,7 @@ test("uses a compact icon rail at both narrow-tablet boundaries and orientations
 });
 
 test("switches, resizes, and persists responsive panel layouts", async ({ page }) => {
-  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
 
   const capture = page.locator(".capture.resizable-panels");
   const captureLayout = page.getByRole("group", { name: "Capture panels layout" });
@@ -674,7 +727,7 @@ test("keeps the Spaces tree and editor dense at compact desktop widths", async (
     "The wide desktop project probes compact and full desktop widths",
   );
   await page.getByRole("button", {
-    name: "Explore the kitchen demo instead",
+    name: "Open kitchen demo",
   }).click();
   await page.locator(".nav:visible", { hasText: "Spaces" }).click();
 
@@ -749,7 +802,7 @@ test("keeps preferences usable when browser storage is unavailable", async ({ pa
   });
   await page.reload();
 
-  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
   const shell = page.locator(".app-shell");
   const capture = page.locator(".capture.resizable-panels");
   await expect(capture).toBeVisible();
@@ -776,7 +829,7 @@ test("aligns header controls and immediately toggles the applied system theme", 
   await page.evaluate(() => localStorage.removeItem("stowplan-theme"));
   await page.reload();
   await page.getByRole("button", {
-    name: "Explore the kitchen demo instead",
+    name: "Open kitchen demo",
   }).click();
 
   const root = page.locator("html");
@@ -857,14 +910,16 @@ test("aligns header controls and immediately toggles the applied system theme", 
   const workspaceStatusLink = page.locator(".settings-workspaces-link");
   await expect(workspaceStatusLink).toHaveAttribute("href", "/workspaces");
   await workspaceStatusLink.click();
-  await expect(page.getByRole("heading", { name: "Workspaces" })).toBeFocused();
+  await expect(page.getByRole("heading", {
+    name: "Your workspaces",
+  })).toBeFocused();
 });
 
 test("navigates every active surface with arrow keys while preserving native controls", async ({
   page,
 }) => {
   await page.getByRole("button", {
-    name: "Explore the kitchen demo instead",
+    name: "Open kitchen demo",
   }).click();
 
   const jump = page.getByRole("button", {
@@ -902,9 +957,12 @@ test("navigates every active surface with arrow keys while preserving native con
   const rowName = firstInventoryRow.locator(".item-name");
   await rowCheckbox.focus();
   await page.keyboard.press("ArrowDown");
-  await expect(rowName).toBeFocused();
-  await page.keyboard.press("ArrowUp");
   await expect(rowCheckbox).toBeFocused();
+  await rowName.focus();
+  await page.keyboard.press("ArrowDown");
+  await expect(firstInventoryRow.getByRole("link", {
+    name: /in Spaces$/,
+  })).toBeFocused();
   await page.locator('[data-item-id="item_flour"] .item-name').click();
   const dialog = page.getByRole("dialog", { name: "Review item" });
   const close = page.getByRole("button", { name: "Close item editor" });
@@ -974,7 +1032,7 @@ test("navigates every active surface with arrow keys while preserving native con
 });
 
 test("searches and jumps with Control or Command K", async ({ page }, testInfo) => {
-  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await expect(page.getByRole("heading", { name: "Capture" })).toBeVisible();
 
   const primaryShortcut = testInfo.project.name.startsWith("mobile")
@@ -1063,7 +1121,7 @@ test("searches and jumps with Control or Command K", async ({ page }, testInfo) 
 });
 
 test("keeps known empty separate from an undoable empty-container action", async ({ page }) => {
-  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await page.locator(
     '.capture-location-row[data-location-id="loc_bin"] .queue-row',
   ).click();
@@ -1213,7 +1271,7 @@ test("keeps known empty separate from an undoable empty-container action", async
 });
 
 test("requires Reopen before completed contents change from Spaces or Inventory", async ({ page }) => {
-  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await page.locator(".nav:visible", { hasText: "Spaces" }).click();
   await page.locator('[data-location-id="loc_bin"] .tree-select').click();
 
@@ -1248,7 +1306,7 @@ test("requires Reopen before completed contents change from Spaces or Inventory"
 });
 
 test("visibly refuses unchanged item and space saves", async ({ page }) => {
-  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await reopenCaptureLocation(page, "loc_warm");
   const before = await localReplica(page) as {
     state: {
@@ -1287,7 +1345,7 @@ test("visibly refuses unchanged item and space saves", async ({ page }) => {
 });
 
 test("visibly refuses known-empty capture while nested spaces remain", async ({ page }) => {
-  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await page.locator(
     '.capture-location-row[data-location-id="loc_corner"] .queue-row',
   ).click();
@@ -1311,8 +1369,13 @@ test("onboards, captures, edits, searches, plans, rolls back, and persists local
     if (new URL(request.url()).pathname === "/api/sync") syncRequests.push(request.url());
   });
 
-  await expect(page.getByRole("heading", { name: /Label it/ })).toBeVisible();
-  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+  await expect(page.getByRole("heading", {
+    name: "Your workspaces",
+  })).toBeVisible();
+  await expect(page.getByRole("region", {
+    name: "Workspace tools",
+  })).toBeVisible();
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await expect(page.getByRole("heading", { name: "Capture" })).toBeVisible();
   await expect(page.locator(".queue-row", { hasText: "B-17" })).toHaveAttribute("data-depth", "3");
   await reopenCurrentCapture(page);
@@ -1322,7 +1385,9 @@ test("onboards, captures, edits, searches, plans, rolls back, and persists local
   await expect(page.getByText("Test tea towels", { exact: true })).toBeVisible();
 
   await page.getByLabel("Workspaces and backup status").click();
-  await expect(page.getByRole("heading", { name: "Workspaces" })).toBeVisible();
+  await expect(page.getByRole("heading", {
+    name: "Your workspaces",
+  })).toBeVisible();
   await page.getByRole("button", { name: "Continue current workspace" }).click();
   await expect(page.getByText("Test tea towels", { exact: true })).toBeVisible();
 
@@ -1362,7 +1427,7 @@ test("onboards, captures, edits, searches, plans, rolls back, and persists local
 });
 
 test("prevents repeated form submission from creating duplicate records", async ({ page }) => {
-  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await reopenCurrentCapture(page);
   await page.getByLabel("Qty").fill("2");
   await page.getByLabel("What is it?").fill("One deliberate record");
@@ -1382,7 +1447,7 @@ test("prevents repeated form submission from creating duplicate records", async 
 });
 
 test("resets the active demo from the main menu", async ({ page }) => {
-  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
   const before = await localReplica(page) as { state: { workspace: { id: string } } };
   await reopenCurrentCapture(page);
   await page.getByLabel("Qty").fill("1");
@@ -1398,7 +1463,7 @@ test("resets the active demo from the main menu", async ({ page }) => {
 });
 
 test("collapses Capture branches while search temporarily reveals matches", async ({ page }) => {
-  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
 
   const left = page.locator(
     '.capture-location-row[data-location-id="loc_left"]',
@@ -1451,7 +1516,7 @@ test("keeps combined Capture branch handles stable across Pixel taps and drags",
     "The Pixel 7 Pro project covers combined touch controls",
   );
   await page.getByRole("button", {
-    name: "Explore the kitchen demo instead",
+    name: "Open kitchen demo",
   }).click();
 
   const lower = page.locator(
@@ -1591,7 +1656,7 @@ test("keeps combined Capture branch handles stable across Pixel taps and drags",
 test("previews desktop hierarchy destinations and confirms completed-parent changes", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "Native mouse feedback is a desktop contract");
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
 
   const before = await localReplica(page) as {
     state: {
@@ -1792,7 +1857,7 @@ test("previews desktop hierarchy destinations and confirms completed-parent chan
 
 test("keeps touch reordering available on draggable handles", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "mobile-chromium", "Touch input is a mobile contract");
-  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
   const capturePanelNavigation = page.getByRole("group", {
     name: "Capture panels navigation",
   });
@@ -2216,7 +2281,7 @@ test("confirms a Capture touch reparent and atomically reopens completed parents
     "The Pixel 7 Pro project covers touch hierarchy changes",
   );
   await page.getByRole("button", {
-    name: "Explore the kitchen demo instead",
+    name: "Open kitchen demo",
   }).click();
 
   const source = page.locator(
@@ -2402,7 +2467,7 @@ test("keeps Capture rows compact and supports a focused mobile Move fallback", a
     "The Pixel 7 Pro project covers the Capture mobile fallback",
   );
   await page.getByRole("button", {
-    name: "Explore the kitchen demo instead",
+    name: "Open kitchen demo",
   }).click();
 
   const foodRow = page.locator(
@@ -2613,7 +2678,7 @@ test("moves a space from visible mobile tree actions and atomically reopens its 
     "The Pixel 7 Pro project covers the mobile hierarchy fallback",
   );
   await page.getByRole("button", {
-    name: "Explore the kitchen demo instead",
+    name: "Open kitchen demo",
   }).click();
   await page.locator(".nav:visible", { hasText: "Spaces" }).click();
 
@@ -2776,7 +2841,7 @@ test("moves a space from visible mobile tree actions and atomically reopens its 
 });
 
 test("guides incomplete evidence into a reviewable plan", async ({ page }) => {
-  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await page.locator(".nav:visible", { hasText: "Plan" }).click();
 
   const readiness = page.getByRole("region", { name: "Planning readiness" });
@@ -2908,7 +2973,7 @@ test("guides incomplete evidence into a reviewable plan", async ({ page }) => {
 });
 
 test("suggests unique location codes without replacing a manual code", async ({ page }) => {
-  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await reopenCurrentCapture(page);
 
   const code = page.getByLabel("Short ID");
@@ -2926,7 +2991,7 @@ test("suggests unique location codes without replacing a manual code", async ({ 
 });
 
 test("opens the exact item section needed for planning evidence", async ({ page }) => {
-  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await reopenCurrentCapture(page);
   await page.getByLabel("What is it?").fill("Unclassified charger");
   await page.getByRole("button", { name: "Save & add next" }).click();
@@ -2946,7 +3011,7 @@ test("opens the exact item section needed for planning evidence", async ({ page 
 
 test("preserves a failed creation draft and avoids narrow-screen overflow", async ({ page }) => {
   await page.setViewportSize({ width: 412, height: 860 });
-  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await reopenCurrentCapture(page);
 
   await page.getByLabel("Short ID").fill("C-01");
@@ -3026,7 +3091,7 @@ test("preserves a failed creation draft and avoids narrow-screen overflow", asyn
 });
 
 test("distinguishes duplicate inventory actions by quantity and unit", async ({ page }) => {
-  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await reopenCurrentCapture(page);
 
   await page.getByLabel("Qty").fill("2");
@@ -3052,7 +3117,7 @@ test("distinguishes duplicate inventory actions by quantity and unit", async ({ 
 
 test("keeps the Capture hierarchy readable at compact desktop widths", async ({ page }) => {
   await page.setViewportSize({ width: 1132, height: 900 });
-  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await expect(page.getByRole("heading", { name: "Capture" })).toBeVisible();
   await page.mouse.move(0, 0);
   const usesFinePointer = await page.evaluate(() =>
@@ -3143,7 +3208,7 @@ test("keeps the Capture hierarchy readable at compact desktop widths", async ({ 
 });
 
 test("executes a planned move and rolls it back from Activity", async ({ page }) => {
-  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await page.locator(".nav:visible", { hasText: "Plan" }).click();
   await page.getByRole("button", { name: "Generate move plan" }).click();
   const before = await localReplica(page) as {
@@ -3204,7 +3269,7 @@ test("executes a planned move and rolls it back from Activity", async ({ page })
 });
 
 test("supports drag organization and the partial-move fallback", async ({ page }, testInfo) => {
-  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await reopenCaptureLocation(page, "loc_left");
   await reopenCaptureLocation(page, "loc_food");
   await reopenCaptureLocation(page, "loc_lower");
@@ -3279,11 +3344,17 @@ test("supports drag organization and the partial-move fallback", async ({ page }
 });
 
 test("shows workspace backup state and removes only the device copy", async ({ page }) => {
-  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await reopenCurrentCapture(page);
   await page.getByLabel("Qty").fill("1");
   await page.getByLabel("What is it?").fill("Waiting to sync");
   await page.getByRole("button", { name: "Save & add next" }).click();
+  const pending = (
+    await localReplica(page) as {
+      outbox: { status: "blocked" | "pending" }[];
+    }
+  ).outbox.filter((entry) => entry.status === "pending").length;
+  expect(pending).toBeGreaterThan(0);
   const statusLink = page.locator(
     ".sync:visible, .mobile-sync-status:visible, .sync-error-banner a:visible",
   ).first();
@@ -3291,21 +3362,94 @@ test("shows workspace backup state and removes only the device copy", async ({ p
   await statusLink.click();
   await expect(page).toHaveURL(/\/workspaces$/);
   await expect(page).toHaveTitle("Workspaces · Stowplan");
-  await expect(page.getByLabel("Workspace backup status summary")).toBeVisible();
-  const card = page.locator(".workspace-card", { hasText: "Kitchen reset" });
-  await expect(card.getByText(/not backed up/)).toBeVisible();
-  await card.getByText(/Queued changes/).click();
-  await expect(card.getByText(/Recorded 1 each Waiting to sync/)).toBeVisible();
-  page.once("dialog", (dialog) => {
-    expect(dialog.message()).toContain("This does not delete any server copy");
-    dialog.accept();
+  await expect(page.getByRole("heading", {
+    exact: true,
+    name: "Your workspaces",
+  })).toBeVisible();
+  const card = page.getByRole("article").filter({
+    has: page.getByRole("heading", {
+      exact: true,
+      name: "Kitchen reset",
+    }),
   });
-  await card.getByText("Manage", { exact: true }).click();
-  await card.getByRole("button", { name: /Remove Kitchen reset from this device/ }).click();
-  await expect(page.getByRole("heading", { name: /Label it/ })).toBeVisible();
+  await expect(card).toContainText("Local changes are waiting to upload");
+  await expect(card.locator("dl div").filter({
+    hasText: "Pending changes",
+  }).locator("dd")).toHaveText(String(pending));
+  await card.getByRole("button", {
+    name: "Remove from this device",
+  }).click();
+  const removal = page.getByRole("dialog", {
+    name: "Remove Kitchen reset from this device?",
+  });
+  await expect(removal).toContainText(
+    "It does not delete the server copy or change membership",
+  );
+  await expect(removal).toContainText(`${pending} pending`);
+  await expect(removal).toContainText("only known copy");
+  await removal.getByRole("button", {
+    name: "Remove device copy",
+  }).click();
+  await expect(card).toHaveCount(0);
+  await expect(page.getByText(
+    "No workspaces match this search.",
+    { exact: true },
+  )).toBeVisible();
 });
 
-test("presents unavailable backup as device storage without crushing workspace actions", async ({
+test("removes an inactive device copy without switching the active workspace", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "desktop-chromium",
+    "One desktop project covers inactive workspace removal",
+  );
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
+  await page.getByLabel("Workspaces and backup status").click();
+  await page.getByLabel("New device workspace").fill("Active workspace");
+  await page.getByRole("button", {
+    exact: true,
+    name: "Create",
+  }).click();
+  await expect(page.getByRole("heading", {
+    exact: true,
+    name: "Capture",
+  })).toBeVisible();
+  await page.getByLabel("Workspaces and backup status").click();
+
+  const inactiveCard = page.getByRole("article").filter({
+    has: page.getByRole("heading", {
+      exact: true,
+      name: "Kitchen reset",
+    }),
+  });
+  await inactiveCard.getByRole("button", {
+    name: "Remove from this device",
+  }).click();
+  await page.getByRole("dialog", {
+    name: "Remove Kitchen reset from this device?",
+  }).getByRole("button", {
+    name: "Remove device copy",
+  }).click();
+
+  await expect(inactiveCard).toHaveCount(0);
+  await expect(page.getByRole("article").filter({
+    has: page.getByRole("heading", {
+      exact: true,
+      name: "Active workspace",
+    }),
+  }).getByRole("button", {
+    name: "Continue",
+  })).toBeVisible();
+  await expect.poll(async () => {
+    const replica = await localReplica(page) as {
+      state: { workspace: { name: string } };
+    };
+    return replica.state.workspace.name;
+  }).toBe("Active workspace");
+});
+
+test("presents unavailable backup as device storage without crushing workspace tools", async ({
   page,
 }, testInfo) => {
   test.skip(
@@ -3320,34 +3464,48 @@ test("presents unavailable backup as device storage without crushing workspace a
   await page.evaluate(() => sessionStorage.clear());
   await page.reload();
 
-  await page.getByLabel("Workspace name").fill("Device home");
-  await page.getByRole("button", { name: "Start my workspace" }).click();
-  await page.getByLabel("Short ID").fill("HOME");
-  await page.getByLabel("Friendly name").fill("Home");
-  await page.getByRole("button", { name: "Add first space" }).click();
+  await page.getByLabel("New device workspace").fill("Device home");
+  await page.getByRole("button", { exact: true, name: "Create" }).click();
+  await expect(page.getByRole("heading", {
+    exact: true,
+    name: "Capture",
+  })).toBeVisible();
 
   const statusLink = page.locator(".sync:visible");
-  await expect(statusLink).toContainText("saved on device");
+  await expect(statusLink).toContainText("Device only");
   await expect(statusLink.locator("svg.lucide-hard-drive")).toBeVisible();
   await expect(statusLink.locator("svg.lucide-wifi-off")).toHaveCount(0);
   await statusLink.click();
 
-  const card = page.locator(".workspace-card", { hasText: "Device home" });
-  await expect(card.getByText(/saved on device/)).toBeVisible();
-  await card.getByText(/Queued changes/).click();
-  await expect(card.getByText("Saved locally")).toBeVisible();
-  await expect(page.locator(
-    '.workspace-status-summary [data-state="local"] svg.lucide-hard-drive',
+  await expect(page.getByText(
+    "This deployment is device-only. Local workspaces remain available.",
   )).toBeVisible();
+  const card = page.getByRole("article").filter({
+    has: page.getByRole("heading", {
+      exact: true,
+      name: "Device home",
+    }),
+  });
+  await expect(card).toContainText("Stored only on this device");
+  await expect(card.locator("dl div").filter({
+    hasText: "Last successful backup",
+  })).toContainText("Not available");
 
-  const actions = page.locator(".workspace-home-actions");
-  const createBounds = await actions.locator(":scope > .workspace-create").boundingBox();
-  const demoBounds = await actions.locator(":scope > .linkish").boundingBox();
-  if (!createBounds || !demoBounds) {
-    throw new Error("Workspace actions are not visible");
+  const tools = page.getByRole("region", { name: "Workspace tools" });
+  const dimensions = await tools.evaluate((element) => ({
+    clientWidth: element.clientWidth,
+    scrollWidth: element.scrollWidth,
+  }));
+  expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
+  for (const control of [
+    tools.getByLabel("Search workspaces"),
+    tools.getByLabel("New device workspace"),
+    tools.getByRole("button", { exact: true, name: "Create" }),
+    tools.getByRole("button", { name: "Open kitchen demo" }),
+  ]) {
+    const bounds = await control.boundingBox();
+    expect(bounds?.height).toBeGreaterThanOrEqual(44);
   }
-  expect(Math.abs(createBounds.width - demoBounds.width)).toBeLessThanOrEqual(2);
-  expect(demoBounds.width).toBeGreaterThan(250);
 });
 
 test("does not label the active workspace as backing up while another workspace syncs", async ({
@@ -3367,15 +3525,33 @@ test("does not label the active workspace as backing up while another workspace 
   await page.route("**/api/auth/me", (route) => route.fulfill({
     body: JSON.stringify({
       configured: true,
-      user: { id: "user_test" },
+      user: { userId: MOCK_ACCOUNT_ID },
     }),
     contentType: "application/json",
+    headers: MOCK_ACCOUNT_HEADERS,
+    status: 200,
+  }));
+  await page.route("**/api/workspaces?*", (route) => route.fulfill({
+    body: JSON.stringify({
+      membershipRevision: 1,
+      page: { hasMore: false, nextCursor: null },
+      workspaces: [],
+    }),
+    contentType: "application/json",
+    headers: MOCK_ACCOUNT_HEADERS,
     status: 200,
   }));
   await page.route("**/api/sync", async (route) => {
     const body = route.request().postDataJSON() as {
       commands: { id: string }[];
-      snapshot: { workspace: { revision: number } };
+      snapshot: {
+        workspace: {
+          id: string;
+          name: string;
+          revision: number;
+          updatedAt: string;
+        };
+      };
       workspaceId: string;
     };
     if (
@@ -3386,15 +3562,12 @@ test("does not label the active workspace as backing up while another workspace 
       await inactiveSyncGate;
     }
     await route.fulfill({
-      body: JSON.stringify({
-        receipts: body.commands.map((command) => ({
-          commandId: command.id,
-          revision: body.snapshot.workspace.revision,
-          status: "applied",
-        })),
-        state: body.snapshot,
-      }),
+      body: JSON.stringify(mockOwnerSyncResponse(
+        body.snapshot,
+        body.commands,
+      )),
       contentType: "application/json",
+      headers: MOCK_ACCOUNT_HEADERS,
       status: 200,
     });
   });
@@ -3403,7 +3576,7 @@ test("does not label the active workspace as backing up while another workspace 
 
   try {
     await page.getByRole("button", {
-      name: "Explore the kitchen demo instead",
+      name: "Open kitchen demo",
     }).click();
     await expect(page.locator(".sync")).toContainText("Backed up online");
     const firstReplica = await localReplica(page) as {
@@ -3415,22 +3588,27 @@ test("does not label the active workspace as backing up while another workspace 
     await page.getByLabel("What is it?").fill("Background backup");
     await page.getByRole("button", { name: "Save & add next" }).click();
     await page.getByLabel("Workspaces and backup status").click();
-    await page.getByText("Start a new workspace", { exact: true }).click();
-    const create = page.locator(".workspace-create");
-    await create.getByLabel("Workspace name").fill("Active workspace");
-    await create.getByRole("button", { name: "Create workspace" }).click();
+    await page.getByLabel("New device workspace").fill("Active workspace");
+    await page.getByRole("button", { exact: true, name: "Create" }).click();
 
     await expect.poll(() => inactiveSyncObserved).toBe(true);
     await expect(page.locator(".sync")).toContainText("Backed up online");
     await expect(page.locator(".sync")).not.toContainText("Backing up");
     await page.getByLabel("Workspaces and backup status").click();
-    const inactiveCard = page.locator(".workspace-card", {
-      hasText: "Kitchen reset",
+    const inactiveCard = page.getByRole("article").filter({
+      has: page.getByRole("heading", {
+        exact: true,
+        name: "Kitchen reset",
+      }),
     });
-    await expect(inactiveCard).toContainText("pending upload");
+    await expect(inactiveCard).toContainText(
+      "Local changes are waiting to upload",
+    );
     inactiveSyncReleased = true;
     releaseInactiveSync();
-    await expect(inactiveCard).toContainText("Backed up online");
+    await expect(inactiveCard).toContainText(
+      "Device and server are synchronized",
+    );
   } finally {
     if (!inactiveSyncReleased) releaseInactiveSync();
   }
@@ -3439,18 +3617,33 @@ test("does not label the active workspace as backing up while another workspace 
 test("surfaces a background backup failure on mobile", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "mobile-chromium", "The portrait phone project covers the mobile alert");
   await page.route("**/api/auth/me", (route) => route.fulfill({
-    body: JSON.stringify({ configured: true, user: { id: "user_test" } }),
+    body: JSON.stringify({
+      configured: true,
+      user: { userId: MOCK_ACCOUNT_ID },
+    }),
     contentType: "application/json",
+    headers: MOCK_ACCOUNT_HEADERS,
+    status: 200,
+  }));
+  await page.route("**/api/workspaces?*", (route) => route.fulfill({
+    body: JSON.stringify({
+      membershipRevision: 1,
+      page: { hasMore: false, nextCursor: null },
+      workspaces: [],
+    }),
+    contentType: "application/json",
+    headers: MOCK_ACCOUNT_HEADERS,
     status: 200,
   }));
   await page.route("**/api/sync", (route) => route.fulfill({
     body: JSON.stringify({ error: "Backup service unavailable" }),
     contentType: "application/json",
+    headers: MOCK_ACCOUNT_HEADERS,
     status: 500,
   }));
   await page.evaluate(() => sessionStorage.clear());
   await page.reload();
-  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await reopenCurrentCapture(page);
   await page.getByLabel("What is it?").fill("Locally safe");
   await page.getByRole("button", { name: "Save & add next" }).click();
@@ -3461,11 +3654,17 @@ test("surfaces a background backup failure on mobile", async ({ page }, testInfo
   await expect(alert).toBeVisible();
   await alert.getByRole("link", { name: "Review backup" }).click();
   await expect(page).toHaveURL(/\/workspaces$/);
-  const card = page.locator(".workspace-card", { hasText: "Kitchen reset" });
+  const card = page.getByRole("article").filter({
+    has: page.getByRole("heading", {
+      exact: true,
+      name: "Kitchen reset",
+    }),
+  });
   await expect(card).toBeVisible();
-  const status = card.locator("header > b");
-  await expect(status).toContainText(/changes? not backed up/);
-  await expect(status).not.toContainText("pending upload");
+  await expect(card).toContainText("Local changes are waiting to upload");
+  await expect(card).toContainText(
+    "Latest backup check: Backup service unavailable",
+  );
 });
 
 test("surfaces transport failures from admin mutations", async ({
@@ -3490,6 +3689,7 @@ test("surfaces transport failures from admin mutations", async ({
       users: [],
     }),
     contentType: "application/json",
+    headers: MOCK_ACCOUNT_HEADERS,
     status: 200,
   }));
   await page.route("**/api/admin/mutate", (route) =>
@@ -3518,6 +3718,38 @@ test("keeps server administration searchable and responsive", async ({
         target_id: "usr_capacity",
         target_type: "user",
       }],
+      databaseInventory: {
+        entries: [{
+          key: "workspace-snapshots",
+          label: "Workspace snapshots",
+          metrics: [
+            { kind: "bytes", label: "stored size", value: 42_000 },
+            {
+              kind: "date",
+              label: "latest update",
+              value: new Date().toISOString(),
+            },
+          ],
+          rowCount: 2,
+          table: "workspace_snapshots",
+        }, {
+          key: "sessions",
+          label: "Sessions",
+          metrics: [
+            { kind: "count", label: "active", value: 2 },
+            { kind: "count", label: "revoked", value: 1 },
+          ],
+          rowCount: 3,
+          table: "sessions",
+        }, {
+          key: "migration-ledger:d1_migrations",
+          label: "Migration ledger",
+          metrics: [],
+          rowCount: 5,
+          table: "d1_migrations",
+        }],
+        generatedAt: new Date().toISOString(),
+      },
       guestLinks: [],
       identities: [],
       listInfo: {
@@ -3554,6 +3786,7 @@ test("keeps server administration searchable and responsive", async ({
       }],
     }),
     contentType: "application/json",
+    headers: MOCK_ACCOUNT_HEADERS,
     status: 200,
   }));
 
@@ -3567,6 +3800,15 @@ test("keeps server administration searchable and responsive", async ({
     "href",
     "/workspaces/capacity-workspace@ws_capacity/settings",
   );
+  const databaseInventory = page.getByRole("region", {
+    name: "Database inventory",
+  });
+  await expect(databaseInventory).toContainText("workspace_snapshots");
+  await expect(databaseInventory).toContainText("stored size: 42.0 kB");
+  await expect(databaseInventory).toContainText("sessions");
+  await expect(databaseInventory).toContainText("active: 2");
+  await expect(databaseInventory).toContainText("d1_migrations");
+  await expect(databaseInventory).toContainText("5 rows");
   const workspaceCapacity = page.locator(".admin-workspaces", {
     hasText: "Capacity workspace",
   });
@@ -3644,6 +3886,9 @@ test("keeps the newest admin search response", async ({
       await route.fulfill({
         body: body("Older unfiltered workspace", "ws_older"),
         contentType: "application/json",
+        headers: {
+          "x-stowplan-account-id": "usr_admin",
+        },
         status: 200,
       });
       initialFinished = true;
@@ -3652,6 +3897,9 @@ test("keeps the newest admin search response", async ({
     await route.fulfill({
       body: body("Newest filtered workspace", "ws_newest"),
       contentType: "application/json",
+      headers: {
+        "x-stowplan-account-id": "usr_admin",
+      },
       status: 200,
     });
   });
@@ -3681,7 +3929,7 @@ test("reports blocked safety and workspace downloads", async ({
     "One desktop project covers download failure feedback",
   );
   await page.getByRole("button", {
-    name: "Explore the kitchen demo instead",
+    name: "Open kitchen demo",
   }).click();
   await expect(page.getByRole("heading", {
     name: "Capture",
@@ -3723,7 +3971,7 @@ test("reports blocked safety and workspace downloads", async ({
 });
 
 test("has no serious accessibility violations and reloads offline", async ({ page, context }) => {
-  await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
   const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa"]).analyze();
   expect(
     results.violations.filter(

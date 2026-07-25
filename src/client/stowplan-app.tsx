@@ -39,7 +39,6 @@ import {
   Sun,
   Trash2,
   Undo2,
-  Wifi,
   WifiOff,
   X,
 } from "lucide-react";
@@ -65,6 +64,7 @@ import type {
   ThemePreference,
   WorkspaceState,
 } from "../domain/types";
+import { workspaceReadOnlyReason } from "../domain/workspace-access";
 import { nextCaptureLocation } from "./capture-order";
 import {
   parseAppUrl,
@@ -73,8 +73,12 @@ import {
   type AppRoute,
   type WorkspaceView,
 } from "../domain/app-url";
-import { listWorkspaceReplicas, readWorkspaceReplica, type LocalWorkspaceSummary } from "./local-replica";
+import { listWorkspaceReplicas, readWorkspaceReplica } from "./local-replica";
 import { JumpPalette } from "./jump-palette";
+import {
+  STOWPLAN_HISTORY_EVENT,
+  STOWPLAN_HISTORY_OWNER_ATTRIBUTE,
+} from "./browser-history-bridge";
 import {
   PREFERENCE_STORAGE_ERROR_EVENT,
   preferenceStorageUnavailable,
@@ -82,7 +86,10 @@ import {
   writePreference,
 } from "./preference-storage";
 import { ResizablePanels } from "./resizable-panels";
+import { ReadOnlyWorkspace } from "./read-only-workspace";
 import { DEVICE_ONLY_BACKUP_ERROR, StowplanProvider, useStowplan, WorkspaceOpenError } from "./store";
+import { WorkspaceHub } from "./workspace-hub";
+import { WorkspaceAccessController } from "./workspace-access-controller";
 
 type View = WorkspaceView;
 type Commit = (command: Command) => Promise<void>;
@@ -1178,7 +1185,33 @@ export function StowplanApp() {
 }
 
 function Application() {
-  const { state, initialize, dispatch, backupConfigured, lastSyncAttemptAt, lastSyncError, lastSyncedAt, localUpdatedAt, openWorkspace, online, pending, blocked, removeWorkspace, replace, syncing, workspaceStatusRevision } = useStowplan();
+  const {
+    accountId,
+    authenticationReady,
+    authorization,
+    backupConfigured,
+    blocked,
+    catalogError,
+    catalogHasMore,
+    catalogLoading,
+    dispatch,
+    hubCards,
+    initialize,
+    lastSyncError,
+    lastSyncedAt,
+    loadMoreWorkspaces,
+    localUpdatedAt,
+    online,
+    openWorkspace,
+    pending,
+    refreshWorkspaces,
+    removeWorkspace,
+    replace,
+    setWorkspaceAccess,
+    signedIn,
+    state,
+    syncing,
+  } = useStowplan();
   const activeWorkspaceId = state?.workspace.id;
   const [view, setView] = useState<View>("capture");
   const [selected, setSelected] = useState<string | null>(null);
@@ -1197,6 +1230,27 @@ function Application() {
   const [guidanceTarget, setGuidanceTarget] = useState<GuidanceTarget | null>(null);
   const [routeStatus, setRouteStatus] = useState<"blocked" | "loading" | "ready">("loading");
   const routeRequest = useRef(0);
+  const workspaceOpenController = useRef<AbortController | null>(
+    null,
+  );
+
+  const cancelWorkspaceOpen = useCallback(() => {
+    workspaceOpenController.current?.abort();
+    workspaceOpenController.current = null;
+  }, []);
+  const beginWorkspaceOpen = useCallback(() => {
+    cancelWorkspaceOpen();
+    const controller = new AbortController();
+    workspaceOpenController.current = controller;
+    return controller;
+  }, [cancelWorkspaceOpen]);
+  const finishWorkspaceOpen = useCallback((
+    controller: AbortController,
+  ) => {
+    if (workspaceOpenController.current === controller) {
+      workspaceOpenController.current = null;
+    }
+  }, []);
 
   useLayoutEffect(() => {
     /* eslint-disable react-hooks/set-state-in-effect -- hydrate device-only preferences after the server-consistent first render */
@@ -1311,6 +1365,7 @@ function Application() {
   const applyBrowserRoute = useCallback(async (route: AppRoute) => {
     const request = routeRequest.current + 1;
     routeRequest.current = request;
+    cancelWorkspaceOpen();
     setWorkspaceNotice("");
     if (route.kind === "workspace-list") {
       setShowWelcome(true);
@@ -1322,10 +1377,15 @@ function Application() {
       setRouteStatus("ready");
       return;
     }
+    const openController = beginWorkspaceOpen();
     setRouteStatus("loading");
     try {
       const existing = await readWorkspaceReplica(route.workspaceId);
-      await openWorkspace(route.workspaceId);
+      if (!existing && !authenticationReady) return;
+      await openWorkspace(
+        route.workspaceId,
+        openController.signal,
+      );
       const opened = await readWorkspaceReplica(route.workspaceId);
       if (routeRequest.current !== request) return;
       if (!opened) {
@@ -1386,14 +1446,47 @@ function Application() {
       setShowWelcome(true);
       setWorkspaceNotice(error instanceof Error ? error.message : "Could not open the shared workspace");
       setRouteStatus("blocked");
+    } finally {
+      finishWorkspaceOpen(openController);
     }
-  }, [openWorkspace]);
+  }, [
+    authenticationReady,
+    beginWorkspaceOpen,
+    cancelWorkspaceOpen,
+    finishWorkspaceOpen,
+    openWorkspace,
+  ]);
+  const applyBrowserRouteRef = useRef(applyBrowserRoute);
+  useLayoutEffect(() => {
+    applyBrowserRouteRef.current = applyBrowserRoute;
+  }, [applyBrowserRoute]);
+
+  useLayoutEffect(() => {
+    const openHistoryRoute = () => {
+      void applyBrowserRouteRef.current(
+        parseAppUrl(new URL(location.href)),
+      );
+    };
+    addEventListener(STOWPLAN_HISTORY_EVENT, openHistoryRoute);
+    document.documentElement.setAttribute(
+      STOWPLAN_HISTORY_OWNER_ATTRIBUTE,
+      "",
+    );
+    return () => {
+      routeRequest.current += 1;
+      workspaceOpenController.current?.abort();
+      workspaceOpenController.current = null;
+      document.documentElement.removeAttribute(
+        STOWPLAN_HISTORY_OWNER_ATTRIBUTE,
+      );
+      removeEventListener(STOWPLAN_HISTORY_EVENT, openHistoryRoute);
+    };
+  }, []);
 
   useEffect(() => {
-    const openRoute = () => void applyBrowserRoute(parseAppUrl(new URL(location.href)));
-    openRoute();
-    addEventListener("popstate", openRoute);
-    return () => removeEventListener("popstate", openRoute);
+    const openCurrentRoute = () =>
+      void applyBrowserRoute(parseAppUrl(new URL(location.href)));
+    openCurrentRoute();
   }, [applyBrowserRoute]);
 
   const current = state
@@ -1423,6 +1516,12 @@ function Application() {
         view,
       })
     : null;
+  const collaborationPath = state
+    ? stateWorkspacePath(state, {
+        locationId: current?.id,
+        view: "capture",
+      })
+    : WORKSPACE_LIST_PATH;
 
   useEffect(() => {
     if (
@@ -1495,33 +1594,59 @@ function Application() {
     enter(next, location.pathname === WORKSPACE_LIST_PATH ? "push" : "replace");
   };
   const openDemo = async () => {
+    const openController = beginWorkspaceOpen();
     const demo = (await listWorkspaceReplicas()).find((workspace) => workspace.id.startsWith("ws_demo"));
-    if (demo) {
-      await openWorkspace(demo.id);
-      const next = await readWorkspaceReplica(demo.id);
-      if (!next) throw new Error("Could not open kitchen demo");
-      enter(next.state, "push");
-      return;
+    try {
+      if (demo) {
+        await openWorkspace(demo.id, openController.signal);
+        const next = await readWorkspaceReplica(demo.id);
+        if (!next) throw new Error("Could not open kitchen demo");
+        if (!openController.signal.aborted) {
+          enter(next.state, "push");
+        }
+        return;
+      }
+      await start(true);
+    } catch (error) {
+      if (!openController.signal.aborted) throw error;
+    } finally {
+      finishWorkspaceOpen(openController);
     }
-    await start(true);
   };
   const chooseWorkspace = async (workspaceId: string) => {
-    await openWorkspace(workspaceId);
-    const next = await readWorkspaceReplica(workspaceId);
-    if (!next) throw new Error("Could not open workspace");
-    enter(next.state, "push");
+    const openController = beginWorkspaceOpen();
+    try {
+      await openWorkspace(workspaceId, openController.signal);
+      const next = await readWorkspaceReplica(workspaceId);
+      if (!next) throw new Error("Could not open workspace");
+      if (!openController.signal.aborted) {
+        enter(next.state, "push");
+      }
+    } catch (error) {
+      if (!openController.signal.aborted) throw error;
+    } finally {
+      finishWorkspaceOpen(openController);
+    }
   };
   const removeLocalWorkspace = async (workspaceId: string, expectedUpdatedAt?: string) => {
     await removeWorkspace(workspaceId, expectedUpdatedAt);
     setSelected(null);
   };
   const resetDemo = async () => {
-    if (!confirm("Reset the kitchen demo? Every change and queued backup belonging to this demo will be discarded. Your other workspaces are not affected.")) return;
+    if (
+      !state?.workspace.id.startsWith("ws_demo") ||
+      !confirm(
+        "Reset the kitchen demo? Every change and queued backup belonging to this demo will be discarded. Your other workspaces are not affected.",
+      )
+    ) {
+      return;
+    }
     const next = createDemoState(newId("ws_demo"));
     await replace(next);
     enter(next, "push");
   };
   const openWorkspaceMenu = () => {
+    cancelWorkspaceOpen();
     setShowWelcome(true);
     setRouteStatus("ready");
     setWorkspaceNotice("");
@@ -1536,21 +1661,33 @@ function Application() {
   if (routeStatus === "loading") {
     return <div className="loading">Opening the requested workspace view…</div>;
   }
+  const workspaceHub = <WorkspaceHub
+    backupConfigured={backupConfigured}
+    cards={hubCards}
+    catalogError={catalogError}
+    catalogLoading={catalogLoading}
+    currentId={state?.workspace.id}
+    hasMore={catalogHasMore}
+    online={online}
+    onContinue={state ? continueWorkspace : undefined}
+    onLoadMore={loadMoreWorkspaces}
+    onOpen={chooseWorkspace}
+    onOpenDemo={openDemo}
+    onRefresh={refreshWorkspaces}
+    onRemove={removeLocalWorkspace}
+    onResetDemo={
+      state?.workspace.id.startsWith("ws_demo")
+        ? resetDemo
+        : undefined
+    }
+    onStart={start}
+    signedIn={signedIn}
+  />;
   if (!state) {
-    return <><Onboarding backupConfigured={backupConfigured} online={online} onOpenWorkspace={chooseWorkspace} onRemoveWorkspace={removeLocalWorkspace} onStart={start} />{workspaceNotice && <output className="workspace-notice onboarding-notice">{workspaceNotice}</output>}</>;
+    return <>{workspaceHub}{workspaceNotice && <output className="workspace-notice onboarding-notice">{workspaceNotice}</output>}</>;
   }
   if (showWelcome) {
-    const statusRevision = [
-      localUpdatedAt,
-      lastSyncAttemptAt,
-      lastSyncedAt,
-      lastSyncError,
-      pending,
-      blocked,
-      backupConfigured,
-      workspaceStatusRevision,
-    ].join("|");
-    return <><Onboarding backupConfigured={backupConfigured} currentId={state.workspace.id} currentName={state.workspace.name} isDemo={state.workspace.id.startsWith("ws_demo")} online={online} statusRevision={statusRevision} onContinue={continueWorkspace} onOpenDemo={openDemo} onOpenWorkspace={chooseWorkspace} onRemoveWorkspace={removeLocalWorkspace} onResetDemo={resetDemo} onStart={start} />{workspaceNotice && <output className="workspace-notice onboarding-notice">{workspaceNotice}</output>}</>;
+    return <>{workspaceHub}{workspaceNotice && <output className="workspace-notice onboarding-notice">{workspaceNotice}</output>}</>;
   }
   const tabPath = (nextView: View) => stateWorkspacePath(state, {
     locationId:
@@ -1645,7 +1782,7 @@ function Application() {
     if (!canonicalPath) return;
     setFeedback(null);
     const url = new URL(canonicalPath, location.origin).href;
-    const title = `${nav.find((entry) => entry.id === view)?.label ?? "Workspace"} · ${state.workspace.name}`;
+    const title = `${view === "access" ? "Workspace access" : nav.find((entry) => entry.id === view)?.label ?? "Workspace"} · ${state.workspace.name}`;
     try {
       if (typeof navigator.share === "function") {
         await navigator.share({ title, url });
@@ -1699,6 +1836,10 @@ function Application() {
     (lastSyncedAt
       ? `Last successful backup: ${formatTimestamp(lastSyncedAt)}`
       : "This workspace has not been backed up online yet.");
+  const readOnlyReason = authorization
+    ? workspaceReadOnlyReason(authorization)
+    : null;
+  const readOnly = Boolean(readOnlyReason);
   return <div className="app-shell" data-sidebar-collapsed={sidebarCollapsed}>
     <aside aria-label="Workspace navigation">
       <Brand />
@@ -1725,7 +1866,7 @@ function Application() {
       </a>
     </aside>
     <main>
-      <header><div><p className="eyebrow">{state.workspace.name}</p><h1>{nav.find((entry) => entry.id === view)?.label}</h1></div><div className="header-actions"><button className="jump-trigger" aria-label="Search and jump, Command or Control K" onClick={() => setJumpPaletteOpen(true)}><Search /><span>Search</span><kbd>⌘ / Ctrl K</kbd></button><a className="icon" href={WORKSPACE_LIST_PATH} aria-label="Workspaces and backup status" onClick={(event) => followAppLink(event, openWorkspaceMenu)}><Home /></a><a className="icon mobile-settings" data-active={view === "settings"} aria-label="Open settings" href={tabPath("settings")} onClick={(event) => followAppLink(event, () => selectView("settings"))}><Settings /></a><button className="icon" aria-label="Share this view" onClick={() => void shareCurrentView()}><Share2 /></button><button className="icon" aria-label={themeToggleLabel} title={themeToggleLabel} onClick={() => selectTheme(appliedTheme === "dark" ? "light" : "dark")}>{appliedTheme === "dark" ? <Moon /> : <Sun />}</button></div></header>
+      <header><div><p className="eyebrow">{state.workspace.name}</p><h1>{view === "access" ? "Workspace access" : nav.find((entry) => entry.id === view)?.label}</h1></div><div className="header-actions"><button className="jump-trigger" aria-label="Search and jump, Command or Control K" onClick={() => setJumpPaletteOpen(true)}><Search /><span>Search</span><kbd>⌘ / Ctrl K</kbd></button><a className="icon" href={WORKSPACE_LIST_PATH} aria-label="Workspaces and backup status" onClick={(event) => followAppLink(event, openWorkspaceMenu)}><Home /></a><a className="icon mobile-settings" data-active={view === "settings"} aria-label="Open settings" href={tabPath("settings")} onClick={(event) => followAppLink(event, () => selectView("settings"))}><Settings /></a><button className="icon" aria-label="Share this view" onClick={() => void shareCurrentView()}><Share2 /></button><button className="icon" aria-label={themeToggleLabel} title={themeToggleLabel} onClick={() => selectTheme(appliedTheme === "dark" ? "light" : "dark")}>{appliedTheme === "dark" ? <Moon /> : <Sun />}</button></div></header>
       {!syncIssue && <a
         className="mobile-sync-status"
         href={WORKSPACE_LIST_PATH}
@@ -1740,17 +1881,83 @@ function Application() {
         <span><strong>Backup needs attention</strong><small>{syncIssue}</small></span>
         <a href={WORKSPACE_LIST_PATH} onClick={(event) => followAppLink(event, openWorkspaceMenu)}>Review backup</a>
       </section>}
+      {readOnlyReason && <section
+        className="workspace-read-only-banner"
+        role={authorization?.status === "active" ? "status" : "alert"}
+      >
+        <Info />
+        <span>
+          <strong>{authorization?.status === "active" &&
+              authorization.role === "viewer"
+            ? "Viewer access"
+            : "Read-only workspace"}</strong>
+          <small>{readOnlyReason} You can browse, search, inspect, and export.</small>
+        </span>
+      </section>}
       {preferencesSessionOnly && <section className="preference-storage-banner" role="status">
         <Info />
         <span><strong>Preferences are session-only</strong><small>Theme, sidebar, and panel choices will reset after reload because browser preference storage is unavailable.</small></span>
       </section>}
       {workspaceNotice && <output className="workspace-notice">{workspaceNotice}</output>}
-      {view === "capture" && <Capture state={state} current={current} select={selectLocation} commit={dispatch} focusEditorKey={guidanceTarget?.view === "capture" ? guidanceTarget.token : null} />}
-      {view === "spaces" && <Spaces state={state} current={current} select={selectLocation} commit={dispatch} focusEditorKey={guidanceTarget?.view === "spaces" ? guidanceTarget.token : null} focusEditorSection={guidanceTarget?.view === "spaces" ? guidanceTarget.focus : undefined} />}
-      {view === "inventory" && <Inventory state={state} commit={dispatch} editing={validInventoryItemId} editFocus={guidanceTarget?.view === "inventory" ? guidanceTarget.focus : undefined} locationFilter={validInventoryLocationId ?? ""} onEditingChange={changeInventoryItem} onLocationFilterChange={changeInventoryLocation} onOpenLocation={(id) => openGuidanceTarget("spaces", id)} />}
-      {view === "plan" && <Planner state={state} commit={dispatch} openGuidanceTarget={openGuidanceTarget} />}
-      {view === "activity" && <History state={state} commit={dispatch} />}
-      {view === "settings" && <Preferences state={state} commit={dispatch} theme={theme} setTheme={selectTheme} openMenu={openWorkspaceMenu} returnTo={canonicalPath ?? tabPath("settings")} />}
+      {readOnly && view !== "access" && <ReadOnlyWorkspace
+        inventoryItemId={validInventoryItemId}
+        inventoryLocationId={validInventoryLocationId}
+        onInventoryItemChange={(id) => {
+          if (view === "plan" && id) {
+            openGuidanceTarget("inventory", id);
+            return;
+          }
+          changeInventoryItem(id);
+        }}
+        onInventoryLocationChange={changeInventoryLocation}
+        onLocationChange={(id) => {
+          if (view === "plan") {
+            openGuidanceTarget("spaces", id);
+            return;
+          }
+          selectLocation(id);
+        }}
+        onOpenWorkspaceMenu={openWorkspaceMenu}
+        readOnlyReason={
+          readOnlyReason ??
+          "Editing is unavailable until workspace access can be confirmed."
+        }
+        selectedLocationId={current?.id ?? null}
+        setTheme={selectTheme}
+        state={state}
+        theme={theme}
+        view={view}
+        viewer={
+          authorization?.status === "active" &&
+          authorization.role === "viewer"
+        }
+      />}
+      {view === "access" && authorization?.kind === "server" &&
+        <WorkspaceAccessController
+          authorization={authorization}
+          currentUserId={accountId}
+          key={[
+            state.workspace.id,
+            accountId ?? "signed-out",
+          ].join(":")}
+          localUpdatedAt={localUpdatedAt}
+          onAccessChange={setWorkspaceAccess}
+          onOpenWorkspaceHub={openWorkspaceMenu}
+          onRemoveLocal={removeWorkspace}
+          returnTo={collaborationPath}
+          workspaceId={state.workspace.id}
+        />}
+      {view === "access" && authorization?.kind !== "server" &&
+        <section className="panel" role="status">
+          <h2>Device-only workspace</h2>
+          <p>Back up this workspace to a signed-in account before managing members or invitations.</p>
+        </section>}
+      {!readOnly && view === "capture" && <Capture state={state} current={current} select={selectLocation} commit={dispatch} focusEditorKey={guidanceTarget?.view === "capture" ? guidanceTarget.token : null} />}
+      {!readOnly && view === "spaces" && <Spaces state={state} current={current} select={selectLocation} commit={dispatch} focusEditorKey={guidanceTarget?.view === "spaces" ? guidanceTarget.token : null} focusEditorSection={guidanceTarget?.view === "spaces" ? guidanceTarget.focus : undefined} />}
+      {!readOnly && view === "inventory" && <Inventory state={state} commit={dispatch} editing={validInventoryItemId} editFocus={guidanceTarget?.view === "inventory" ? guidanceTarget.focus : undefined} locationFilter={validInventoryLocationId ?? ""} onEditingChange={changeInventoryItem} onLocationFilterChange={changeInventoryLocation} onOpenLocation={(id) => openGuidanceTarget("spaces", id)} />}
+      {!readOnly && view === "plan" && <Planner state={state} commit={dispatch} openGuidanceTarget={openGuidanceTarget} />}
+      {!readOnly && view === "activity" && <History state={state} commit={dispatch} />}
+      {!readOnly && view === "settings" && <Preferences state={state} commit={dispatch} theme={theme} setTheme={selectTheme} openMenu={openWorkspaceMenu} returnTo={canonicalPath ?? tabPath("settings")} serverBacked={authorization?.kind === "server"} />}
     </main>
     {feedback && <output
       className="feedback-toast"
@@ -1823,193 +2030,6 @@ function Brand() {
 }
 function Nav({ label, icon: Icon, active, href, select }: { label: string; icon: typeof Boxes; active: boolean; href: string; select: () => void }) {
   return <a className="nav" data-active={active} aria-current={active ? "page" : undefined} href={href} title={label} onClick={(event) => followAppLink(event, select)}><Icon /><span>{label}</span></a>;
-}
-function Onboarding({ backupConfigured, currentId, currentName, isDemo = false, online, statusRevision, onContinue, onOpenDemo, onOpenWorkspace, onRemoveWorkspace, onResetDemo, onStart }: {
-  backupConfigured: boolean | null;
-  currentId?: string;
-  currentName?: string;
-  isDemo?: boolean;
-  online: boolean;
-  statusRevision?: string;
-  onContinue?: () => void;
-  onOpenDemo?: () => Promise<void>;
-  onOpenWorkspace: (workspaceId: string) => Promise<void>;
-  onRemoveWorkspace: (workspaceId: string, expectedUpdatedAt?: string) => Promise<void>;
-  onResetDemo?: () => Promise<void>;
-  onStart: (demo: boolean, name?: string) => Promise<void>;
-}) {
-  const [workspaces, setWorkspaces] = useState<LocalWorkspaceSummary[]>([]);
-  const [workspacesLoaded, setWorkspacesLoaded] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("");
-  const workspaceHeading = useRef<HTMLHeadingElement | null>(null);
-  useEffect(() => {
-    let active = true;
-    void listWorkspaceReplicas().then((next) => {
-      if (!active) return;
-      setWorkspaces(next);
-      setWorkspacesLoaded(true);
-    }).catch((error) => {
-      if (!active) return;
-      setMessage(error instanceof Error ? error.message : "Could not read workspaces on this device");
-      setWorkspacesLoaded(true);
-    });
-    return () => { active = false; };
-  }, [currentId, statusRevision]);
-  useEffect(() => {
-    if (!currentName || !workspacesLoaded) return;
-    const frame = requestAnimationFrame(() => {
-      scrollAppToTop();
-      workspaceHeading.current?.focus({ preventScroll: true });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [currentName, workspacesLoaded]);
-  const run = async (
-    action: () => Promise<void>,
-    fallbackMessage: string,
-  ): Promise<boolean> => {
-    if (busy) return false;
-    setBusy(true);
-    try {
-      await action();
-      setMessage("");
-      return true;
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : fallbackMessage);
-      return false;
-    } finally {
-      setBusy(false);
-    }
-  };
-  const begin = (demo: boolean, name?: string) =>
-    run(() => onStart(demo, name), "Could not create the workspace");
-  const open = (workspaceId: string) =>
-    run(() => onOpenWorkspace(workspaceId), "Could not open workspace");
-  const remove = async (workspace: LocalWorkspaceSummary) => {
-    if (busy) return;
-    setBusy(true);
-    try {
-      const latest = (await listWorkspaceReplicas()).find(
-        (candidate) => candidate.id === workspace.id,
-      );
-      if (!latest) {
-        setWorkspaces(await listWorkspaceReplicas());
-        setMessage("That workspace is no longer stored on this device.");
-        return;
-      }
-      const unsynced = latest.pending + latest.blocked;
-      const backupWarning = latest.lastSyncedAt
-        ? `Its last known successful online backup was ${formatTimestamp(latest.lastSyncedAt)}. This removal does not request server deletion.`
-        : "This workspace has never been backed up online, so removing it will permanently erase this device's only copy.";
-      const changeWarning = unsynced ? ` ${unsynced} unsynced change${unsynced === 1 ? "" : "s"} will be lost.` : "";
-      if (!confirm(`Remove "${latest.name}" from this device?\n\n${backupWarning}${changeWarning}\n\nThis does not delete any server copy.`)) return;
-      await onRemoveWorkspace(latest.id, latest.updatedAt);
-      setWorkspaces(await listWorkspaceReplicas());
-      setMessage(`${latest.name} was removed from this device.`);
-    } catch (error) {
-      setWorkspaces(await listWorkspaceReplicas().catch(() => workspaces));
-      setMessage(error instanceof Error ? error.message : "Could not remove workspace");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  if (!workspacesLoaded) return <main className="onboarding"><section><Brand /><div className="loading-inline" role="status">Checking workspaces on this device…</div></section></main>;
-  if (!currentName && workspaces.length === 0) return <main className="onboarding"><section><Brand /><p className="eyebrow">A calmer first pass</p><h1>Label it. Count it.<br />Find it later.</h1><p>Start with one box, drawer, or cabinet. Stowplan remembers nested containers and keeps working without connectivity or a healthy server.</p><div className="steps"><span><b>1</b>Label a space</span><span><b>2</b>Add what is inside</span><span><b>3</b>Mark it counted</span></div><form className="workspace-start" onSubmit={(event) => submitForm(event, (data) => begin(false, String(data.get("workspaceName"))), false)}><label>Workspace name<input required maxLength={80} name="workspaceName" defaultValue="My home" autoComplete="organization" /></label><button className="primary" disabled={busy}>{busy ? "Starting…" : "Start my workspace"}</button></form><button className="linkish" disabled={busy} onClick={() => void begin(true)}>Explore the kitchen demo instead</button><small>Your inventory is saved on this device first.</small>{message && <output className="form-message">{message}</output>}</section></main>;
-
-  const workspaceViews = workspaces.map((workspace) => ({
-    presentation: backupPresentation({
-      backupConfigured,
-      blocked: workspace.blocked,
-      lastSyncError: workspace.lastSyncError,
-      lastSyncedAt: workspace.lastSyncedAt,
-      pending: workspace.pending,
-    }),
-    workspace,
-  }));
-  const summary = workspaceViews.reduce(
-    (counts, { presentation }) => ({
-      ...counts,
-      [presentation.state]: counts[presentation.state] + 1,
-    }),
-    { blocked: 0, local: 0, pending: 0, synced: 0 },
-  );
-
-  return <main className="onboarding workspace-home">
-    <section>
-      <Brand />
-      <div className="workspace-home-heading">
-        <div>
-          <p className="eyebrow">Workspaces on this device</p>
-          <h1 ref={workspaceHeading} tabIndex={-1}>Workspaces</h1>
-          <p>Open a workspace or review what has and has not reached server backup.</p>
-        </div>
-        <span className="connectivity" data-online={online}>
-          {online ? <Wifi /> : <WifiOff />}
-          {online ? "Network online" : "Network offline"}
-        </span>
-      </div>
-      <div className="workspace-status-summary" aria-label="Workspace backup status summary">
-        <span data-state="blocked"><AlertCircle /><b>{summary.blocked}</b><small>Need review</small></span>
-        <span data-state="pending"><CircleDashed /><b>{summary.pending}</b><small>Changes local</small></span>
-        <span data-state="local"><HardDrive /><b>{summary.local}</b><small>Device only</small></span>
-        <span data-state="synced"><CheckCircle2 /><b>{summary.synced}</b><small>Backed up</small></span>
-      </div>
-      <div className="workspace-cards">{workspaceViews.map(({ presentation, workspace }) => {
-        const current = workspace.id === currentId;
-        const unsynced = workspace.pending + workspace.blocked;
-        const localOnly = backupConfigured === false ||
-          workspace.lastSyncError === DEVICE_ONLY_BACKUP_ERROR;
-        const detail = workspace.lastSyncedAt
-          ? `Last successful backup ${formatTimestamp(workspace.lastSyncedAt)}`
-          : "Never backed up online";
-        return <article className="workspace-card" data-current={current} key={workspace.id}>
-          <header>
-            <div><span>{current ? "Open now" : "On this device"}</span><h2>{workspace.name}</h2></div>
-            <b data-state={presentation.state}>{presentation.label}</b>
-          </header>
-          <div className="workspace-dates">
-            <span><small>Last local change</small><strong>{formatTimestamp(workspace.updatedAt)}</strong></span>
-            <span><small>Server backup</small><strong>{detail}</strong></span>
-          </div>
-          {workspace.lastSyncError && <p className="workspace-sync-error">Latest backup check {formatTimestamp(workspace.lastSyncAttemptAt)}: {workspace.lastSyncError}</p>}
-          {unsynced > 0 && <details className="workspace-queue">
-            <summary>Queued changes ({unsynced})</summary>
-            <ol>{workspace.changes.slice(0, 6).map((change) => <li key={change.id}>
-              <span><strong>{change.label}</strong><small>{formatTimestamp(change.timestamp)}</small></span>
-              <b data-state={change.status}>{change.status === "blocked" ? "Needs review" : localOnly ? "Saved locally" : "Pending upload"}</b>
-              {change.error && <small>{change.error}</small>}
-            </li>)}</ol>
-            {workspace.changes.length > 6 && <p>+ {workspace.changes.length - 6} more changes</p>}
-          </details>}
-          <footer>
-            <button disabled={busy} className={current ? "primary" : ""} onClick={() => current ? onContinue?.() : void open(workspace.id)}>{current ? "Continue current workspace" : "Open workspace"}</button>
-            <details className="workspace-manage">
-              <summary><Settings /><span>Manage</span></summary>
-              <div>
-                <button disabled={busy} className="workspace-remove danger" aria-label={`Remove ${workspace.name} from this device`} onClick={() => void remove(workspace)}><Trash2 /><span>Remove from this device</span></button>
-                <small>Does not delete a server copy</small>
-              </div>
-            </details>
-          </footer>
-        </article>;
-      })}</div>
-      <div className="workspace-home-actions">
-        <details className="workspace-create">
-          <summary>Start a new workspace</summary>
-          <form onSubmit={(event) => submitForm(event, (data) => begin(false, String(data.get("workspaceName"))), false)}>
-            <label>Workspace name<input required maxLength={80} name="workspaceName" placeholder="e.g. Jamie's apartment" /></label>
-            <button className="primary" disabled={busy}>{busy ? "Starting…" : "Create workspace"}</button>
-          </form>
-        </details>
-        {isDemo
-          ? <button disabled={busy} className="danger menu-action" onClick={() => void run(() => onResetDemo?.() ?? Promise.resolve(), "Could not reset the demo")}><RotateCcw /> Reset kitchen demo</button>
-          : <button disabled={busy} className="linkish" onClick={() => void run(() => onOpenDemo?.() ?? Promise.resolve(), "Could not open the demo")}>Open kitchen demo</button>}
-      </div>
-      <small className="workspace-home-note">This page lists workspaces stored on this device. Removing one here never requests deletion of a server copy.</small>
-      {message && <output className="form-message">{message}</output>}
-    </section>
-  </main>;
 }
 
 function Capture({ state, current, select, commit, focusEditorKey }: { state: WorkspaceState; current: Location | null; select: (id: string) => void; commit: Commit; focusEditorKey: number | null }) {
@@ -4197,7 +4217,7 @@ function History({ state, commit }: { state: WorkspaceState; commit: Commit }) {
   const undone = state.activities.filter((entry) => entry.status === "undone").length;
   return <div className="content"><div className="toolbar"><span>{state.activities.length} recorded changes</span><div className="history-batch"><label>Changes<input aria-label="Batch history count" type="number" min="1" max="100" value={count} onChange={(event) => setCount(Math.max(1, Math.min(100, Number(event.target.value) || 1)))} /></label><button disabled={!applied} onClick={() => void perform(commit, { type: "history.batchUndo", count: Math.min(count, applied) })}>Undo {Math.min(count, applied)}</button><button disabled={!undone} onClick={() => void perform(commit, { type: "history.batchRedo", count: Math.min(count, undone) })}>Redo {Math.min(count, undone)}</button></div></div><section className="panel history">{[...state.activities].reverse().map((entry) => <div key={entry.id}><Undo2 /><span><strong>{entry.label}</strong><small>{new Date(entry.timestamp).toLocaleString()} · {entry.patches.length} fields</small></span><b>{entry.status}</b><button aria-label={`${entry.status === "applied" ? "Undo" : "Reapply"} ${entry.label}`} onClick={() => void perform(commit, entry.status === "applied" ? { type: "history.undo", activityId: entry.id } : { type: "history.reapply", activityId: entry.id })}>{entry.status === "applied" ? "Undo this" : "Reapply"}</button></div>)}{!state.activities.length && <Empty title="No changes yet" text="Every meaningful change will be inspectable and reversible here." />}</section></div>;
 }
-function Preferences({ state, commit, theme, setTheme, openMenu, returnTo }: { state: WorkspaceState; commit: Commit; theme: ThemePreference; setTheme: (theme: ThemePreference) => void; openMenu: () => void; returnTo: string }) {
+function Preferences({ state, commit, theme, setTheme, openMenu, returnTo, serverBacked }: { state: WorkspaceState; commit: Commit; theme: ThemePreference; setTheme: (theme: ThemePreference) => void; openMenu: () => void; returnTo: string; serverBacked: boolean }) {
   const download = () => {
     let url: string | null = null;
     try {
@@ -4221,7 +4241,7 @@ function Preferences({ state, commit, theme, setTheme, openMenu, returnTo }: { s
       if (url) URL.revokeObjectURL(url);
     }
   };
-  return <div className="content settings"><section className="panel"><h2>Workspace</h2><form className="workspace-rename" onSubmit={(event) => submitForm(event, (data) => perform(commit, { type: "workspace.rename", name: String(data.get("workspaceName")) }), false)}><label>Workspace name<input required maxLength={80} name="workspaceName" defaultValue={state.workspace.name} /></label><button>Rename workspace</button></form><p className="muted">Switch workspaces, inspect backup status, or manage device copies.</p><a className="settings-workspaces-link" href={WORKSPACE_LIST_PATH} onClick={(event) => followAppLink(event, openMenu)}><Home /> Workspaces and backup status</a><h2>Appearance</h2><div className="segments">{(["system", "light", "dark"] as const).map((entry) => <button aria-pressed={theme === entry} data-active={theme === entry} key={entry} onClick={() => setTheme(entry)}>{entry}</button>)}</div><h2>Backup & recovery</h2><p className="muted">Export a complete portable snapshot. Imports are validated and previewed before replacement.</p><button onClick={download}>Export JSON backup</button><a href="/recovery">Review sync issues or restore a backup</a><a href="/labels">Print text and QR labels</a></section><section className="panel"><h2>Account & server backup</h2><a href={`/account?workspace=${encodeURIComponent(state.workspace.id)}&returnTo=${encodeURIComponent(returnTo)}`}>Sign in, sync, or create a guest link to this view</a><a href="/admin">Open admin control plane</a><h2>Help & source</h2><a href="/docs/">Read the offline quick guide</a><a target="_blank" rel="noreferrer" href={process.env.NEXT_PUBLIC_REPOSITORY_URL || "https://github.com/j-256/stowplan"}>View source repository</a><p className="license">AGPL-3.0-only<br />Copyright © 2026 James Klein (j-256)</p></section></div>;
+  return <div className="content settings"><section className="panel"><h2>Workspace</h2><form className="workspace-rename" onSubmit={(event) => submitForm(event, (data) => perform(commit, { type: "workspace.rename", name: String(data.get("workspaceName")) }), false)}><label>Workspace name<input required maxLength={80} name="workspaceName" defaultValue={state.workspace.name} /></label><button>Rename workspace</button></form><p className="muted">Switch workspaces, inspect backup status, or manage device copies.</p><a className="settings-workspaces-link" href={WORKSPACE_LIST_PATH} onClick={(event) => followAppLink(event, openMenu)}><Home /> Workspaces and backup status</a>{serverBacked && <a href={workspacePath({ view: "access", workspaceId: state.workspace.id, workspaceLabel: state.workspace.name })}>Workspace access</a>}<h2>Appearance</h2><div className="segments">{(["system", "light", "dark"] as const).map((entry) => <button aria-pressed={theme === entry} data-active={theme === entry} key={entry} onClick={() => setTheme(entry)}>{entry}</button>)}</div><h2>Backup & recovery</h2><p className="muted">Export a complete portable snapshot. Imports are validated and previewed before replacement.</p><button onClick={download}>Export JSON backup</button><a href="/recovery">Review sync issues or restore a backup</a><a href="/labels">Print text and QR labels</a></section><section className="panel"><h2>Account & server backup</h2><a href={`/account?workspace=${encodeURIComponent(state.workspace.id)}&returnTo=${encodeURIComponent(returnTo)}`}>Sign in or review this account</a><h2>Help & source</h2><a href="/docs/">Read the offline quick guide</a><a target="_blank" rel="noreferrer" href={process.env.NEXT_PUBLIC_REPOSITORY_URL || "https://github.com/j-256/stowplan"}>View source repository</a><p className="license">AGPL-3.0-only<br />Copyright © 2026 James Klein (j-256)</p></section></div>;
 }
 function Empty({ title, text }: { title: string; text: string }) {
   return <div className="empty"><b>□</b><h3>{title}</h3><p>{text}</p></div>;

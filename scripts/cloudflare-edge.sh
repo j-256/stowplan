@@ -121,15 +121,20 @@ validate_config() {
   local server_limits_file
   local sync_formula
   local snapshot_formula
+  local workspace_access_formula
   local sync_limit
   local snapshot_limit
+  local workspace_access_limit
   local configured_limit
+  local configured_workspace_access_limit
   local edge_limits
+  local edge_workspace_access_limits
   if ! jq -e '
     (.zone_name | type == "string" and length > 0)
     and (.managed_description_prefix | type == "string" and length > 0)
     and (.default_profile | type == "string" and length > 0)
     and (.data_request_body_limit_bytes | type == "number" and . > 0)
+    and (.workspace_access_request_body_limit_bytes | type == "number" and . > 0)
     and (.profiles | type == "object" and length > 0)
     and (.profiles[.default_profile] != null)
     and all(
@@ -137,6 +142,10 @@ validate_config() {
       (.phases | type == "object")
       and (.phases.http_request_firewall_custom | type == "array")
       and (.phases.http_ratelimit | type == "array")
+      and any(
+        .phases.http_ratelimit[];
+        (.expression | contains("/api/workspaces"))
+      )
     )
   ' "$config" >/dev/null; then
     error "invalid configuration structure: $config"
@@ -174,15 +183,22 @@ validate_config() {
   if [ -f "$server_limits_file" ]; then
     sync_formula="$(sed -n 's/^export const SYNC_REQUEST_MAX_BYTES = \([0-9][0-9]*\) \* \([0-9][0-9]*\) \* \([0-9][0-9]*\);$/\1 * \2 * \3/p' "$server_limits_file")"
     snapshot_formula="$(sed -n 's/^export const SNAPSHOT_REQUEST_MAX_BYTES = \([0-9][0-9]*\) \* \([0-9][0-9]*\) \* \([0-9][0-9]*\);$/\1 * \2 * \3/p' "$server_limits_file")"
-    if [ -z "$sync_formula" ] || [ -z "$snapshot_formula" ]; then
+    workspace_access_formula="$(sed -n 's/^export const WORKSPACE_ACCESS_REQUEST_MAX_BYTES = \([0-9][0-9]*\) \* \([0-9][0-9]*\);$/\1 * \2/p' "$server_limits_file")"
+    if [ -z "$sync_formula" ] || [ -z "$snapshot_formula" ] || [ -z "$workspace_access_formula" ]; then
       error "could not read server request-body constants"
       exit 65
     fi
     sync_limit=$((sync_formula))
     snapshot_limit=$((snapshot_formula))
+    workspace_access_limit=$((workspace_access_formula))
     configured_limit="$(jq -r '.data_request_body_limit_bytes' "$config")"
+    configured_workspace_access_limit="$(jq -r '.workspace_access_request_body_limit_bytes' "$config")"
     if [ "$sync_limit" -ne "$snapshot_limit" ] || [ "$sync_limit" -ne "$configured_limit" ]; then
       error "Cloudflare and server data request-body limits differ"
+      exit 65
+    fi
+    if [ "$workspace_access_limit" -ne "$configured_workspace_access_limit" ]; then
+      error "Cloudflare and server workspace access request-body limits differ"
       exit 65
     fi
     edge_limits="$(jq -r '
@@ -198,6 +214,21 @@ validate_config() {
     ' "$config")"
     if [ "$edge_limits" != "$configured_limit" ]; then
       error "Enterprise edge rules do not match data_request_body_limit_bytes"
+      exit 65
+    fi
+    edge_workspace_access_limits="$(jq -r '
+      [
+        .profiles.enterprise_advanced.phases.http_request_firewall_custom[]
+        | select(.description == "[stowplan] Block oversized workspace access request bodies")
+        | .expression
+        | try capture("http\\.request\\.body\\.size gt (?<bytes>[0-9]+)").bytes
+      ]
+      | map(select(. != null))
+      | unique
+      | .[]
+    ' "$config")"
+    if [ "$edge_workspace_access_limits" != "$configured_workspace_access_limit" ]; then
+      error "Enterprise edge rules do not match workspace_access_request_body_limit_bytes"
       exit 65
     fi
   fi

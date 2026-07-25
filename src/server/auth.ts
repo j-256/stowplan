@@ -20,6 +20,11 @@ export interface SessionUser { userId:string; email:string; displayName:string; 
 export interface ProviderProfile { provider:string; subject:string; email:string; displayName:string }
 
 export const AUTH_CLEANUP_BATCH_SIZE = 64;
+export const GUEST_LINK_EXPIRY_HOURS = Object.freeze({
+  default: 24,
+  maximum: 168,
+  minimum: 1,
+});
 const GUEST_LINK_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
 const OAUTH_STATE_RETENTION_MS = 24 * 60 * 60 * 1_000;
 const SESSION_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
@@ -199,28 +204,6 @@ export async function cleanupAuthRecords(
        )`,
     ).bind(oauthCutoff, AUTH_CLEANUP_BATCH_SIZE),
     db.prepare(
-      `DELETE FROM workspace_members
-       WHERE (workspace_id, user_id) IN (
-         SELECT members.workspace_id, members.user_id
-         FROM workspace_members members
-         WHERE EXISTS (
-           SELECT 1
-           FROM identities
-           WHERE identities.user_id = members.user_id
-             AND identities.provider = 'guest'
-         )
-           AND NOT EXISTS (
-             SELECT 1
-             FROM sessions
-             WHERE sessions.user_id = members.user_id
-               AND sessions.revoked_at IS NULL
-               AND sessions.expires_at > ?
-           )
-         ORDER BY members.created_at
-         LIMIT ?
-       )`,
-    ).bind(now, AUTH_CLEANUP_BATCH_SIZE),
-    db.prepare(
       `UPDATE auth_audit_events
        SET actor_user_id = NULL
        WHERE actor_user_id IN (
@@ -308,15 +291,15 @@ export async function cleanupAuthRecords(
        )`,
     ).bind(guestLinkCutoff, AUTH_CLEANUP_BATCH_SIZE),
   ]);
-  if (results.length !== 6 || results.some((result) => !result.success)) {
+  if (results.length !== 5 || results.some((result) => !result.success)) {
     throw new Error("Authentication record cleanup did not complete");
   }
   return {
     sessions: resultChanges(results[0]),
     oauthStates: resultChanges(results[1]),
-    guestMemberships: resultChanges(results[2]),
-    guestUsers: resultChanges(results[4]),
-    guestLinks: resultChanges(results[5]),
+    guestMemberships: 0,
+    guestUsers: resultChanges(results[3]),
+    guestLinks: resultChanges(results[4]),
   };
 }
 
@@ -326,6 +309,14 @@ async function maintainAuthRecords(db: AuthDb): Promise<void> {
 
 export class AuthorizationError extends Error {
  constructor(message:string,readonly status:401|403){super(message);this.name="AuthorizationError"}
+}
+export class InvitationError extends Error {
+  readonly status = 409;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "InvitationError";
+  }
 }
 
 export function sessionCookie(raw:string,maxAge:number){return `stowplan_session=${raw}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`}
@@ -492,7 +483,12 @@ export async function authorizeAdmin(db:AuthDb,env:RuntimeEnv,request:Request):P
  return user;
 }
 export function isTrustedMutation(request:Request,configuredBaseUrl?:string):boolean{
- const origin=request.headers.get("origin");if(!origin)return true;
+ const fetchSite=request.headers.get("sec-fetch-site");
+ if(fetchSite==="cross-site")return false;
+ const origin=request.headers.get("origin");
+ if(!origin){
+  return fetchSite===null&&!request.headers.has("sec-fetch-mode");
+ }
  const requestUrl=new URL(request.url),allowed=new Set([requestUrl.origin]);
  const forwardedHost=request.headers.get("x-forwarded-host")?.split(",")[0]?.trim()??request.headers.get("host");
  const forwardedProtocol=request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim()??requestUrl.protocol.slice(0,-1);
@@ -500,7 +496,7 @@ export function isTrustedMutation(request:Request,configuredBaseUrl?:string):boo
  if(configuredBaseUrl){try{allowed.add(new URL(configuredBaseUrl).origin)}catch{return false}}
  try{return allowed.has(new URL(origin).origin)}catch{return false}
 }
-export async function workspaceRole(db:AuthDb,userId:string,workspaceId:string){const row=await db.prepare("SELECT role FROM workspace_members WHERE workspace_id=? AND user_id=?").bind(workspaceId,userId).first<{role:"owner"|"editor"|"viewer"}>();return row?.role??null}
+export async function workspaceRole(db:AuthDb,userId:string,workspaceId:string){const row=await db.prepare("SELECT member.role FROM workspace_members member JOIN workspace_snapshots snapshot ON snapshot.workspace_id=member.workspace_id JOIN users actor ON actor.user_id=member.user_id AND actor.status='active' WHERE member.workspace_id=? AND member.user_id=? AND NOT EXISTS (SELECT 1 FROM workspace_deletions deleted WHERE deleted.workspace_id=member.workspace_id)").bind(workspaceId,userId).first<{role:"owner"|"editor"|"viewer"}>();return row?.role??null}
 export async function canReadWorkspace(db:AuthDb,userId:string,workspaceId:string){return (await workspaceRole(db,userId,workspaceId))!==null}
 export async function revokeCurrentSession(db:AuthDb,request:Request){const raw=cookieValue(request,"stowplan_session");if(raw)await db.prepare("UPDATE sessions SET revoked_at=? WHERE token_hash=? AND revoked_at IS NULL").bind(nowIso(),await hash(raw)).run()}
 export async function canWriteWorkspace(db:AuthDb,userId:string,workspaceId:string){const role=await workspaceRole(db,userId,workspaceId);return role==="owner"||role==="editor"}
@@ -514,16 +510,24 @@ export async function claimWorkspace(
     `INSERT OR IGNORE INTO workspace_members(
        workspace_id, user_id, role, created_at
      )
-     SELECT ?, ?, 'owner', ?
-     WHERE (
-       SELECT COUNT(*)
-       FROM workspace_members
-       WHERE user_id = ? AND role = 'owner'
-     ) < ?`,
+     SELECT snapshot.workspace_id, caller.user_id, 'owner', ?
+     FROM workspace_snapshots snapshot
+     JOIN users caller ON caller.user_id = ? AND caller.status = 'active'
+     WHERE snapshot.workspace_id = ?
+       AND NOT EXISTS (
+         SELECT 1
+         FROM workspace_deletions deleted
+         WHERE deleted.workspace_id = snapshot.workspace_id
+       )
+       AND (
+         SELECT COUNT(*)
+         FROM workspace_members
+         WHERE user_id = ? AND role = 'owner'
+       ) < ?`,
   ).bind(
-    workspaceId,
-    userId,
     nowIso(),
+    userId,
+    workspaceId,
     userId,
     API_QUOTAS.ownedWorkspacesPerUser,
   ).run();
@@ -582,46 +586,74 @@ export async function createGuestLink(
   workspaceId: string,
   creator: string,
   role: "editor" | "viewer",
-  hours = 24,
+  hours: number = GUEST_LINK_EXPIRY_HOURS.default,
 ) {
+  if (role !== "editor" && role !== "viewer") {
+    throw new Error("Guest link role must be editor or viewer");
+  }
+  if (
+    !Number.isSafeInteger(hours)
+    || hours < GUEST_LINK_EXPIRY_HOURS.minimum
+    || hours > GUEST_LINK_EXPIRY_HOURS.maximum
+  ) {
+    throw new Error(
+      `Guest link expiry must be an integer from ${GUEST_LINK_EXPIRY_HOURS.minimum} through ${GUEST_LINK_EXPIRY_HOURS.maximum} hours`,
+    );
+  }
+  if (!await canOwnWorkspace(db, creator, workspaceId)) {
+    throw new AuthorizationError("Workspace owner access required", 403);
+  }
   await maintainAuthRecords(db);
   const raw = token();
   const id = newId("guest");
   const now = nowIso();
   const end = new Date(
-    Date.now() + Math.max(1, Math.min(168, hours)) * 3_600_000,
+    Date.now() + hours * 3_600_000,
   ).toISOString();
-  const [result, auditResult] = await db.batch([
+  const [, auditResult] = await db.batch([
     db.prepare(
       `INSERT INTO guest_links(
          guest_link_id, workspace_id, created_by_user_id, token_hash, role,
          created_at, expires_at
        )
-       SELECT ?, ?, ?, ?, ?, ?, ?
-       WHERE (
-         SELECT COUNT(*)
-         FROM guest_links
-         WHERE workspace_id = ?
-       ) < ?
+       SELECT ?, snapshot.workspace_id, ?, ?, ?, ?, ?
+       FROM workspace_snapshots snapshot
+       JOIN workspace_members actor
+         ON actor.workspace_id = snapshot.workspace_id
+        AND actor.user_id = ?
+        AND actor.role = 'owner'
+       JOIN users actor_user
+         ON actor_user.user_id = actor.user_id
+        AND actor_user.status = 'active'
+       WHERE snapshot.workspace_id = ?
+         AND NOT EXISTS (
+           SELECT 1
+           FROM workspace_deletions deleted
+           WHERE deleted.workspace_id = snapshot.workspace_id
+         )
          AND (
            SELECT COUNT(*)
            FROM guest_links
-           WHERE workspace_id = ?
+           WHERE workspace_id = snapshot.workspace_id
+         ) < ?
+         AND (
+           SELECT COUNT(*)
+           FROM guest_links
+           WHERE workspace_id = snapshot.workspace_id
              AND consumed_at IS NULL
              AND revoked_at IS NULL
              AND expires_at > ?
          ) < ?`,
     ).bind(
       id,
-      workspaceId,
       creator,
       await hash(raw),
       role,
       now,
       end,
+      creator,
       workspaceId,
       API_QUOTAS.retainedGuestLinksPerWorkspace,
-      workspaceId,
       now,
       API_QUOTAS.activeGuestLinksPerWorkspace,
     ),
@@ -636,18 +668,15 @@ export async function createGuestLink(
       newId("aud"),
       creator,
       id,
-      JSON.stringify({ expiresAt: end, workspaceId }),
+      JSON.stringify({ expiresAt: end, role, workspaceId }),
       now,
     ),
   ]);
-  if (
-    resultChanges(result) === 1
-    && resultChanges(auditResult) === 1
-  ) {
+  if (resultChanges(auditResult) === 1) {
     return { id, raw, expiresAt: end };
   }
-  if (resultChanges(result) !== resultChanges(auditResult)) {
-    throw new Error("The guest link and audit record were inconsistent");
+  if (!await canOwnWorkspace(db, creator, workspaceId)) {
+    throw new AuthorizationError("Workspace owner access required", 403);
   }
   const usage = await guestLinkUsage(db, workspaceId, now);
   if (usage.retained >= API_QUOTAS.retainedGuestLinksPerWorkspace) {
@@ -665,51 +694,206 @@ export async function createGuestLink(
   throw new Error("The guest link could not be recorded");
 }
 
-export async function consumeGuestLink(db:AuthDb,env:RuntimeEnv,raw:string,request:Request){
- await maintainAuthRecords(db);
- const now=nowIso(),row=await db.prepare("SELECT guest_link_id,workspace_id,role,expires_at FROM guest_links WHERE token_hash=? AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>?").bind(await hash(raw),now).first<{guest_link_id:string;workspace_id:string;role:"editor"|"viewer";expires_at:string}>();
- if(!row)throw new Error("Guest link is invalid, expired, used, or revoked");
- const redemptionId=newId("redemption"),userId=newId("usr"),email=`guest+${row.guest_link_id}@stowplan.invalid`;
- const maxAge=Math.max(1,Math.min(86400,Math.floor((Date.parse(row.expires_at)-Date.now())/1000)));
- const session=await createSessionRecord(env,request,maxAge);
- const results=await db.batch([
-  db.prepare(
-   `UPDATE guest_links
-    SET consumed_at = ?, redemption_id = ?
-    WHERE guest_link_id = ?
-      AND consumed_at IS NULL
-      AND revoked_at IS NULL
-      AND redemption_id IS NULL
-      AND expires_at > ?
-      AND (
-        SELECT COUNT(*)
-        FROM workspace_members
-        WHERE workspace_id = guest_links.workspace_id
-      ) < ?`,
-  ).bind(
-   now,
-   redemptionId,
-   row.guest_link_id,
-   now,
-   API_QUOTAS.membersPerWorkspace,
-  ),
-  db.prepare("INSERT INTO users(user_id,email,display_name,global_role,status,created_at,updated_at,last_seen_at) SELECT ?,?,'Guest','user','active',?,?,? FROM guest_links WHERE guest_link_id=? AND redemption_id=?").bind(userId,email,now,now,now,row.guest_link_id,redemptionId),
-  db.prepare("INSERT INTO identities(identity_id,user_id,provider,provider_subject,email,created_at,last_used_at) SELECT ?,?,'guest',?,?,?,? FROM guest_links WHERE guest_link_id=? AND redemption_id=?").bind(newId("idn"),userId,row.guest_link_id,email,now,now,row.guest_link_id,redemptionId),
-  db.prepare("INSERT INTO workspace_members(workspace_id,user_id,role,created_at) SELECT workspace_id,?,role,? FROM guest_links WHERE guest_link_id=? AND redemption_id=?").bind(userId,now,row.guest_link_id,redemptionId),
-  db.prepare("INSERT INTO sessions(session_id,user_id,token_hash,created_at,expires_at,last_seen_at,user_agent,ip_prefix) SELECT ?,?,?,?,?,?,?,? FROM guest_links WHERE guest_link_id=? AND redemption_id=?").bind(session.sessionId,userId,session.tokenHash,session.createdAt,session.expiresAt,session.lastSeenAt,session.userAgent,session.ipPrefix,row.guest_link_id,redemptionId),
- ]);
- if(results.length!==5||results.some((result)=>resultChanges(result)!==1)){
-  if(resultChanges(results[0])===0){
-   const eligible=await db.prepare("SELECT workspace_id FROM guest_links WHERE guest_link_id=? AND consumed_at IS NULL AND revoked_at IS NULL AND redemption_id IS NULL AND expires_at>?").bind(row.guest_link_id,now).first<{workspace_id:string}>();
-   if(eligible){
-    const usage=await db.prepare("SELECT COUNT(*) AS count FROM workspace_members WHERE workspace_id=?").bind(eligible.workspace_id).first<{count:number}>();
-    const actual=usage?.count??0;
-    if(actual>=API_QUOTAS.membersPerWorkspace)throw new QuotaExceededError("membersPerWorkspace",actual+1);
-   }
+export async function consumeGuestLink(
+  db: AuthDb,
+  raw: string,
+  userId: string,
+) {
+  await maintainAuthRecords(db);
+  const now = nowIso();
+  const row = await db.prepare(
+    `SELECT link.guest_link_id,link.workspace_id,link.role
+     FROM guest_links link
+     JOIN workspace_snapshots snapshot
+       ON snapshot.workspace_id=link.workspace_id
+     WHERE link.token_hash=?
+       AND link.consumed_at IS NULL
+       AND link.revoked_at IS NULL
+       AND link.expires_at>?
+       AND NOT EXISTS (
+         SELECT 1
+         FROM workspace_deletions deleted
+         WHERE deleted.workspace_id=link.workspace_id
+       )`,
+  ).bind(await hash(raw), now).first<{
+    guest_link_id: string;
+    role: "editor" | "viewer";
+    workspace_id: string;
+  }>();
+  if (!row) {
+    throw new InvitationError(
+      "Invite link is invalid, expired, used, or revoked",
+    );
   }
-  throw new Error("Guest link is invalid, expired, used, or revoked");
- }
- return{session:{raw:session.raw,maxAge:session.maxAge},workspaceId:row.workspace_id}
+
+  const redemptionId = newId("redemption");
+  const auditId = newId("aud");
+  const results = await db.batch([
+    db.prepare(
+      `UPDATE guest_links
+       SET consumed_at=?,redemption_id=?
+       WHERE guest_link_id=?
+         AND consumed_at IS NULL
+         AND revoked_at IS NULL
+         AND redemption_id IS NULL
+         AND expires_at>?
+         AND EXISTS (
+           SELECT 1
+           FROM users caller
+           WHERE caller.user_id=?
+             AND caller.status='active'
+         )
+         AND EXISTS (
+           SELECT 1
+           FROM workspace_snapshots snapshot
+           WHERE snapshot.workspace_id=guest_links.workspace_id
+             AND NOT EXISTS (
+               SELECT 1
+               FROM workspace_deletions deleted
+               WHERE deleted.workspace_id=snapshot.workspace_id
+             )
+         )
+         AND NOT EXISTS (
+           SELECT 1
+           FROM workspace_members existing
+           WHERE existing.workspace_id=guest_links.workspace_id
+             AND existing.user_id=?
+         )
+         AND (
+           SELECT COUNT(*)
+           FROM workspace_members
+           WHERE workspace_id=guest_links.workspace_id
+         )<?`,
+    ).bind(
+      now,
+      redemptionId,
+      row.guest_link_id,
+      now,
+      userId,
+      userId,
+      API_QUOTAS.membersPerWorkspace,
+    ),
+    db.prepare(
+      `INSERT INTO workspace_members(
+         workspace_id,user_id,role,created_at
+       )
+       SELECT link.workspace_id,?,link.role,?
+       FROM guest_links link
+       JOIN users caller
+         ON caller.user_id=?
+        AND caller.status='active'
+       WHERE link.guest_link_id=?
+         AND link.redemption_id=?`,
+    ).bind(
+      userId,
+      now,
+      userId,
+      row.guest_link_id,
+      redemptionId,
+    ),
+    db.prepare(
+      `INSERT INTO auth_audit_events(
+         event_id,actor_user_id,action,target_type,target_id,detail_json,
+         created_at
+       )
+       SELECT ?,
+              ?,
+              'member.invite.accept',
+              'workspace_member',
+              ?,
+              ?,
+              ?
+       FROM guest_links link
+       JOIN workspace_members member
+         ON member.workspace_id=link.workspace_id
+        AND member.user_id=?
+        AND member.role=link.role
+       WHERE link.guest_link_id=?
+         AND link.redemption_id=?`,
+    ).bind(
+      auditId,
+      userId,
+      userId,
+      JSON.stringify({
+        guestLinkId: row.guest_link_id,
+        role: row.role,
+        workspaceId: row.workspace_id,
+      }),
+      now,
+      userId,
+      row.guest_link_id,
+      redemptionId,
+    ),
+    db.prepare(
+      `SELECT 1 AS completed
+       FROM guest_links link
+       JOIN workspace_members member
+         ON member.workspace_id=link.workspace_id
+        AND member.user_id=?
+        AND member.role=link.role
+       JOIN auth_audit_events audit
+         ON audit.event_id=?
+        AND audit.actor_user_id=member.user_id
+       WHERE link.guest_link_id=?
+         AND link.redemption_id=?
+         AND link.consumed_at=?`,
+    ).bind(
+      userId,
+      auditId,
+      row.guest_link_id,
+      redemptionId,
+      now,
+    ),
+  ]);
+  const completed = results.length === 4
+    && results[3]?.results?.length === 1;
+  if (completed) return { workspaceId: row.workspace_id };
+
+  const context = await db.prepare(
+    `SELECT
+       EXISTS(
+         SELECT 1
+         FROM users caller
+         WHERE caller.user_id=? AND caller.status='active'
+       ) AS user_active,
+       EXISTS(
+         SELECT 1
+         FROM workspace_members member
+         WHERE member.workspace_id=link.workspace_id
+           AND member.user_id=?
+       ) AS already_member,
+       (
+         SELECT COUNT(*)
+         FROM workspace_members
+         WHERE workspace_id=link.workspace_id
+       ) AS member_count
+     FROM guest_links link
+     WHERE link.guest_link_id=?`,
+  ).bind(userId, userId, row.guest_link_id).first<{
+    already_member: number;
+    member_count: number;
+    user_active: number;
+  }>();
+  if (!context) {
+    throw new InvitationError(
+      "Invite link is invalid, expired, used, or revoked",
+    );
+  }
+  if (context.already_member === 1) {
+    throw new InvitationError(
+      "You already have access to this workspace",
+    );
+  }
+  if (context.user_active !== 1) {
+    throw new AuthorizationError("Account is disabled or unavailable", 403);
+  }
+  const actual = context.member_count;
+  if (actual >= API_QUOTAS.membersPerWorkspace) {
+    throw new QuotaExceededError("membersPerWorkspace", actual + 1);
+  }
+  throw new InvitationError(
+    "Invite link is invalid, expired, used, or revoked",
+  );
 }
 
 export interface OAuthProvider { id:"google"|"github"; authorizationUrl:string; tokenUrl:string; scopes:string; clientId:string; clientSecret:string }

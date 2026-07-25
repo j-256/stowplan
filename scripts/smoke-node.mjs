@@ -10,6 +10,11 @@ const MigrationStream = Object.freeze({
   NUMBERED: "numbered",
   SITES: "sites",
 });
+const WORKSPACE_ID = "ws_smoke";
+const WORKSPACE_NAME = "Smoke workspace";
+const RESTORED_WORKSPACE_NAME = "Restored smoke workspace";
+const WORKSPACE_RETURN_TO = `/workspaces/${WORKSPACE_ID}/inventory`;
+const ACCOUNT_CONTEXT_HEADER = "x-stowplan-account-id";
 
 async function availablePort() {
   const server = createServer();
@@ -78,8 +83,22 @@ async function waitForExit(child, logs) {
 
 async function assertStatus(response, expected) {
   if (response.status !== expected) {
-    assert.fail(`Expected HTTP ${expected}, received ${response.status}: ${await response.text()}`);
+    const body = await response.clone().json().catch(() => null);
+    const code = body && typeof body === "object" && typeof body.code === "string"
+      ? ` ${body.code}`
+      : "";
+    const error = body && typeof body === "object" && typeof body.error === "string"
+      ? `: ${body.error}`
+      : "";
+    assert.fail(`Expected HTTP ${expected}, received ${response.status}${code}${error}`);
   }
+}
+
+function assertAccountContext(response, accountId) {
+  assert.equal(
+    response.headers.get(ACCOUNT_CONTEXT_HEADER),
+    accountId,
+  );
 }
 
 async function assertSitesMigrationStreamRefused(directory) {
@@ -208,14 +227,20 @@ try {
   await assertStatus(login, 200);
   const cookie = (login.headers.get("set-cookie") ?? "").split(";")[0];
   assert.match(cookie, /^stowplan_session=/);
-  const authenticatedHeaders = { cookie };
+  const sessionHeaders = { cookie };
 
-  const me = await fetch(`${origin}/api/auth/me`, { headers: authenticatedHeaders });
+  const me = await fetch(`${origin}/api/auth/me`, { headers: sessionHeaders });
   assert.equal(me.status, 200);
   const identity = await me.json();
   assert.equal(identity.user.email, "owner@example.test");
   assert.equal(identity.user.globalRole, "admin");
   assert.deepEqual(identity.providers, ["development"]);
+  const ownerAccountId = identity.user.userId;
+  assert(ownerAccountId);
+  const authenticatedHeaders = {
+    ...sessionHeaders,
+    [ACCOUNT_CONTEXT_HEADER]: ownerAccountId,
+  };
 
   const timestamp = new Date().toISOString();
   const snapshot = {
@@ -227,8 +252,8 @@ try {
     schemaVersion: 1,
     workspace: {
       createdAt: timestamp,
-      id: "ws_smoke",
-      name: "Smoke workspace",
+      id: WORKSPACE_ID,
+      name: WORKSPACE_NAME,
       revision: 0,
       updatedAt: timestamp,
     },
@@ -237,26 +262,31 @@ try {
   const initialize = await fetch(`${origin}/api/sync`, {
     method: "POST",
     headers: syncHeaders,
-    body: JSON.stringify({ workspaceId: "ws_smoke", commands: [], snapshot }),
+    body: JSON.stringify({ workspaceId: WORKSPACE_ID, commands: [], snapshot }),
   });
   await assertStatus(initialize, 200);
+  assertAccountContext(initialize, ownerAccountId);
+  const initialized = await initialize.json();
+  assert.equal(initialized.authorization.role, "owner");
+  assert.equal(initialized.authorization.capabilities.manageAccess, true);
 
   const command = {
     actorId: "smoke-user",
     baseRevision: 0,
     command: { type: "workspace.rename", name: "Renamed smoke workspace" },
     deviceId: "smoke-device",
-    expectations: [{ id: "ws_smoke", path: "name", target: "workspace", value: "Smoke workspace" }],
+    expectations: [{ id: WORKSPACE_ID, path: "name", target: "workspace", value: WORKSPACE_NAME }],
     id: "cmd_smoke_rename",
     timestamp: new Date().toISOString(),
-    workspaceId: "ws_smoke",
+    workspaceId: WORKSPACE_ID,
   };
   const apply = await fetch(`${origin}/api/sync`, {
     method: "POST",
     headers: syncHeaders,
-    body: JSON.stringify({ workspaceId: "ws_smoke", commands: [command] }),
+    body: JSON.stringify({ workspaceId: WORKSPACE_ID, commands: [command] }),
   });
   await assertStatus(apply, 200);
+  assertAccountContext(apply, ownerAccountId);
   const applied = await apply.json();
   assert.equal(applied.receipts[0].status, "applied");
   assert.equal(applied.state.workspace.revision, 1);
@@ -264,28 +294,73 @@ try {
   const replay = await fetch(`${origin}/api/sync`, {
     method: "POST",
     headers: syncHeaders,
-    body: JSON.stringify({ workspaceId: "ws_smoke", commands: [command] }),
+    body: JSON.stringify({ workspaceId: WORKSPACE_ID, commands: [command] }),
   });
   await assertStatus(replay, 200);
+  assertAccountContext(replay, ownerAccountId);
   assert.equal((await replay.json()).receipts[0].status, "duplicate");
 
-  const stored = await fetch(`${origin}/api/snapshot?workspaceId=ws_smoke`, { headers: authenticatedHeaders });
+  const stored = await fetch(
+    `${origin}/api/snapshot?workspaceId=${encodeURIComponent(WORKSPACE_ID)}`,
+    { headers: authenticatedHeaders },
+  );
   assert.equal(stored.status, 200);
+  assertAccountContext(stored, ownerAccountId);
   const storedBody = await stored.json();
   assert.equal(storedBody.state.workspace.name, "Renamed smoke workspace");
   assert.equal(storedBody.state.workspace.revision, 1);
 
   const restoreSnapshot = structuredClone(storedBody.state);
-  restoreSnapshot.workspace.name = "Restored smoke workspace";
+  restoreSnapshot.workspace.name = RESTORED_WORKSPACE_NAME;
   const restore = await fetch(`${origin}/api/snapshot`, {
     method: "PUT",
     headers: syncHeaders,
-    body: JSON.stringify({ workspaceId: "ws_smoke", expectedRevision: 1, snapshot: restoreSnapshot }),
+    body: JSON.stringify({ workspaceId: WORKSPACE_ID, expectedRevision: 1, snapshot: restoreSnapshot }),
   });
   await assertStatus(restore, 200);
+  assertAccountContext(restore, ownerAccountId);
   const restored = await restore.json();
-  assert.equal(restored.state.workspace.name, "Restored smoke workspace");
+  assert.equal(restored.state.workspace.name, RESTORED_WORKSPACE_NAME);
   assert.equal(restored.state.workspace.revision, 2);
+
+  const catalogResponse = await fetch(
+    `${origin}/api/workspaces?limit=1&q=smoke&role=owner`,
+    { headers: authenticatedHeaders },
+  );
+  await assertStatus(catalogResponse, 200);
+  assertAccountContext(catalogResponse, ownerAccountId);
+  assert.equal(catalogResponse.headers.get("cache-control"), "no-store");
+  const catalog = await catalogResponse.json();
+  assert.deepEqual(
+    {
+      hasMore: catalog.page.hasMore,
+      nextCursor: catalog.page.nextCursor,
+      role: catalog.workspaces[0]?.role,
+      workspaceId: catalog.workspaces[0]?.id,
+    },
+    {
+      hasMore: false,
+      nextCursor: null,
+      role: "owner",
+      workspaceId: WORKSPACE_ID,
+    },
+  );
+  const discoveredWorkspaceId = catalog.workspaces[0].id;
+  assert.equal(catalog.workspaces[0].name, RESTORED_WORKSPACE_NAME);
+  assert.equal(catalog.workspaces[0].capabilities.leave, false);
+
+  const ownerAccessResponse = await fetch(
+    `${origin}/api/workspaces/${encodeURIComponent(discoveredWorkspaceId)}/access`,
+    { headers: authenticatedHeaders },
+  );
+  await assertStatus(ownerAccessResponse, 200);
+  assertAccountContext(ownerAccessResponse, ownerAccountId);
+  assert.equal(ownerAccessResponse.headers.get("cache-control"), "no-store");
+  const ownerAccess = await ownerAccessResponse.json();
+  assert.equal(ownerAccess.access.role, "owner");
+  assert.equal(ownerAccess.access.capabilities.delete, true);
+  assert.equal(ownerAccess.access.capabilities.manageAccess, true);
+  assert.equal(ownerAccess.guestLinkPolicy.minimumExpiryHours, 1);
 
   const admin = await fetch(`${origin}/api/admin/overview`, { headers: authenticatedHeaders });
   await assertStatus(admin, 200);
@@ -295,71 +370,273 @@ try {
   assert.equal(overview.memberships.length, 1);
   assert.equal(overview.sessions.length, 1);
 
-  const createGuest = await fetch(`${origin}/api/admin/guest-links`, {
-    method: "POST",
-    headers: syncHeaders,
-    body: JSON.stringify({
-      workspaceId: "ws_smoke",
-      role: "viewer",
-      hours: 1,
-      returnTo: "/workspaces/ws_smoke/inventory",
-    }),
-  });
-  await assertStatus(createGuest, 201);
-  const guest = await createGuest.json();
-  const guestUrl = new URL(guest.url);
+  const createInvite = await fetch(
+    `${origin}/api/workspaces/${encodeURIComponent(discoveredWorkspaceId)}/guest-links`,
+    {
+      method: "POST",
+      headers: syncHeaders,
+      body: JSON.stringify({
+        expectedAccessRevision: ownerAccess.access.accessRevision,
+        expiresInHours: 2,
+        role: "viewer",
+        returnTo: WORKSPACE_RETURN_TO,
+      }),
+    },
+  );
+  await assertStatus(createInvite, 201);
+  assertAccountContext(createInvite, ownerAccountId);
+  const invite = await createInvite.json();
+  assert.equal(invite.guestLink.role, "viewer");
+  assert.equal(invite.guestLink.status, "active");
+  const guestUrl = new URL(invite.oneTimeUrl);
   assert.equal(guestUrl.origin, origin);
   assert.equal(
     guestUrl.searchParams.get("returnTo"),
-    "/workspaces/ws_smoke/inventory",
+    WORKSPACE_RETURN_TO,
   );
   const token = guestUrl.pathname.split("/").at(-1);
   assert(token);
 
-  const confirmation = await fetch(guest.url);
+  const confirmation = await fetch(guestUrl);
   await assertStatus(confirmation, 200);
   assert.match(await confirmation.text(), /Open the shared workspace/);
   const legacyGet = await fetch(`${origin}/api/auth/guest/${token}`, { redirect: "manual" });
   assert.equal(legacyGet.status, 302);
-  assert.match(legacyGet.headers.get("location") ?? "", new RegExp(`/guest/${token}$`));
+  const legacyLocation = new URL(
+    legacyGet.headers.get("location") ?? "/",
+    origin,
+  );
+  assert.equal(legacyLocation.pathname.split("/").at(-1) === token, true);
 
+  const viewerLogin = await fetch(`${origin}/api/auth/dev`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin },
+    body: JSON.stringify({
+      email: "viewer@example.test",
+      name: "Smoke Viewer",
+    }),
+  });
+  await assertStatus(viewerLogin, 200);
+  const viewerCookie = (
+    viewerLogin.headers.get("set-cookie") ?? ""
+  ).split(";")[0];
+  assert.match(viewerCookie, /^stowplan_session=/);
+  const viewerMe = await fetch(`${origin}/api/auth/me`, {
+    headers: { cookie: viewerCookie },
+  });
+  await assertStatus(viewerMe, 200);
+  const viewerIdentity = await viewerMe.json();
+  const viewerAccountId = viewerIdentity.user.userId;
+  assert(viewerAccountId);
+  const viewerHeaders = {
+    [ACCOUNT_CONTEXT_HEADER]: viewerAccountId,
+    cookie: viewerCookie,
+  };
+  const viewerSyncHeaders = {
+    ...viewerHeaders,
+    "content-type": "application/json",
+    origin,
+  };
   const redeem = await fetch(
-    `${origin}/api/auth/guest/${token}?returnTo=${encodeURIComponent("/workspaces/ws_smoke/inventory")}`,
+    `${origin}/api/auth/guest/${token}?returnTo=${encodeURIComponent(WORKSPACE_RETURN_TO)}`,
     {
+      body: new URLSearchParams({
+        expectedAccountId: viewerAccountId,
+      }),
       method: "POST",
-      headers: { origin },
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        cookie: viewerCookie,
+        origin,
+      },
       redirect: "manual",
     },
   );
-  assert.equal(redeem.status, 302);
+  assert.equal(redeem.status, 303);
   assert.equal(
     redeem.headers.get("location"),
-    `${origin}/workspaces/ws_smoke/inventory`,
+    `${origin}${WORKSPACE_RETURN_TO}`,
   );
-  const guestCookie = (redeem.headers.get("set-cookie") ?? "").split(";")[0];
-  assert.match(guestCookie, /^stowplan_session=/);
-  const guestSnapshot = await fetch(`${origin}/api/snapshot?workspaceId=ws_smoke`, { headers: { cookie: guestCookie } });
+  assert.equal(redeem.headers.get("set-cookie"), null);
+  const guestSnapshot = await fetch(
+    `${origin}/api/snapshot?workspaceId=${encodeURIComponent(discoveredWorkspaceId)}`,
+    { headers: viewerHeaders },
+  );
   await assertStatus(guestSnapshot, 200);
+  assertAccountContext(guestSnapshot, viewerAccountId);
+  const viewerCatalogResponse = await fetch(
+    `${origin}/api/workspaces?limit=50`,
+    { headers: viewerHeaders },
+  );
+  await assertStatus(viewerCatalogResponse, 200);
+  assertAccountContext(viewerCatalogResponse, viewerAccountId);
+  const viewerCatalog = await viewerCatalogResponse.json();
+  const viewerWorkspace = viewerCatalog.workspaces.find(
+    workspace => workspace.id === discoveredWorkspaceId,
+  );
+  assert.equal(viewerWorkspace.role, "viewer");
+  assert.equal(viewerWorkspace.capabilities.write, false);
+  assert.equal(viewerWorkspace.capabilities.manageAccess, false);
   const viewerRefresh = await fetch(`${origin}/api/sync`, {
     method: "POST",
-    headers: { cookie: guestCookie, "content-type": "application/json", origin },
-    body: JSON.stringify({ workspaceId: "ws_smoke", commands: [] }),
+    headers: viewerSyncHeaders,
+    body: JSON.stringify({ workspaceId: discoveredWorkspaceId, commands: [] }),
   });
   await assertStatus(viewerRefresh, 200);
+  assertAccountContext(viewerRefresh, viewerAccountId);
   const viewerWrite = await fetch(`${origin}/api/sync`, {
     method: "POST",
-    headers: { cookie: guestCookie, "content-type": "application/json", origin },
-    body: JSON.stringify({ workspaceId: "ws_smoke", commands: [{ ...command, id: "cmd_viewer_denied", baseRevision: 1 }] }),
+    headers: viewerSyncHeaders,
+    body: JSON.stringify({
+      workspaceId: discoveredWorkspaceId,
+      commands: [{
+        ...command,
+        baseRevision: restored.state.workspace.revision,
+        id: "cmd_viewer_denied",
+      }],
+    }),
   });
   assert.equal(viewerWrite.status, 403);
+  assertAccountContext(viewerWrite, viewerAccountId);
+  const viewerWriteProblem = await viewerWrite.json();
+  assert.equal(viewerWriteProblem.code, "WRITE_ACCESS_REQUIRED");
+  assert.equal(viewerWriteProblem.receipts[0].status, "rejected");
+
+  const viewerDelete = await fetch(
+    `${origin}/api/workspaces/${encodeURIComponent(discoveredWorkspaceId)}`,
+    {
+      method: "DELETE",
+      headers: viewerSyncHeaders,
+      body: JSON.stringify({
+        confirmationName: RESTORED_WORKSPACE_NAME,
+        expectedAccessRevision: viewerWorkspace.accessRevision,
+        expectedMembershipRevision: viewerWorkspace.membershipRevision,
+        expectedRevision: viewerWorkspace.revision,
+      }),
+    },
+  );
+  assert.equal(viewerDelete.status, 403);
+  assert.equal((await viewerDelete.json()).code, "OWNER_REQUIRED");
+
   const replayGuest = await fetch(`${origin}/api/auth/guest/${token}`, {
+    body: new URLSearchParams({
+      expectedAccountId: viewerAccountId,
+    }),
     method: "POST",
-    headers: { origin },
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      cookie: viewerCookie,
+      origin,
+    },
     redirect: "manual",
   });
-  assert.equal(replayGuest.status, 401);
+  assert.equal(replayGuest.status, 409);
 
-  console.log("Node + SQLite smoke passed: stream isolation, legacy migration, health, headers, auth, sync, idempotency, restore, admin, viewer refresh, and scanner-safe guest links.");
+  const latestAccessResponse = await fetch(
+    `${origin}/api/workspaces/${encodeURIComponent(discoveredWorkspaceId)}/access`,
+    { headers: authenticatedHeaders },
+  );
+  await assertStatus(latestAccessResponse, 200);
+  assertAccountContext(latestAccessResponse, ownerAccountId);
+  const latestAccess = await latestAccessResponse.json();
+  assert.equal(latestAccess.access.capabilities.leave, false);
+
+  const finalOwnerLeave = await fetch(
+    `${origin}/api/workspaces/${encodeURIComponent(discoveredWorkspaceId)}/membership`,
+    {
+      method: "DELETE",
+      headers: syncHeaders,
+      body: JSON.stringify({
+        expectedAccessRevision: latestAccess.access.accessRevision,
+        expectedMembershipRevision:
+          latestAccess.access.membershipRevision,
+      }),
+    },
+  );
+  assert.equal(finalOwnerLeave.status, 409);
+  assert.equal((await finalOwnerLeave.json()).code, "FINAL_OWNER_REQUIRED");
+
+  const incompleteDelete = await fetch(
+    `${origin}/api/workspaces/${encodeURIComponent(discoveredWorkspaceId)}`,
+    {
+      method: "DELETE",
+      headers: syncHeaders,
+      body: JSON.stringify({
+        confirmationName: "Not the workspace name",
+        expectedAccessRevision: latestAccess.access.accessRevision,
+        expectedMembershipRevision:
+          latestAccess.access.membershipRevision,
+        expectedRevision: latestAccess.workspace.revision,
+      }),
+    },
+  );
+  assert.equal(incompleteDelete.status, 409);
+  assert.equal((await incompleteDelete.json()).code, "CONFIRMATION_REQUIRED");
+
+  const removeOnlineSave = await fetch(
+    `${origin}/api/workspaces/${encodeURIComponent(discoveredWorkspaceId)}`,
+    {
+      method: "DELETE",
+      headers: syncHeaders,
+      body: JSON.stringify({
+        confirmationName: latestAccess.workspace.name,
+        expectedAccessRevision: latestAccess.access.accessRevision,
+        expectedMembershipRevision:
+          latestAccess.access.membershipRevision,
+        expectedRevision: latestAccess.workspace.revision,
+      }),
+    },
+  );
+  await assertStatus(removeOnlineSave, 200);
+  assertAccountContext(removeOnlineSave, ownerAccountId);
+  const deletion = await removeOnlineSave.json();
+  assert.equal(deletion.deleted, true);
+  assert.equal(deletion.localReplicaDispositionRequired, true);
+  assert.equal(deletion.recovery, "not_available");
+  assert.equal(deletion.workspaceId, discoveredWorkspaceId);
+
+  const repeatedDelete = await fetch(
+    `${origin}/api/workspaces/${encodeURIComponent(discoveredWorkspaceId)}`,
+    {
+      method: "DELETE",
+      headers: syncHeaders,
+      body: JSON.stringify({
+        confirmationName: latestAccess.workspace.name,
+        expectedAccessRevision: latestAccess.access.accessRevision,
+        expectedMembershipRevision:
+          latestAccess.access.membershipRevision,
+        expectedRevision: latestAccess.workspace.revision,
+      }),
+    },
+  );
+  assert.equal(repeatedDelete.status, 410);
+  assert.equal((await repeatedDelete.json()).code, "WORKSPACE_DELETED");
+
+  const afterDeletionCatalog = await fetch(
+    `${origin}/api/workspaces?limit=1&q=smoke`,
+    { headers: authenticatedHeaders },
+  );
+  await assertStatus(afterDeletionCatalog, 200);
+  assertAccountContext(afterDeletionCatalog, ownerAccountId);
+  assert.deepEqual((await afterDeletionCatalog.json()).workspaces, []);
+
+  const deletedSnapshot = await fetch(
+    `${origin}/api/snapshot?workspaceId=${encodeURIComponent(discoveredWorkspaceId)}`,
+    { headers: authenticatedHeaders },
+  );
+  assert.equal(deletedSnapshot.status, 404);
+  assert.equal(
+    (await deletedSnapshot.json()).code,
+    "NOT_FOUND_OR_INACCESSIBLE",
+  );
+
+  const revokedGuestSnapshot = await fetch(
+    `${origin}/api/snapshot?workspaceId=${encodeURIComponent(discoveredWorkspaceId)}`,
+    { headers: viewerHeaders },
+  );
+  assert.equal(revokedGuestSnapshot.status, 404);
+
+  console.log("Node + SQLite smoke passed: stream isolation, legacy migration, member discovery, owner access, sync, restore, admin visibility, viewer forgery rejection, scanner-safe invite enrollment, final-owner leave refusal, and guarded online deletion.");
 } finally {
   await stop(child);
   await rm(directory, { recursive: true, force: true });

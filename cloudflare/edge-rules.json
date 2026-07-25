@@ -3,6 +3,7 @@
   "managed_description_prefix": "[stowplan]",
   "default_profile": "free",
   "data_request_body_limit_bytes": 8388608,
+  "workspace_access_request_body_limit_bytes": 32768,
   "profiles": {
     "free": {
       "phases": {
@@ -28,7 +29,7 @@
         "http_ratelimit": [
           {
             "description": "[stowplan] Limit sensitive API requests by source",
-            "expression": "(http.request.uri.path eq \"/api/auth\" or starts_with(http.request.uri.path, \"/api/auth/\") or http.request.uri.path eq \"/api/admin\" or starts_with(http.request.uri.path, \"/api/admin/\"))",
+            "expression": "(http.request.uri.path eq \"/api/auth\" or starts_with(http.request.uri.path, \"/api/auth/\") or http.request.uri.path eq \"/api/admin\" or starts_with(http.request.uri.path, \"/api/admin/\") or http.request.uri.path eq \"/api/workspaces\" or starts_with(http.request.uri.path, \"/api/workspaces/\"))",
             "action": "block",
             "action_parameters": {
               "response": {
@@ -57,7 +58,7 @@
         "http_ratelimit": [
           {
             "description": "[stowplan] Limit sensitive API requests by source",
-            "expression": "http.host eq \"stowplan.jklein.dev\" and (http.request.uri.path eq \"/api/auth\" or starts_with(http.request.uri.path, \"/api/auth/\") or http.request.uri.path eq \"/api/admin\" or starts_with(http.request.uri.path, \"/api/admin/\"))",
+            "expression": "http.host eq \"stowplan.jklein.dev\" and (http.request.uri.path eq \"/api/auth\" or starts_with(http.request.uri.path, \"/api/auth/\") or http.request.uri.path eq \"/api/admin\" or starts_with(http.request.uri.path, \"/api/admin/\") or http.request.uri.path eq \"/api/workspaces\" or starts_with(http.request.uri.path, \"/api/workspaces/\"))",
             "action": "block",
             "action_parameters": {
               "response": {
@@ -152,7 +153,7 @@
           },
           {
             "description": "[stowplan] Limit administration requests by source",
-            "expression": "http.host eq \"stowplan.jklein.dev\" and (http.request.uri.path eq \"/api/admin\" or starts_with(http.request.uri.path, \"/api/admin/\"))",
+            "expression": "http.host eq \"stowplan.jklein.dev\" and (http.request.uri.path eq \"/api/admin\" or starts_with(http.request.uri.path, \"/api/admin/\") or http.request.uri.path eq \"/api/workspaces\" or starts_with(http.request.uri.path, \"/api/workspaces/\"))",
             "action": "block",
             "action_parameters": {
               "response": {
@@ -219,6 +220,15 @@
             }
           },
           {
+            "description": "[stowplan] Block oversized workspace access request bodies",
+            "expression": "http.host eq \"stowplan.jklein.dev\" and (http.request.uri.path eq \"/api/workspaces\" or starts_with(http.request.uri.path, \"/api/workspaces/\")) and http.request.body.size gt 32768",
+            "action": "block",
+            "enabled": true,
+            "position": {
+              "index": 1
+            }
+          },
+          {
             "description": "[stowplan] Block oversized control API request bodies",
             "expression": "http.host eq \"stowplan.jklein.dev\" and starts_with(http.request.uri.path, \"/api/\") and http.request.uri.path ne \"/api/sync\" and http.request.uri.path ne \"/api/snapshot\" and http.request.body.size gt 262144",
             "action": "block",
@@ -275,7 +285,7 @@
           },
           {
             "description": "[stowplan] Limit administration requests by source",
-            "expression": "http.host eq \"stowplan.jklein.dev\" and (http.request.uri.path eq \"/api/admin\" or starts_with(http.request.uri.path, \"/api/admin/\"))",
+            "expression": "http.host eq \"stowplan.jklein.dev\" and (http.request.uri.path eq \"/api/admin\" or starts_with(http.request.uri.path, \"/api/admin/\") or http.request.uri.path eq \"/api/workspaces\" or starts_with(http.request.uri.path, \"/api/workspaces/\"))",
             "action": "block",
             "action_parameters": {
               "response": {

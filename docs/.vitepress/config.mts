@@ -22,10 +22,14 @@ export default defineConfig({
     ],
     sidebar: [
       { text: "Use Stowplan", items: [
-        { text: "Getting started", link: "/guide/getting-started" }, { text: "Fast capture", link: "/guide/capture" },
+        { text: "Getting started", link: "/guide/getting-started" }, { text: "Workspaces & collaboration", link: "/guide/collaboration" },
+        { text: "Fast capture", link: "/guide/capture" },
         { text: "Spaces & inventory", link: "/guide/organize" }, { text: "Move plans", link: "/guide/plans" },
         { text: "Offline & sync", link: "/guide/offline" }, { text: "Activity & rollback", link: "/guide/activity" },
         { text: "Backup & recovery", link: "/guide/recovery" }, { text: "Admin", link: "/guide/admin" },
+      ]},
+      { text: "Manual QA", items: [
+        { text: "iPhone & iPad Safari", link: "/guide/safari-smoke" },
       ]},
       { text: "Authentication", items: [
         { text: "Overview", link: "/auth/" }, { text: "Google OAuth", link: "/auth/google" },

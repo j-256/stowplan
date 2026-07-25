@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 
 // Makes getCloudflareContext() and local Wrangler bindings available to
-// `next dev`. OpenNext treats this as a no-op for production builds.
+// `next dev`. OpenNext treats this as a no-op for production builds
 initOpenNextCloudflareForDev();
 
 const contentSecurityPolicy = [
@@ -38,6 +38,10 @@ const nextConfig: NextConfig = {
       { source: "/:path*", headers: securityHeaders },
       {
         source: "/api/:path*",
+        headers: [{ key: "Cache-Control", value: "no-store" }],
+      },
+      {
+        source: "/guest/:path*",
         headers: [{ key: "Cache-Control", value: "no-store" }],
       },
     ];

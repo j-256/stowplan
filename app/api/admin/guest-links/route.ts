@@ -1,84 +1,167 @@
 import {
-  AuthorizationError,
   authenticate,
-  authorizeAdmin,
-  canWriteWorkspace,
-  createGuestLink,
+  GUEST_LINK_EXPIRY_HOURS,
   isTrustedMutation,
 } from "../../../../src/server/auth";
-import { workspaceReturnTo } from "../../../../src/domain/app-url";
 import {
-  QuotaExceededError,
-  quotaProblem,
-} from "../../../../src/server/quotas";
+  ApiProblem,
+} from "../../../../src/server/api-problem";
 import {
-  CONTROL_REQUEST_MAX_BYTES,
+  accountScopedJson,
+  requireExpectedAccount,
+} from "../../../../src/server/account-context";
+import {
   readJsonRequest,
-  RequestBodyTooLargeError,
+  WORKSPACE_ACCESS_REQUEST_MAX_BYTES,
 } from "../../../../src/server/request-body";
 import { runtimeEnv } from "../../../../src/server/runtime";
+import {
+  createWorkspaceGuestLink,
+  getWorkspaceAccess,
+  workspaceAccessErrorResponse,
+} from "../../../../src/server/workspace-access";
+
+interface GuestLinkInput {
+  hours: number;
+  returnTo?: string;
+  role: "editor" | "viewer";
+  workspaceId: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseGuestLinkInput(value: unknown): GuestLinkInput {
+  if (!isRecord(value)) {
+    throw new ApiProblem(
+      "INVALID_REQUEST",
+      "The request body must be a JSON object",
+      400,
+    );
+  }
+  if (typeof value.workspaceId !== "string" || !value.workspaceId.trim()) {
+    throw new ApiProblem(
+      "INVALID_REQUEST",
+      "workspaceId must be a non-empty string",
+      400,
+    );
+  }
+  const role = value.role ?? "editor";
+  if (role !== "editor" && role !== "viewer") {
+    throw new ApiProblem(
+      "INVALID_REQUEST",
+      "role must be editor or viewer",
+      400,
+    );
+  }
+  const hours = value.hours ?? GUEST_LINK_EXPIRY_HOURS.default;
+  if (
+    typeof hours !== "number"
+    || !Number.isSafeInteger(hours)
+    || hours < GUEST_LINK_EXPIRY_HOURS.minimum
+    || hours > GUEST_LINK_EXPIRY_HOURS.maximum
+  ) {
+    throw new ApiProblem(
+      "INVALID_REQUEST",
+      `hours must be an integer from ${GUEST_LINK_EXPIRY_HOURS.minimum} through ${GUEST_LINK_EXPIRY_HOURS.maximum}`,
+      400,
+    );
+  }
+  if (value.returnTo !== undefined && typeof value.returnTo !== "string") {
+    throw new ApiProblem(
+      "INVALID_REQUEST",
+      "returnTo must be a string",
+      400,
+    );
+  }
+  return {
+    hours,
+    returnTo: value.returnTo as string | undefined,
+    role,
+    workspaceId: value.workspaceId,
+  };
+}
+
+function workspaceAccessRevision(value: unknown): number {
+  if (
+    !isRecord(value)
+    || typeof value.accessRevision !== "number"
+    || !Number.isSafeInteger(value.accessRevision)
+    || value.accessRevision < 0
+  ) {
+    throw new ApiProblem(
+      "INTERNAL_ERROR",
+      "Workspace access could not be loaded",
+      500,
+    );
+  }
+  return value.accessRevision;
+}
 
 export async function POST(request: Request) {
   try {
     const env = await runtimeEnv();
     if (!isTrustedMutation(request, env.AUTH_BASE_URL)) {
-      return Response.json({ error: "Cross-origin mutation denied" }, { status: 403 });
+      throw new ApiProblem(
+        "CROSS_ORIGIN_DENIED",
+        "Cross-origin mutation denied",
+        403,
+      );
     }
     if (!env.DB) {
-      return Response.json({ error: "Database is not configured" }, { status: 503 });
+      throw new ApiProblem(
+        "STORAGE_UNAVAILABLE",
+        "Database is not configured",
+        503,
+      );
     }
     const user = await authenticate(env.DB, request);
     if (!user) {
-      return Response.json({ error: "Authentication required" }, { status: 401 });
+      throw new ApiProblem(
+        "AUTHENTICATION_REQUIRED",
+        "Authentication required",
+        401,
+      );
     }
-    const body = await readJsonRequest<{
-      hours?: number;
-      returnTo?: string;
-      role?: "editor" | "viewer";
-      workspaceId: string;
-    }>(request, CONTROL_REQUEST_MAX_BYTES);
-    const canWrite = await canWriteWorkspace(
-      env.DB,
-      user.userId,
-      body.workspaceId,
-    );
-    if (!canWrite) {
-      if (user.globalRole !== "admin") {
-        return Response.json(
-          { error: "Workspace write access required" },
-          { status: 403 },
-        );
-      }
-      await authorizeAdmin(env.DB, env, request);
+    requireExpectedAccount(request, user.userId);
+    const contentType = request.headers.get("content-type") ?? "";
+    if (!contentType.toLowerCase().startsWith("application/json")) {
+      throw new ApiProblem(
+        "INVALID_REQUEST",
+        "Content-Type must be application/json",
+        415,
+      );
     }
-    const link = await createGuestLink(
+    const body = parseGuestLinkInput(await readJsonRequest<unknown>(
+      request,
+      WORKSPACE_ACCESS_REQUEST_MAX_BYTES,
+    ));
+    const access = await getWorkspaceAccess(
       env.DB,
       body.workspaceId,
       user.userId,
-      body.role ?? "editor",
-      body.hours,
     );
-    const returnTo = workspaceReturnTo(body.returnTo, body.workspaceId);
+    const link = await createWorkspaceGuestLink(
+      env.DB,
+      body.workspaceId,
+      user.userId,
+      {
+        expectedAccessRevision: workspaceAccessRevision(access.access),
+        expiresInHours: body.hours,
+        returnTo: body.returnTo,
+        role: body.role,
+      },
+    );
     const base = env.AUTH_BASE_URL ?? request.url;
     const url = new URL(`/guest/${link.raw}`, base);
-    url.searchParams.set("returnTo", returnTo);
-    return Response.json(
-      { url: url.toString(), expiresAt: link.expiresAt },
+    url.searchParams.set("returnTo", link.returnTo);
+    return accountScopedJson(
+      { url: url.toString(), expiresAt: link.guestLink.expiresAt },
+      user.userId,
       { status: 201 },
     );
   } catch (error) {
-    if (error instanceof QuotaExceededError) {
-      return Response.json(quotaProblem(error), { status: error.status });
-    }
-    if (error instanceof RequestBodyTooLargeError) {
-      return Response.json(
-        { error: error.message },
-        { status: error.status },
-      );
-    }
-    return Response.json(
-      { error: error instanceof Error ? error.message : "Could not create guest link" },
-      { status: error instanceof AuthorizationError ? error.status : 400 },
-    );
+    return workspaceAccessErrorResponse(error);
   }
 }

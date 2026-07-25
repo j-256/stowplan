@@ -3,13 +3,13 @@ import type { D1DatabaseLike } from "../adapters/d1-snapshot-store";
 const SCHEMA_PROBE_QUERY = `
   SELECT
     EXISTS(
-      SELECT workspace_id
+      SELECT workspace_id, revision, access_revision
       FROM workspace_snapshots
       WHERE revision >= 0
       LIMIT 1
     ) AS has_snapshots,
     EXISTS(
-      SELECT user_id
+      SELECT user_id, membership_revision
       FROM users
       LIMIT 1
     ) AS has_users,
@@ -42,7 +42,13 @@ const SCHEMA_PROBE_QUERY = `
       SELECT event_id, detail_json
       FROM auth_audit_events
       LIMIT 1
-    ) AS has_audit_events
+    ) AS has_audit_events,
+    EXISTS(
+      SELECT workspace_id, deletion_id, final_snapshot_revision,
+        final_access_revision
+      FROM workspace_deletions
+      LIMIT 1
+    ) AS has_workspace_deletions
 `;
 
 export async function probeDatabaseSchema(

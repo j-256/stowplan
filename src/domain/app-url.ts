@@ -1,4 +1,6 @@
 export const DEFAULT_WORKSPACE_VIEW = "capture";
+export const INVITATION_OAUTH_RESUME_PATH =
+  "/account?resume=invitation";
 export const WORKSPACE_LIST_PATH = "/workspaces";
 export const WORKSPACE_VIEWS = Object.freeze([
   "capture",
@@ -7,6 +9,7 @@ export const WORKSPACE_VIEWS = Object.freeze([
   "plan",
   "activity",
   "settings",
+  "access",
 ] as const);
 
 export type WorkspaceView = (typeof WORKSPACE_VIEWS)[number];
@@ -39,6 +42,7 @@ const LOCATION_PATH_SEGMENT = "locations";
 const ITEM_PATH_SEGMENT = "items";
 const WORKSPACE_VIEW_SET = new Set<string>(WORKSPACE_VIEWS);
 const PARSE_BASE_URL = "https://stowplan.invalid";
+const RETURN_TO_DECODE_PASSES = 4;
 
 function decodedSegment(segment: string | undefined): string | null {
   if (!segment) return null;
@@ -235,5 +239,34 @@ export function workspaceReturnTo(
     });
   } catch {
     return fallback;
+  }
+}
+
+export function oauthReturnTo(
+  requested: string | null | undefined,
+): string {
+  if (!requested?.startsWith("/")) return "/";
+  try {
+    const resolved = new URL(requested, PARSE_BASE_URL);
+    if (resolved.origin !== PARSE_BASE_URL) return "/";
+    let decoded = requested;
+    for (
+      let pass = 0;
+      pass < RETURN_TO_DECODE_PASSES;
+      pass += 1
+    ) {
+      if (decoded.toLowerCase().includes("/guest/")) {
+        return INVITATION_OAUTH_RESUME_PATH;
+      }
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) break;
+      decoded = next;
+    }
+    if (decoded.toLowerCase().includes("/guest/")) {
+      return INVITATION_OAUTH_RESUME_PATH;
+    }
+    return `${resolved.pathname}${resolved.search}${resolved.hash}`;
+  } catch {
+    return "/";
   }
 }

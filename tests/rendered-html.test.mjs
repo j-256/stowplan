@@ -313,8 +313,9 @@ test("ships task-oriented item, plan, and workspace controls", () => {
   assert.match(application, /Short ID/);
   assert.match(application, /Mark moved/);
   assert.match(application, /inventory-order-actions/);
-  assert.match(application, /Queued changes/);
-  assert.match(application, /This does not delete any server copy/);
+  const workspaceHub = readFileSync(new URL("../src/client/workspace-hub.tsx", import.meta.url), "utf8");
+  assert.match(workspaceHub, /Pending changes/);
+  assert.match(workspaceHub, /It does not delete the server copy/);
   const replica = readFileSync(new URL("../src/client/local-replica.ts", import.meta.url), "utf8");
   const store = readFileSync(new URL("../src/client/store.tsx", import.meta.url), "utf8");
   assert.match(replica, /lastSyncedAt/);

@@ -9,9 +9,14 @@ import {
   uniqueIndex,
 } from "drizzle-orm/sqlite-core";
 
+const MAX_SAFE_AUTHORIZATION_REVISION_SQL = sql.raw(
+  String(Number.MAX_SAFE_INTEGER),
+);
+
 export const workspaceSnapshots = sqliteTable("workspace_snapshots", {
   workspaceId: text("workspace_id").primaryKey(),
   revision: integer("revision").notNull(),
+  accessRevision: integer("access_revision").notNull().default(0),
   stateJson: text("state_json").notNull(),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
@@ -41,6 +46,7 @@ export const users = sqliteTable("users", {
   status: text("status", { enum: ["active", "disabled"] })
     .notNull()
     .default("active"),
+  membershipRevision: integer("membership_revision").notNull().default(0),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
   lastSeenAt: text("last_seen_at"),
@@ -84,6 +90,25 @@ export const workspaceMembers = sqliteTable("workspace_members", {
   primaryKey({ columns: [table.workspaceId, table.userId] }),
   check("workspace_members_role_check", sql`${table.role} in ('owner', 'editor', 'viewer')`),
   index("workspace_members_user_id_idx").on(table.userId),
+]);
+
+export const workspaceDeletions = sqliteTable("workspace_deletions", {
+  workspaceId: text("workspace_id").primaryKey(),
+  deletionId: text("deletion_id").notNull(),
+  deletedAt: text("deleted_at").notNull(),
+  deletedByUserId: text("deleted_by_user_id"),
+  finalSnapshotRevision: integer("final_snapshot_revision").notNull(),
+  finalAccessRevision: integer("final_access_revision").notNull(),
+}, (table) => [
+  check(
+    "workspace_deletions_final_snapshot_revision_check",
+    sql`${table.finalSnapshotRevision} >= 0 and ${table.finalSnapshotRevision} <= ${MAX_SAFE_AUTHORIZATION_REVISION_SQL}`,
+  ),
+  check(
+    "workspace_deletions_final_access_revision_check",
+    sql`${table.finalAccessRevision} >= 0 and ${table.finalAccessRevision} <= ${MAX_SAFE_AUTHORIZATION_REVISION_SQL}`,
+  ),
+  uniqueIndex("workspace_deletions_deletion_id_idx").on(table.deletionId),
 ]);
 
 export const sessions = sqliteTable("sessions", {

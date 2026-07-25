@@ -128,7 +128,11 @@ const DB = {
           return statement.get(...values) ?? null;
         },
         async all() {
-          return { results: statement.all(...values) };
+          return {
+            success: true,
+            results: statement.all(...values),
+            meta: { changes: 0 },
+          };
         },
         async run() {
           const result = statement.run(...values);
@@ -150,6 +154,14 @@ const DB = {
       for (const statement of statements) {
         const prepared = preparedStatements.get(statement);
         if (!prepared) throw new Error("Batch statement belongs to another database");
+        if (prepared.statement.columns().length > 0) {
+          results.push({
+            success: true,
+            results: prepared.statement.all(...prepared.values),
+            meta: { changes: 0 },
+          });
+          continue;
+        }
         const result = prepared.statement.run(...prepared.values);
         results.push({
           success: true,

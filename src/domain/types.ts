@@ -165,8 +165,14 @@ export interface WorkspaceState {
     workspace: Workspace;
 }
 
+export interface CommandAuthorizationBasis {
+    membershipRevision: number;
+    workspaceAccessRevision: number;
+}
+
 export interface CommandEnvelope<T extends Command = Command> {
     actorId: string;
+    authorization?: CommandAuthorizationBasis;
     baseRevision: number;
     command: T;
     deviceId: string;

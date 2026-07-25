@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  INVITATION_OAUTH_RESUME_PATH,
+  oauthReturnTo,
   parseAppUrl,
   WORKSPACE_LIST_PATH,
   workspaceReturnTo,
@@ -25,6 +27,11 @@ describe("workspace URLs", () => {
       workspaceId: "ws_home",
       view: "inventory",
     })).toBe("/workspaces/ws_home/inventory/locations/loc_bin");
+    expect(workspacePath({
+      workspaceId: "ws_home",
+      workspaceLabel: "My Home",
+      view: "access",
+    })).toBe("/workspaces/my-home@ws_home/access");
     expect(WORKSPACE_LIST_PATH).toBe("/workspaces");
   });
 
@@ -79,6 +86,13 @@ describe("workspace URLs", () => {
       view: "inventory",
       workspaceId: "ws_home",
     });
+    expect(parseAppUrl("/workspaces/ws_home/access")).toEqual({
+      kind: "workspace",
+      itemId: null,
+      locationId: null,
+      view: "access",
+      workspaceId: "ws_home",
+    });
     expect(parseAppUrl(WORKSPACE_LIST_PATH)).toEqual({ kind: "workspace-list" });
   });
 
@@ -95,6 +109,13 @@ describe("workspace URLs", () => {
       itemId: null,
       locationId: null,
       view: "activity",
+      workspaceId: "ws_home",
+    });
+    expect(parseAppUrl("/?workspace=ws_home&view=access")).toEqual({
+      kind: "workspace",
+      itemId: null,
+      locationId: null,
+      view: "access",
       workspaceId: "ws_home",
     });
   });
@@ -150,6 +171,10 @@ describe("workspace URLs", () => {
       "/workspaces/my-home@ws_home/settings";
     expect(workspaceReturnTo(readableSettingsPath, "ws_home"))
       .toBe(readableSettingsPath);
+    const readableAccessPath =
+      "/workspaces/my-home@ws_home/access";
+    expect(workspaceReturnTo(readableAccessPath, "ws_home"))
+      .toBe(readableAccessPath);
     const readableItemPath =
       "/workspaces/my-home@ws_home/inventory/items/all-purpose-flour@item_flour";
     expect(workspaceReturnTo(readableItemPath, "ws_home"))
@@ -166,5 +191,16 @@ describe("workspace URLs", () => {
       .toBe("/workspaces/ws_home/capture");
     expect(workspaceReturnTo("//attacker.test/workspaces/ws_home/plan", "ws_home"))
       .toBe("/workspaces/ws_home/capture");
+  });
+
+  it("keeps raw invitation tokens out of persisted OAuth return state", () => {
+    expect(oauthReturnTo("/workspaces/ws_home/settings"))
+      .toBe("/workspaces/ws_home/settings");
+    expect(oauthReturnTo("/guest/raw_invite?returnTo=%2Fworkspaces"))
+      .toBe(INVITATION_OAUTH_RESUME_PATH);
+    expect(oauthReturnTo(
+      "/account?returnTo=%252Fguest%252Fraw_invite",
+    )).toBe(INVITATION_OAUTH_RESUME_PATH);
+    expect(oauthReturnTo("//attacker.test/guest/raw_invite")).toBe("/");
   });
 });

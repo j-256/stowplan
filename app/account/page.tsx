@@ -1,15 +1,18 @@
 "use client";
 
 import {
-  Copy,
-  ExternalLink,
-  Link2,
   LogOut,
-  Share2,
   ShieldCheck,
 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState, useSyncExternalStore } from "react";
+import {
+  INVITATION_OAUTH_RESUME_PATH,
+  workspacePath,
+} from "../../src/domain/app-url";
+import {
+  clearActiveServerWorkspaceCatalogAccount,
+} from "../../src/client/local-replica";
 import styles from "./account.module.css";
 
 interface User {
@@ -17,6 +20,7 @@ interface User {
   email: string;
   expiresAt: string;
   globalRole: string;
+  userId: string;
 }
 
 interface MeResponse {
@@ -25,19 +29,9 @@ interface MeResponse {
   user: User | null;
 }
 
-interface GuestResponse {
-  error?: string;
-  expiresAt?: string;
-  url?: string;
-}
-
-interface GuestLink {
-  expiresAt: string;
-  url: string;
-}
-
 interface NavigationState {
   ready: boolean;
+  resumeInvitation: boolean;
   returnTo: string;
   workspace: string | null;
 }
@@ -46,10 +40,14 @@ const ACCESS_LOGOUT_PATH = "/cdn-cgi/access/logout";
 const DEFAULT_RETURN_TO = "/";
 const INITIAL_NAVIGATION: NavigationState = {
   ready: false,
+  resumeInvitation: false,
   returnTo: DEFAULT_RETURN_TO,
   workspace: null,
 };
 const MAX_RETURN_TO_DECODE_PASSES = 4;
+const INVITATION_CONTINUATION_KEY =
+  "stowplan_invitation_return_to";
+const WORKSPACE_CHANNEL_NAME = "stowplan-workspaces-v1";
 const RETURN_TO_ORIGIN = "https://stowplan.invalid";
 const SERVER_NAVIGATION_HREF = "";
 
@@ -152,15 +150,52 @@ function readNavigation(href: string): NavigationState {
   const search = new URL(href).searchParams;
   return {
     ready: true,
+    resumeInvitation: search.get("resume") === "invitation",
     returnTo: safeReturnTo(search.get("returnTo")),
     workspace: search.get("workspace"),
   };
 }
 
+function isInvitationReturnTo(value: string): boolean {
+  try {
+    return new URL(value, RETURN_TO_ORIGIN).pathname.startsWith(
+      "/guest/",
+    );
+  } catch {
+    return false;
+  }
+}
+
+function rememberInvitationReturnTo(value: string): boolean {
+  if (!isInvitationReturnTo(value)) return false;
+  try {
+    sessionStorage.setItem(INVITATION_CONTINUATION_KEY, value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function takeInvitationReturnTo(): string | null {
+  try {
+    const saved = sessionStorage.getItem(INVITATION_CONTINUATION_KEY);
+    if (!saved || !isInvitationReturnTo(saved)) return null;
+    sessionStorage.removeItem(INVITATION_CONTINUATION_KEY);
+    return saved;
+  } catch {
+    return null;
+  }
+}
+
+function broadcastAccountChange(): void {
+  if (typeof BroadcastChannel === "undefined") return;
+  const channel = new BroadcastChannel(WORKSPACE_CHANNEL_NAME);
+  channel.postMessage({ type: "account-changed" });
+  channel.close();
+}
+
 export default function Account() {
   const [configured, setConfigured] = useState(false);
-  const [creatingGuest, setCreatingGuest] = useState(false);
-  const [guestLink, setGuestLink] = useState<GuestLink | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [message, setMessage] = useState("");
   const [providers, setProviders] = useState<string[]>([]);
@@ -171,20 +206,51 @@ export default function Account() {
     () => SERVER_NAVIGATION_HREF,
   );
   const navigation = readNavigation(href);
-  const { ready: navigationReady, returnTo, workspace } = navigation;
+  const {
+    ready: navigationReady,
+    resumeInvitation,
+    returnTo,
+    workspace,
+  } = navigation;
+  const invitationReturn = isInvitationReturnTo(returnTo);
 
   useEffect(() => {
     if (!navigationReady) return;
     let active = true;
+    if (invitationReturn && !rememberInvitationReturnTo(returnTo)) {
+      queueMicrotask(() => {
+        if (active) {
+          setMessage(
+            "This browser could not retain the invitation across sign-in. Sign in in another tab, then return to the invitation page.",
+          );
+        }
+      });
+    }
     void fetchAccount().then(({ accessSignedIn, account }) => {
       if (!active) return;
       setUser(account.user);
       setConfigured(account.configured);
       setProviders(account.providers ?? []);
+      if (account.user) broadcastAccountChange();
+      const invitationDestination = resumeInvitation
+        ? takeInvitationReturnTo()
+        : invitationReturn
+          ? returnTo
+          : null;
+      if (account.user && invitationDestination) {
+        setMessage("Signed in. Returning to the invitation.");
+        location.replace(invitationDestination);
+        return;
+      }
       if (accessSignedIn) {
         setMessage("Signed in. Returning to your workspace so its backup can start.");
         location.replace(returnTo);
         return;
+      }
+      if (account.user && resumeInvitation) {
+        setMessage(
+          "The invitation could not be recovered in this tab. Open the original invitation URL again.",
+        );
       }
       setLoaded(true);
     }).catch((error) => {
@@ -195,78 +261,12 @@ export default function Account() {
     return () => {
       active = false;
     };
-  }, [navigationReady, returnTo]);
-
-  const createGuestLink = async () => {
-    setGuestLink(null);
-    setMessage("");
-    if (!workspace) {
-      setMessage("Open Account from a workspace before creating a guest link.");
-      return;
-    }
-    setCreatingGuest(true);
-    try {
-      const response = await fetch("/api/admin/guest-links", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          hours: 24,
-          returnTo,
-          role: "editor",
-          workspaceId: workspace,
-        }),
-      });
-      const body = await readResponse<GuestResponse>(
-        response,
-        "Could not create a guest link",
-      );
-      if (!body.url || !body.expiresAt) {
-        throw new Error(
-          "Could not create a guest link: the server did not return the link",
-        );
-      }
-      setGuestLink({ expiresAt: body.expiresAt, url: body.url });
-      setMessage("Guest link created. It can be used once during the next 24 hours.");
-    } catch (error) {
-      setMessage(actionError(error, "Could not create a guest link"));
-    } finally {
-      setCreatingGuest(false);
-    }
-  };
-
-  const copyGuestLink = async () => {
-    if (!guestLink) {
-      setMessage("Create a guest link before copying it.");
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(guestLink.url);
-      setMessage("Guest link copied.");
-    } catch {
-      setMessage("Could not copy automatically. Select the link below and copy it.");
-    }
-  };
-
-  const shareGuestLink = async () => {
-    if (!guestLink) {
-      setMessage("Create a guest link before sharing it.");
-      return;
-    }
-    setMessage("");
-    try {
-      await navigator.share({
-        text: "Open this shared Stowplan workspace",
-        title: "Stowplan guest access",
-        url: guestLink.url,
-      });
-      setMessage("Guest link shared.");
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") {
-        return;
-      }
-      setMessage("Could not open the share sheet. Copy the guest link instead.");
-    }
-  };
+  }, [
+    invitationReturn,
+    navigationReady,
+    resumeInvitation,
+    returnTo,
+  ]);
 
   const signOut = async () => {
     setMessage("");
@@ -277,6 +277,8 @@ export default function Account() {
         setMessage(body?.error ?? "Could not sign out");
         return;
       }
+      await clearActiveServerWorkspaceCatalogAccount().catch(() => undefined);
+      broadcastAccountChange();
       if (providers.includes("cloudflare-access")) {
         location.assign(ACCESS_LOGOUT_PATH);
         return;
@@ -302,12 +304,19 @@ export default function Account() {
         response,
         "Development sign-in failed",
       );
-      location.href = returnTo;
+      broadcastAccountChange();
+      location.href = resumeInvitation
+        ? takeInvitationReturnTo() ?? DEFAULT_RETURN_TO
+        : returnTo;
     } catch (error) {
       setMessage(actionError(error, "Development sign-in failed"));
     }
   };
-  const oauthReturn = encodeURIComponent(returnTo);
+  const oauthReturn = encodeURIComponent(
+    invitationReturn || resumeInvitation
+      ? INVITATION_OAUTH_RESUME_PATH
+      : returnTo,
+  );
 
   return <main className="onboarding account">
     <section>
@@ -325,30 +334,16 @@ export default function Account() {
                 </span>
               </p>
               <section className={styles.guestPanel}>
-                <h2>Invite a collaborator</h2>
-                <p>Create a one-time editor link that opens this exact workspace view. The link expires after 24 hours.</p>
-                <button
-                  className="primary"
-                  disabled={!workspace || creatingGuest}
-                  onClick={() => void createGuestLink()}
-                >
-                  <Link2 />
-                  {creatingGuest ? "Creating guest link..." : "Create guest link"}
-                </button>
-                {!workspace && <small>Return to a workspace and open Account from Settings to create an invite.</small>}
-                {guestLink && <div className={styles.guestResult}>
-                  <label>
-                    One-time guest link
-                    <input readOnly value={guestLink.url} onFocus={(event) => event.currentTarget.select()} />
-                  </label>
-                  <small>Expires {new Date(guestLink.expiresAt).toLocaleString()}</small>
-                  <div className={styles.guestActions}>
-                    <button onClick={() => void copyGuestLink()}><Copy /> Copy</button>
-                    {typeof navigator !== "undefined" && typeof navigator.share === "function" &&
-                      <button onClick={() => void shareGuestLink()}><Share2 /> Share</button>}
-                    <a href={guestLink.url} target="_blank" rel="noreferrer"><ExternalLink /> Open</a>
-                  </div>
-                </div>}
+                <h2>Workspace collaboration</h2>
+                <p>Member roles, invite-link enrollment expiry and revocation, leaving, and server deletion are managed from the workspace access page.</p>
+                {workspace
+                  ? <Link href={workspacePath({
+                      view: "access",
+                      workspaceId: workspace,
+                    })}>
+                      Manage workspace access
+                    </Link>
+                  : <small>Open Account from a workspace to reach its access page.</small>}
               </section>
               <div className={styles.accountActions}>
                 <button onClick={() => void signOut()}><LogOut /> Sign out</button>
@@ -372,7 +367,7 @@ export default function Account() {
                 <a className="auth-button" href={`/api/auth/github/start?returnTo=${oauthReturn}`}>Continue with GitHub</a>}
               {configured && !providers.length &&
                 <p className="muted">The database is ready, but no sign-in provider is enabled. Local development sign-in requires <code>AUTH_DEV_ENABLED=true</code>; it creates a session immediately and never sends an email code.</p>}
-              <p className="muted">Cloudflare Access can sign you in automatically when enabled by the operator. Guest links are one-time and short-lived.</p>
+              <p className="muted">Cloudflare Access can sign you in automatically when enabled by the operator. Invite URLs expire and can be redeemed once; the resulting workspace membership remains until the member leaves or is removed.</p>
             </>}
       {message && <output aria-live="polite">{message}</output>}
       <Link href={returnTo}>Back to Stowplan</Link>

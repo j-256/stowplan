@@ -142,10 +142,16 @@ export function createItem(
 export function createEnvelope<T extends Command>(
     state: WorkspaceState,
     command: T,
-    options: Partial<Pick<CommandEnvelope<T>, "actorId" | "deviceId" | "id" | "timestamp">> = {},
+    options: Partial<Pick<
+        CommandEnvelope<T>,
+        "actorId" | "authorization" | "deviceId" | "id" | "timestamp"
+    >> = {},
 ): CommandEnvelope<T> {
     return {
         actorId: options.actorId ?? "local-user",
+        ...(options.authorization
+            ? { authorization: { ...options.authorization } }
+            : {}),
         baseRevision: state.workspace.revision,
         command,
         deviceId: options.deviceId ?? "local-device",

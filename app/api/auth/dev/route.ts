@@ -4,6 +4,7 @@ import {
   issueSession,
   sessionCookie,
 } from "../../../../src/server/auth";
+import { privateJson } from "../../../../src/server/api-problem";
 import {
   CONTROL_REQUEST_MAX_BYTES,
   readJsonRequest,
@@ -11,34 +12,88 @@ import {
 } from "../../../../src/server/request-body";
 import { runtimeEnv } from "../../../../src/server/runtime";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" &&
+    !Array.isArray(value);
+}
+
 export async function POST(request: Request) {
   try {
     if (!isTrustedMutation(request)) {
-      return Response.json(
-        { error: "Cross-origin mutation denied" },
+      return privateJson(
+        {
+          code: "CROSS_ORIGIN_DENIED",
+          error: "Cross-origin mutation denied",
+        },
         { status: 403 },
       );
     }
     const env = await runtimeEnv();
     if (!env.DB) {
-      return Response.json(
-        { error: "Database is not configured" },
+      return privateJson(
+        {
+          code: "STORAGE_UNAVAILABLE",
+          error: "Database is not configured",
+        },
         { status: 503 },
       );
     }
     if (env.AUTH_DEV_ENABLED !== "true") {
-      return Response.json(
-        { error: "Development authentication is disabled" },
+      return privateJson(
+        {
+          code: "AUTHENTICATION_UNAVAILABLE",
+          error: "Development authentication is disabled",
+        },
         { status: 404 },
       );
     }
-    const body = await readJsonRequest<{
-      email?: string;
-      name?: string;
-    }>(request, CONTROL_REQUEST_MAX_BYTES);
-    const email = body.email?.trim().toLowerCase();
+    const contentType = request.headers.get("content-type") ?? "";
+    if (!contentType.toLowerCase().startsWith("application/json")) {
+      return privateJson(
+        {
+          code: "INVALID_REQUEST",
+          error: "Content-Type must be application/json",
+        },
+        { status: 415 },
+      );
+    }
+    const body = await readJsonRequest<unknown>(
+      request,
+      CONTROL_REQUEST_MAX_BYTES,
+    );
+    if (!isRecord(body)) {
+      return privateJson(
+        {
+          code: "INVALID_REQUEST",
+          error: "The development sign-in request must be a JSON object",
+        },
+        { status: 400 },
+      );
+    }
+    if (
+      typeof body.email !== "string" ||
+      (
+        body.name !== undefined &&
+        typeof body.name !== "string"
+      )
+    ) {
+      return privateJson(
+        {
+          code: "INVALID_REQUEST",
+          error: "Development sign-in fields are invalid",
+        },
+        { status: 400 },
+      );
+    }
+    const email = body.email.trim().toLowerCase();
     if (!email) {
-      return Response.json({ error: "Email is required" }, { status: 400 });
+      return privateJson(
+        {
+          code: "INVALID_REQUEST",
+          error: "Email is required",
+        },
+        { status: 400 },
+      );
     }
     const user = await createOrLinkUser(
       env.DB,
@@ -51,27 +106,39 @@ export async function POST(request: Request) {
       },
     );
     const session = await issueSession(env.DB, env, user, request);
-    return Response.json(
+    return privateJson(
       { user },
       {
         headers: {
-          "cache-control": "no-store",
           "set-cookie": sessionCookie(session.raw, session.maxAge),
         },
       },
     );
   } catch (error) {
-    return Response.json(
+    if (error instanceof RequestBodyTooLargeError) {
+      return privateJson(
+        {
+          code: "BODY_TOO_LARGE",
+          error: error.message,
+        },
+        { status: error.status },
+      );
+    }
+    if (error instanceof SyntaxError) {
+      return privateJson(
+        {
+          code: "INVALID_REQUEST",
+          error: "The development sign-in JSON body is invalid",
+        },
+        { status: 400 },
+      );
+    }
+    return privateJson(
       {
-        error: error instanceof Error
-          ? error.message
-          : "Development sign-in failed",
+        code: "AUTHENTICATION_FAILED",
+        error: "Development sign-in could not be completed",
       },
-      {
-        status: error instanceof RequestBodyTooLargeError
-          ? error.status
-          : 400,
-      },
+      { status: 500 },
     );
   }
 }

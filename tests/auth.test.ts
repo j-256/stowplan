@@ -11,6 +11,7 @@ import {
   consumeGuestLink,
   createGuestLink,
   createOrLinkUser,
+  InvitationError,
   isTrustedMutation,
   issueSession,
   revokeCurrentSession,
@@ -120,8 +121,10 @@ describe("authentication",()=>{
       { ip_prefix: "192.0.2.0/24" },
     ]);
   });
-  it("stores an anonymous IPv4 prefix for guest sessions", async () => {
-    const { database: db, sqlite } = numberedMigrationDatabase();
+  it("accepts an invite with D1 trigger-inclusive change metadata", async () => {
+    const { database: db, sqlite } = numberedMigrationDatabase({
+      triggerInclusiveChanges: true,
+    });
     const state = createEmptyState("Guest prefix");
     await new D1SnapshotStore(db).initialize(state);
     const owner = await createOrLinkUser(db, {}, {
@@ -129,6 +132,12 @@ describe("authentication",()=>{
       subject: "guest-prefix-owner",
       email: "guest-prefix-owner@example.com",
       displayName: "Owner",
+    });
+    const recipient = await createOrLinkUser(db, {}, {
+      provider: "test",
+      subject: "guest-prefix-recipient",
+      email: "guest-prefix-recipient@example.com",
+      displayName: "Recipient",
     });
     await claimWorkspace(db, owner.userId, state.workspace.id);
     const link = await createGuestLink(
@@ -140,19 +149,25 @@ describe("authentication",()=>{
     );
     await consumeGuestLink(
       db,
-      {},
       link.raw,
-      new Request("https://example.test", {
-        headers: { "cf-connecting-ip": "203.0.113.42" },
-      }),
+      recipient.userId,
     );
 
     expect(sqlite.prepare(
-      `SELECT sessions.ip_prefix
-       FROM sessions
-       JOIN identities ON identities.user_id = sessions.user_id
-       WHERE identities.provider = 'guest'`,
-    ).get()).toEqual({ ip_prefix: "203.0.113.0/24" });
+      `SELECT role
+       FROM workspace_members
+       WHERE workspace_id=? AND user_id=?`,
+    ).get(state.workspace.id, recipient.userId)).toEqual({
+      role: "viewer",
+    });
+    expect(sqlite.prepare(
+      `SELECT actor_user_id,target_id
+       FROM auth_audit_events
+       WHERE action='member.invite.accept'`,
+    ).get()).toEqual({
+      actor_user_id: recipient.userId,
+      target_id: recipient.userId,
+    });
   });
   it("rolls back a guest link when its audit insert fails", async () => {
     const { database: db, sqlite } = numberedMigrationDatabase();
@@ -187,8 +202,332 @@ describe("authentication",()=>{
       "SELECT COUNT(*) AS count FROM auth_audit_events",
     ).get()).toEqual({ count: 0 });
   });
-  it("atomically consumes a guest link once and creates a short session",async()=>{const db=database(),env={};const state=createEmptyState("Guest test");await new D1SnapshotStore(db).initialize(state);const owner=await createOrLinkUser(db,env,{provider:"test",subject:"owner",email:"owner@example.com",displayName:"Owner"});await claimWorkspace(db,owner.userId,state.workspace.id);const link=await createGuestLink(db,state.workspace.id,owner.userId,"editor",1);const results=await Promise.allSettled([consumeGuestLink(db,env,link.raw,new Request("https://example.test")),consumeGuestLink(db,env,link.raw,new Request("https://example.test"))]);expect(results.filter((result)=>result.status==="fulfilled")).toHaveLength(1);expect(results.filter((result)=>result.status==="rejected")).toHaveLength(1);const fulfilled=results.find((result)=>result.status==="fulfilled");expect(fulfilled?.status==="fulfilled"&&fulfilled.value.workspaceId).toBe(state.workspace.id)});
-  it("rolls back the guest claim when identity creation fails", async () => {
+  it("requires an active workspace owner and strictly validates link expiry", async () => {
+    const { database: db, sqlite } = numberedMigrationDatabase();
+    const state = createEmptyState("Owner-only guest links");
+    await new D1SnapshotStore(db).initialize(state);
+    const owner = await createOrLinkUser(db, {}, {
+      displayName: "Owner",
+      email: "owner-only@example.com",
+      provider: "test",
+      subject: "owner-only",
+    });
+    const editor = await createOrLinkUser(db, {}, {
+      displayName: "Editor",
+      email: "editor-only@example.com",
+      provider: "test",
+      subject: "editor-only",
+    });
+    const viewer = await createOrLinkUser(db, {}, {
+      displayName: "Viewer",
+      email: "viewer-only@example.com",
+      provider: "test",
+      subject: "viewer-only",
+    });
+    const admin = await createOrLinkUser(
+      db,
+      { AUTH_ADMIN_EMAILS: "global-admin@example.com" },
+      {
+        displayName: "Global admin",
+        email: "global-admin@example.com",
+        provider: "test",
+        subject: "global-admin-only",
+      },
+    );
+    await claimWorkspace(db, owner.userId, state.workspace.id);
+    const createdAt = "2026-07-24T00:00:00.000Z";
+    sqlite.prepare(
+      `INSERT INTO workspace_members(
+         workspace_id,user_id,role,created_at
+       ) VALUES(?,?,?,?)`,
+    ).run(state.workspace.id, editor.userId, "editor", createdAt);
+    sqlite.prepare(
+      `INSERT INTO workspace_members(
+         workspace_id,user_id,role,created_at
+       ) VALUES(?,?,?,?)`,
+    ).run(state.workspace.id, viewer.userId, "viewer", createdAt);
+
+    for (const unauthorized of [editor, viewer, admin]) {
+      await expect(createGuestLink(
+        db,
+        state.workspace.id,
+        unauthorized.userId,
+        "viewer",
+      )).rejects.toMatchObject({
+        status: 403,
+      } satisfies Partial<AuthorizationError>);
+    }
+    for (const hours of [0, 169, 1.5]) {
+      await expect(createGuestLink(
+        db,
+        state.workspace.id,
+        owner.userId,
+        "viewer",
+        hours,
+      )).rejects.toThrow(/integer from 1 through 168 hours/);
+    }
+    expect(sqlite.prepare(
+      "SELECT COUNT(*) AS count FROM guest_links",
+    ).get()).toEqual({ count: 0 });
+    expect(sqlite.prepare(
+      "SELECT COUNT(*) AS count FROM auth_audit_events",
+    ).get()).toEqual({ count: 0 });
+  });
+  it("advances access and membership revisions during guest redemption", async () => {
+    const { database: db, sqlite } = numberedMigrationDatabase();
+    const state = createEmptyState("Guest redemption revisions");
+    await new D1SnapshotStore(db).initialize(state);
+    const owner = await createOrLinkUser(db, {}, {
+      displayName: "Owner",
+      email: "guest-revision-owner@example.com",
+      provider: "test",
+      subject: "guest-revision-owner",
+    });
+    const recipient = await createOrLinkUser(db, {}, {
+      displayName: "Recipient",
+      email: "guest-revision-recipient@example.com",
+      provider: "test",
+      subject: "guest-revision-recipient",
+    });
+    await claimWorkspace(db, owner.userId, state.workspace.id);
+    expect(sqlite.prepare(
+      `SELECT access_revision
+       FROM workspace_snapshots
+       WHERE workspace_id=?`,
+    ).get(state.workspace.id)).toEqual({ access_revision: 1 });
+
+    const link = await createGuestLink(
+      db,
+      state.workspace.id,
+      owner.userId,
+      "viewer",
+      1,
+    );
+    expect(sqlite.prepare(
+      `SELECT access_revision
+       FROM workspace_snapshots
+       WHERE workspace_id=?`,
+    ).get(state.workspace.id)).toEqual({ access_revision: 2 });
+
+    await consumeGuestLink(
+      db,
+      link.raw,
+      recipient.userId,
+    );
+    expect(sqlite.prepare(
+      `SELECT access_revision
+       FROM workspace_snapshots
+       WHERE workspace_id=?`,
+    ).get(state.workspace.id)).toEqual({ access_revision: 4 });
+    expect(sqlite.prepare(
+      `SELECT membership_revision
+       FROM users
+       WHERE user_id=?`,
+    ).get(recipient.userId)).toEqual({ membership_revision: 1 });
+    expect(sqlite.prepare(
+      `SELECT detail_json
+       FROM auth_audit_events
+       WHERE action='guest.create'`,
+    ).get()).toEqual({
+      detail_json: JSON.stringify({
+        expiresAt: link.expiresAt,
+        role: "viewer",
+        workspaceId: state.workspace.id,
+      }),
+    });
+    expect(sqlite.prepare(
+      `SELECT actor_user_id,target_id,detail_json
+       FROM auth_audit_events
+       WHERE action='member.invite.accept'`,
+    ).get()).toEqual({
+      actor_user_id: recipient.userId,
+      target_id: recipient.userId,
+      detail_json: JSON.stringify({
+        guestLinkId: link.id,
+        role: "viewer",
+        workspaceId: state.workspace.id,
+      }),
+    });
+  });
+  it("does not redeem or recreate access through a deletion tombstone", async () => {
+    const { database: db, sqlite } = numberedMigrationDatabase();
+    const state = createEmptyState("Deleted guest workspace");
+    await new D1SnapshotStore(db).initialize(state);
+    const owner = await createOrLinkUser(db, {}, {
+      displayName: "Owner",
+      email: "deleted-guest-owner@example.com",
+      provider: "test",
+      subject: "deleted-guest-owner",
+    });
+    const recipient = await createOrLinkUser(db, {}, {
+      displayName: "Recipient",
+      email: "deleted-guest-recipient@example.com",
+      provider: "test",
+      subject: "deleted-guest-recipient",
+    });
+    await claimWorkspace(db, owner.userId, state.workspace.id);
+    const link = await createGuestLink(
+      db,
+      state.workspace.id,
+      owner.userId,
+      "viewer",
+      1,
+    );
+    const snapshot = sqlite.prepare(
+      `SELECT access_revision,revision
+       FROM workspace_snapshots
+       WHERE workspace_id=?`,
+    ).get(state.workspace.id) as {
+      access_revision: number;
+      revision: number;
+    };
+    sqlite.prepare(
+      `INSERT INTO workspace_deletions(
+         workspace_id,deletion_id,deleted_at,deleted_by_user_id,
+         final_snapshot_revision,final_access_revision
+       ) VALUES(?,?,?,?,?,?)`,
+    ).run(
+      state.workspace.id,
+      "deletion_guest_test",
+      "2026-07-24T00:00:00.000Z",
+      owner.userId,
+      snapshot.revision,
+      snapshot.access_revision,
+    );
+
+    await expect(consumeGuestLink(
+      db,
+      link.raw,
+      recipient.userId,
+    )).rejects.toThrow(/invalid, expired, used, or revoked/);
+    await expect(createGuestLink(
+      db,
+      state.workspace.id,
+      owner.userId,
+      "viewer",
+    )).rejects.toMatchObject({
+      status: 403,
+    } satisfies Partial<AuthorizationError>);
+    expect(sqlite.prepare(
+      `SELECT consumed_at,redemption_id
+       FROM guest_links
+       WHERE guest_link_id=?`,
+    ).get(link.id)).toEqual({
+      consumed_at: null,
+      redemption_id: null,
+    });
+    expect(sqlite.prepare(
+      "SELECT COUNT(*) AS count FROM identities WHERE provider='guest'",
+    ).get()).toEqual({ count: 0 });
+  });
+  it("reports an invitation refusal when deletion removes a link during enrollment", async () => {
+    const { database: db, sqlite } = numberedMigrationDatabase();
+    const state = createEmptyState("Invite deletion race");
+    await new D1SnapshotStore(db).initialize(state);
+    const owner = await createOrLinkUser(db, {}, {
+      displayName: "Owner",
+      email: "invite-race-owner@example.com",
+      provider: "test",
+      subject: "invite-race-owner",
+    });
+    const recipient = await createOrLinkUser(db, {}, {
+      displayName: "Recipient",
+      email: "invite-race-recipient@example.com",
+      provider: "test",
+      subject: "invite-race-recipient",
+    });
+    await claimWorkspace(db, owner.userId, state.workspace.id);
+    const link = await createGuestLink(
+      db,
+      state.workspace.id,
+      owner.userId,
+      "viewer",
+      1,
+    );
+    let raced = false;
+    const racingDatabase = {
+      prepare: db.prepare.bind(db),
+      async batch(statements: Parameters<typeof db.batch>[0]) {
+        if (!raced && statements.length === 4) {
+          raced = true;
+          sqlite.prepare(
+            "DELETE FROM guest_links WHERE guest_link_id=?",
+          ).run(link.id);
+        }
+        return db.batch(statements);
+      },
+    };
+
+    const error = await consumeGuestLink(
+      racingDatabase,
+      link.raw,
+      recipient.userId,
+    ).then(() => null, (failure: unknown) => failure);
+
+    expect(error).toBeInstanceOf(InvitationError);
+    expect(error).toMatchObject({
+      message: "Invite link is invalid, expired, used, or revoked",
+      status: 409,
+    });
+    expect(error).not.toBeInstanceOf(AuthorizationError);
+    expect(sqlite.prepare(
+      `SELECT COUNT(*) AS count
+       FROM workspace_members
+       WHERE workspace_id=? AND user_id=?`,
+    ).get(state.workspace.id, recipient.userId)).toEqual({ count: 0 });
+  });
+  it("atomically enrolls one signed-in account with an invite", async () => {
+    const { database: db, sqlite } = numberedMigrationDatabase();
+    const state = createEmptyState("Invite concurrency");
+    await new D1SnapshotStore(db).initialize(state);
+    const owner = await createOrLinkUser(db, {}, {
+      displayName: "Owner",
+      email: "invite-owner@example.com",
+      provider: "test",
+      subject: "invite-owner",
+    });
+    const first = await createOrLinkUser(db, {}, {
+      displayName: "First recipient",
+      email: "invite-first@example.com",
+      provider: "test",
+      subject: "invite-first",
+    });
+    const second = await createOrLinkUser(db, {}, {
+      displayName: "Second recipient",
+      email: "invite-second@example.com",
+      provider: "test",
+      subject: "invite-second",
+    });
+    await claimWorkspace(db, owner.userId, state.workspace.id);
+    const link = await createGuestLink(
+      db,
+      state.workspace.id,
+      owner.userId,
+      "editor",
+      1,
+    );
+
+    const results = await Promise.allSettled([
+      consumeGuestLink(db, link.raw, first.userId),
+      consumeGuestLink(db, link.raw, second.userId),
+    ]);
+
+    expect(results.filter((result) => result.status === "fulfilled"))
+      .toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected"))
+      .toHaveLength(1);
+    expect(sqlite.prepare(
+      `SELECT COUNT(*) AS count
+       FROM workspace_members
+       WHERE workspace_id=? AND role='editor'`,
+    ).get(state.workspace.id)).toEqual({ count: 1 });
+    expect(sqlite.prepare(
+      `SELECT COUNT(*) AS count
+       FROM auth_audit_events
+       WHERE action='member.invite.accept'`,
+    ).get()).toEqual({ count: 1 });
+  });
+  it("rolls back invite enrollment when its audit insert fails", async () => {
     const { database: db, sqlite } = numberedMigrationDatabase();
     const state = createEmptyState("Guest rollback");
     await new D1SnapshotStore(db).initialize(state);
@@ -197,6 +536,12 @@ describe("authentication",()=>{
       subject: "rollback-owner",
       email: "rollback-owner@example.com",
       displayName: "Owner",
+    });
+    const recipient = await createOrLinkUser(db, {}, {
+      provider: "test",
+      subject: "rollback-recipient",
+      email: "rollback-recipient@example.com",
+      displayName: "Recipient",
     });
     await claimWorkspace(db, owner.userId, state.workspace.id);
     const link = await createGuestLink(
@@ -207,20 +552,19 @@ describe("authentication",()=>{
       1,
     );
     sqlite.exec(`
-      CREATE TRIGGER fail_guest_identity
-      BEFORE INSERT ON identities
-      WHEN NEW.provider = 'guest'
+      CREATE TRIGGER fail_invite_accept_audit
+      BEFORE INSERT ON auth_audit_events
+      WHEN NEW.action = 'member.invite.accept'
       BEGIN
-        SELECT RAISE(ABORT, 'injected guest identity failure');
+        SELECT RAISE(ABORT, 'injected invite audit failure');
       END
     `);
 
     await expect(consumeGuestLink(
       db,
-      {},
       link.raw,
-      new Request("https://example.test"),
-    )).rejects.toThrow(/injected guest identity failure/);
+      recipient.userId,
+    )).rejects.toThrow(/injected invite audit failure/);
     expect(sqlite.prepare(
       `SELECT consumed_at, redemption_id
        FROM guest_links
@@ -230,21 +574,24 @@ describe("authentication",()=>{
       redemption_id: null,
     });
     expect(sqlite.prepare(
-      "SELECT COUNT(*) AS count FROM identities WHERE provider = 'guest'",
-    ).get()).toEqual({ count: 0 });
+      `SELECT COUNT(*) AS count
+       FROM workspace_members
+       WHERE workspace_id=? AND user_id=?`,
+    ).get(state.workspace.id, recipient.userId)).toEqual({ count: 0 });
     expect(sqlite.prepare(
-      "SELECT COUNT(*) AS count FROM users WHERE email LIKE 'guest+%'",
+      `SELECT COUNT(*) AS count
+       FROM auth_audit_events
+       WHERE action='member.invite.accept'`,
     ).get()).toEqual({ count: 0 });
 
-    sqlite.exec("DROP TRIGGER fail_guest_identity");
+    sqlite.exec("DROP TRIGGER fail_invite_accept_audit");
     await expect(consumeGuestLink(
       db,
-      {},
       link.raw,
-      new Request("https://example.test"),
+      recipient.userId,
     )).resolves.toMatchObject({ workspaceId: state.workspace.id });
   });
-  it("bounds retained auth cleanup and preserves reachable guests", async () => {
+  it("bounds retained auth cleanup without expiring accepted membership", async () => {
     const { database: db, sqlite } = numberedMigrationDatabase();
     const state = createEmptyState("Cleanup");
     await new D1SnapshotStore(db).initialize(state);
@@ -346,8 +693,8 @@ describe("authentication",()=>{
 
     await expect(cleanupAuthRecords(db, now)).resolves.toEqual({
       guestLinks: AUTH_CLEANUP_BATCH_SIZE,
-      guestMemberships: 1,
-      guestUsers: 1,
+      guestMemberships: 0,
+      guestUsers: 0,
       oauthStates: AUTH_CLEANUP_BATCH_SIZE,
       sessions: AUTH_CLEANUP_BATCH_SIZE,
     });
@@ -362,7 +709,7 @@ describe("authentication",()=>{
     ).get()).toEqual({ count: 1 });
     expect(sqlite.prepare(
       "SELECT user_id FROM users WHERE user_id = 'usr_unreachable'",
-    ).get()).toBeUndefined();
+    ).get()).toEqual({ user_id: "usr_unreachable" });
     expect(sqlite.prepare(
       "SELECT user_id FROM users WHERE user_id = 'usr_reachable'",
     ).get()).toEqual({ user_id: "usr_reachable" });
@@ -378,7 +725,99 @@ describe("authentication",()=>{
       "SELECT COUNT(*) AS count FROM guest_links",
     ).get()).toEqual({ count: 0 });
   });
-  it("preserves guest link creators until their expired links are removed", async () => {
+  it("retains legacy accepted guest memberships regardless of session age", async () => {
+    const { database: db, sqlite } = numberedMigrationDatabase();
+    const shared = createEmptyState("Cleanup revisions");
+    const guestOwned = createEmptyState("Guest final owner");
+    await new D1SnapshotStore(db).initialize(shared);
+    await new D1SnapshotStore(db).initialize(guestOwned);
+    const owner = await createOrLinkUser(db, {}, {
+      displayName: "Owner",
+      email: "cleanup-revision-owner@example.com",
+      provider: "test",
+      subject: "cleanup-revision-owner",
+    });
+    await claimWorkspace(db, owner.userId, shared.workspace.id);
+    const createdAt = "2026-07-24T00:00:00.000Z";
+    for (const guest of [
+      {
+        role: "viewer",
+        userId: "usr_cleanup_viewer",
+        workspaceId: shared.workspace.id,
+      },
+      {
+        role: "owner",
+        userId: "usr_cleanup_final_owner",
+        workspaceId: guestOwned.workspace.id,
+      },
+    ]) {
+      const email = `${guest.userId}@stowplan.invalid`;
+      sqlite.prepare(
+        `INSERT INTO users(
+           user_id,email,display_name,global_role,status,created_at,updated_at,
+           last_seen_at
+         ) VALUES(?,?,'Guest','user','active',?,?,?)`,
+      ).run(guest.userId, email, createdAt, createdAt, createdAt);
+      sqlite.prepare(
+        `INSERT INTO identities(
+           identity_id,user_id,provider,provider_subject,email,created_at,
+           last_used_at
+         ) VALUES(?,?,'guest',?,?,?,?)`,
+      ).run(
+        `idn_${guest.userId}`,
+        guest.userId,
+        `subject_${guest.userId}`,
+        email,
+        createdAt,
+        createdAt,
+      );
+      sqlite.prepare(
+        `INSERT INTO workspace_members(
+           workspace_id,user_id,role,created_at
+         ) VALUES(?,?,?,?)`,
+      ).run(
+        guest.workspaceId,
+        guest.userId,
+        guest.role,
+        createdAt,
+      );
+    }
+
+    await expect(cleanupAuthRecords(
+      db,
+      new Date("2030-01-01T00:00:00.000Z"),
+    )).resolves.toMatchObject({
+      guestMemberships: 0,
+      guestUsers: 0,
+    });
+    expect(sqlite.prepare(
+      `SELECT access_revision
+       FROM workspace_snapshots
+       WHERE workspace_id=?`,
+    ).get(shared.workspace.id)).toEqual({ access_revision: 2 });
+    expect(sqlite.prepare(
+      `SELECT role
+       FROM workspace_members
+       WHERE workspace_id=? AND user_id=?`,
+    ).get(
+      shared.workspace.id,
+      "usr_cleanup_viewer",
+    )).toEqual({ role: "viewer" });
+    expect(sqlite.prepare(
+      `SELECT role
+       FROM workspace_members
+       WHERE workspace_id=? AND user_id=?`,
+    ).get(
+      guestOwned.workspace.id,
+      "usr_cleanup_final_owner",
+    )).toEqual({ role: "owner" });
+    expect(sqlite.prepare(
+      `SELECT access_revision
+       FROM workspace_snapshots
+       WHERE workspace_id=?`,
+    ).get(guestOwned.workspace.id)).toEqual({ access_revision: 1 });
+  });
+  it("preserves durable invite membership after retained links expire", async () => {
     const { database: db, sqlite } = numberedMigrationDatabase();
     const state = createEmptyState("Guest creator cleanup");
     await new D1SnapshotStore(db).initialize(state);
@@ -387,6 +826,12 @@ describe("authentication",()=>{
       subject: "guest-creator-owner",
       email: "guest-creator-owner@example.com",
       displayName: "Owner",
+    });
+    const recipient = await createOrLinkUser(db, {}, {
+      provider: "test",
+      subject: "guest-creator-recipient",
+      email: "guest-creator-recipient@example.com",
+      displayName: "Recipient",
     });
     await claimWorkspace(db, owner.userId, state.workspace.id);
     const invitation = await createGuestLink(
@@ -398,17 +843,18 @@ describe("authentication",()=>{
     );
     await consumeGuestLink(
       db,
-      {},
       invitation.raw,
-      new Request("https://example.test"),
+      recipient.userId,
     );
-    const guest = sqlite.prepare(
-      "SELECT user_id FROM identities WHERE provider = 'guest'",
-    ).get() as { user_id: string };
+    sqlite.prepare(
+      `UPDATE workspace_members
+       SET role='owner'
+       WHERE workspace_id=? AND user_id=?`,
+    ).run(state.workspace.id, recipient.userId);
     await createGuestLink(
       db,
       state.workspace.id,
-      guest.user_id,
+      recipient.userId,
       "viewer",
       1,
     );
@@ -416,23 +862,28 @@ describe("authentication",()=>{
     const cleanupTime = new Date("2030-01-01T00:00:00.000Z");
     await expect(cleanupAuthRecords(db, cleanupTime)).resolves.toMatchObject({
       guestLinks: 2,
-      guestMemberships: 1,
+      guestMemberships: 0,
       guestUsers: 0,
-      sessions: 1,
+      sessions: 0,
     });
     expect(sqlite.prepare(
       "SELECT user_id FROM users WHERE user_id = ?",
-    ).get(guest.user_id)).toEqual({ user_id: guest.user_id });
+    ).get(recipient.userId)).toEqual({ user_id: recipient.userId });
+    expect(sqlite.prepare(
+      `SELECT role
+       FROM workspace_members
+       WHERE workspace_id=? AND user_id=?`,
+    ).get(state.workspace.id, recipient.userId)).toEqual({
+      role: "owner",
+    });
     expect(sqlite.prepare(
       "SELECT COUNT(*) AS count FROM guest_links",
     ).get()).toEqual({ count: 0 });
 
     await expect(cleanupAuthRecords(db, cleanupTime)).resolves.toMatchObject({
-      guestUsers: 1,
+      guestMemberships: 0,
+      guestUsers: 0,
     });
-    expect(sqlite.prepare(
-      "SELECT user_id FROM users WHERE user_id = ?",
-    ).get(guest.user_id)).toBeUndefined();
   });
   it("limits the workspaces owned by one account", async () => {
     const { database: db, sqlite } = numberedMigrationDatabase();
@@ -621,13 +1072,26 @@ describe("authentication",()=>{
       createGuestLink(db, state.workspace.id, owner.userId, "viewer"),
       createGuestLink(db, state.workspace.id, owner.userId, "viewer"),
     ]);
+    const recipients = await Promise.all([
+      createOrLinkUser(db, {}, {
+        displayName: "First quota recipient",
+        email: "first-quota-recipient@example.com",
+        provider: "test",
+        subject: "first-quota-recipient",
+      }),
+      createOrLinkUser(db, {}, {
+        displayName: "Second quota recipient",
+        email: "second-quota-recipient@example.com",
+        provider: "test",
+        subject: "second-quota-recipient",
+      }),
+    ]);
 
-    const results = await Promise.allSettled(links.map((link) =>
+    const results = await Promise.allSettled(links.map((link, index) =>
       consumeGuestLink(
         db,
-        {},
         link.raw,
-        new Request("https://example.test"),
+        recipients[index].userId,
       )
     ));
 
@@ -657,5 +1121,5 @@ describe("authentication",()=>{
     ).get(state.workspace.id)).toEqual({ count: 1 });
   });
   it("optionally requires a matching Cloudflare Access assertion for admin",async()=>{const db=database(),baseEnv={AUTH_ADMIN_EMAILS:"owner@example.com"};const user=await createOrLinkUser(db,baseEnv,{provider:"test",subject:"owner",email:"owner@example.com",displayName:"Owner"});const session=await issueSession(db,baseEnv,user,new Request("https://example.test"));const request=new Request("https://example.test/admin",{headers:{cookie:`stowplan_session=${session.raw}`}});expect((await authorizeAdmin(db,baseEnv,request)).userId).toBe(user.userId);await expect(authorizeAdmin(db,{...baseEnv,AUTH_ADMIN_REQUIRE_ACCESS:"true"},request)).rejects.toMatchObject({status:403} satisfies Partial<AuthorizationError>)});
-  it("rejects cross-origin browser mutations while supporting trusted proxy origins",()=>{expect(isTrustedMutation(new Request("https://example.test/api/sync",{method:"POST"}))).toBe(true);expect(isTrustedMutation(new Request("https://example.test/api/sync",{method:"POST",headers:{origin:"https://evil.test"}}))).toBe(false);expect(isTrustedMutation(new Request("http://internal:3000/api/sync",{method:"POST",headers:{origin:"https://stowplan.example","x-forwarded-host":"stowplan.example","x-forwarded-proto":"https"}}))).toBe(true);expect(isTrustedMutation(new Request("http://internal:3000/api/sync",{method:"POST",headers:{origin:"https://stowplan.example"}}),"https://stowplan.example")).toBe(true)});
+  it("rejects cross-origin browser mutations while supporting trusted proxy origins",()=>{expect(isTrustedMutation(new Request("https://example.test/api/sync",{method:"POST"}))).toBe(true);expect(isTrustedMutation(new Request("https://example.test/api/sync",{method:"POST",headers:{"sec-fetch-mode":"cors","sec-fetch-site":"same-origin"}}))).toBe(false);expect(isTrustedMutation(new Request("https://example.test/api/sync",{method:"POST",headers:{origin:"https://example.test","sec-fetch-site":"cross-site"}}))).toBe(false);expect(isTrustedMutation(new Request("https://example.test/api/sync",{method:"POST",headers:{origin:"https://evil.test"}}))).toBe(false);expect(isTrustedMutation(new Request("http://internal:3000/api/sync",{method:"POST",headers:{origin:"https://stowplan.example","x-forwarded-host":"stowplan.example","x-forwarded-proto":"https"}}))).toBe(true);expect(isTrustedMutation(new Request("http://internal:3000/api/sync",{method:"POST",headers:{origin:"https://stowplan.example"}}),"https://stowplan.example")).toBe(true)});
 });

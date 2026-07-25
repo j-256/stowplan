@@ -6,7 +6,9 @@ export interface SnapshotStore {
         expectedRevision: number,
         state: WorkspaceState,
     ): Promise<boolean>;
-    initialize(state: WorkspaceState): Promise<"created" | "exists">;
+    initialize(
+        state: WorkspaceState,
+    ): Promise<"created" | "deleted" | "exists">;
     load(workspaceId: string): Promise<WorkspaceState | null>;
     replace(
         workspaceId: string,
@@ -35,7 +37,9 @@ export class MemorySnapshotStore implements SnapshotStore {
         return true;
     }
 
-    async initialize(state: WorkspaceState): Promise<"created" | "exists"> {
+    async initialize(
+        state: WorkspaceState,
+    ): Promise<"created" | "deleted" | "exists"> {
         if (this.states.has(state.workspace.id)) return "exists";
         this.states.set(state.workspace.id, structuredClone(state));
         return "created";

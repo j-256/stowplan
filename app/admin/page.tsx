@@ -14,6 +14,11 @@ import {
   API_QUOTAS,
   type ApiQuotaName,
 } from "../../src/shared/api-quotas";
+import {
+  ACCOUNT_CONTEXT_HEADER,
+  accountContextHeaders,
+  responseMatchesAccount,
+} from "../../src/shared/account-context";
 
 type Row = Record<string, unknown>;
 
@@ -22,8 +27,26 @@ interface ListInfo {
   limit: number;
 }
 
+interface InventoryMetric {
+  kind: "bytes" | "count" | "date" | "text";
+  label: string;
+  value: number | string | null;
+}
+
+interface InventoryEntry {
+  key: string;
+  label: string;
+  metrics: InventoryMetric[];
+  rowCount: number;
+  table: string;
+}
+
 interface Overview {
   audit: Row[];
+  databaseInventory?: {
+    entries: InventoryEntry[];
+    generatedAt: string;
+  };
   guestLinks: Row[];
   identities: Row[];
   limits?: Record<ApiQuotaName, number>;
@@ -66,6 +89,25 @@ function formatBytes(value: unknown): string {
   if (bytes < 1_000) return `${bytes} B`;
   if (bytes < 1_000_000) return `${(bytes / 1_000).toFixed(1)} kB`;
   return `${(bytes / 1_000_000).toFixed(2)} MB`;
+}
+
+function formatInventoryMetric(metric: InventoryMetric): string {
+  let value: string;
+  switch (metric.kind) {
+    case "bytes":
+      value = formatBytes(metric.value);
+      break;
+    case "count":
+      value = numberValue(metric.value).toLocaleString();
+      break;
+    case "date":
+      value = metric.value ? formatDate(metric.value) : "None";
+      break;
+    case "text":
+      value = stringValue(metric.value) || "Unknown";
+      break;
+  }
+  return `${metric.label}: ${value}`;
 }
 
 function resultCount(
@@ -117,6 +159,7 @@ export default function AdminPage() {
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
   const [pendingAction, setPendingAction] = useState("");
+  const accountId = useRef<string | null>(null);
   const loadRequest = useRef(0);
   const load = useCallback(async (search = "") => {
     const requestId = loadRequest.current + 1;
@@ -126,9 +169,15 @@ export default function AdminPage() {
       const params = new URLSearchParams();
       if (search) params.set("q", search);
       const suffix = params.size ? `?${params.toString()}` : "";
+      const expectedAccountId = accountId.current;
       const response = await fetch(
         `/api/admin/overview${suffix}`,
-        { cache: "no-store" },
+        {
+          cache: "no-store",
+          headers: expectedAccountId
+            ? accountContextHeaders(expectedAccountId)
+            : undefined,
+        },
       );
       const body = await response.json().catch(() => null) as
         | (Overview & { error?: string })
@@ -138,6 +187,21 @@ export default function AdminPage() {
           body?.error ?? `Could not load admin data (${response.status})`,
         );
       }
+      const responseAccountId = response.headers.get(
+        ACCOUNT_CONTEXT_HEADER,
+      );
+      if (
+        !responseAccountId ||
+        (
+          expectedAccountId &&
+          !responseMatchesAccount(response, expectedAccountId)
+        )
+      ) {
+        throw new Error(
+          "The signed-in account changed; reload the admin page",
+        );
+      }
+      accountId.current = responseAccountId;
       if (!body) throw new Error("Could not read the admin response");
       if (requestId !== loadRequest.current) return false;
       setData(body);
@@ -170,9 +234,17 @@ export default function AdminPage() {
     setNotice("");
     setPendingAction(actionKey);
     try {
+      const expectedAccountId = accountId.current;
+      if (!expectedAccountId) {
+        throw new Error(
+          "Administrative account context is not ready; reload the page",
+        );
+      }
       const response = await fetch("/api/admin/mutate", {
         body: JSON.stringify({ action, targetId, value }),
-        headers: { "content-type": "application/json" },
+        headers: accountContextHeaders(expectedAccountId, {
+          "content-type": "application/json",
+        }),
         method: "POST",
       });
       const body = await response.json().catch(() => null) as {
@@ -182,6 +254,11 @@ export default function AdminPage() {
       if (!response.ok) {
         throw new Error(
           body?.error ?? `Admin mutation failed (${response.status})`,
+        );
+      }
+      if (!responseMatchesAccount(response, expectedAccountId)) {
+        throw new Error(
+          "The signed-in account changed; the administrative change was not accepted",
         );
       }
       const refreshed = await load(query);
@@ -212,6 +289,7 @@ export default function AdminPage() {
     }
   };
   const limits = data?.limits ?? API_QUOTAS;
+  const inventoryEntries = data?.databaseInventory?.entries ?? [];
   const workspaces = data?.workspaces ?? [];
 
   return <main className="admin-page">
@@ -281,8 +359,8 @@ export default function AdminPage() {
         <div className="admin-quota-grid">
           <span><strong>{limits.ownedWorkspacesPerUser}</strong><small>owned workspaces per account</small></span>
           <span><strong>{limits.membersPerWorkspace}</strong><small>members per workspace</small></span>
-          <span><strong>{limits.activeGuestLinksPerWorkspace}</strong><small>active links per workspace</small></span>
-          <span><strong>{limits.retainedGuestLinksPerWorkspace}</strong><small>retained links per workspace</small></span>
+          <span><strong>{limits.activeGuestLinksPerWorkspace}</strong><small>active invite links per workspace</small></span>
+          <span><strong>{limits.retainedGuestLinksPerWorkspace}</strong><small>retained invite links per workspace</small></span>
           <span><strong>{limits.locationsPerSnapshot}</strong><small>spaces per workspace</small></span>
           <span><strong>{limits.itemsPerSnapshot}</strong><small>items per workspace</small></span>
           <span><strong>{limits.plansPerSnapshot}</strong><small>plans per workspace</small></span>
@@ -293,6 +371,32 @@ export default function AdminPage() {
           <span><strong>{limits.commandReceiptsPerSnapshot}</strong><small>compacted command receipts per workspace</small></span>
           <span><strong>{formatBytes(limits.storedSnapshotBytes)}</strong><small>stored snapshot per workspace</small></span>
         </div>
+      </section>
+      <section aria-labelledby="database-inventory-heading">
+        <h2 id="database-inventory-heading">
+          Database inventory <small>{inventoryEntries.length}</small>
+        </h2>
+        <p className="admin-list-note">
+          Bounded aggregate metadata for durable application tables. Workspace contents, raw invite URLs, authentication secrets, and provider assertions are not included.
+        </p>
+        <div className="admin-table admin-workspaces">
+          {inventoryEntries.map(entry => <div key={entry.key}>
+            <span>
+              <strong>{entry.label}</strong>
+              <small>{entry.table}</small>
+              {entry.metrics.length > 0 && <small>
+                {entry.metrics.map(formatInventoryMetric).join(" · ")}
+              </small>}
+            </span>
+            <b>{entry.rowCount.toLocaleString()} rows</b>
+          </div>)}
+          {!inventoryEntries.length && <p className="admin-empty">
+            Database inventory is unavailable
+          </p>}
+        </div>
+        {data.databaseInventory?.generatedAt && <small>
+          Generated {formatDate(data.databaseInventory.generatedAt)}
+        </small>}
       </section>
       <section>
         <h2>
@@ -365,9 +469,9 @@ export default function AdminPage() {
                 }>
                   {memberCount}/{limits.membersPerWorkspace} members
                   {" · "}
-                  {activeLinkCount}/{limits.activeGuestLinksPerWorkspace} active links
+                  {activeLinkCount}/{limits.activeGuestLinksPerWorkspace} active invite links
                   {" · "}
-                  {retainedLinkCount}/{limits.retainedGuestLinksPerWorkspace} retained
+                  {retainedLinkCount}/{limits.retainedGuestLinksPerWorkspace} retained invite links
                   {" · "}
                   {formatBytes(snapshotBytes)}/{formatBytes(limits.storedSnapshotBytes)}
                 </small>
@@ -583,7 +687,7 @@ export default function AdminPage() {
       </section>
       <section>
         <h2>
-          Guest links <small>{resultCount(
+          Single-use enrollment links <small>{resultCount(
             data.guestLinks,
             data.listInfo?.guestLinks,
           )}</small>
@@ -612,7 +716,7 @@ export default function AdminPage() {
               </button>
             </div>;
           })}
-          {!data.guestLinks.length && <p className="admin-empty">No matching guest links</p>}
+          {!data.guestLinks.length && <p className="admin-empty">No matching enrollment links</p>}
         </div>
       </section>
       <section>

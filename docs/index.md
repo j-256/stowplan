@@ -17,6 +17,8 @@ features:
     details: Label a container, enter quantity + unit + item, add nested containers in place, and jump to the next uncounted space.
   - title: Keep working through outages
     details: Every command commits to IndexedDB first. Server backup is delayed, batched, idempotent, and never required for continued organizing.
+  - title: Find every shared workspace
+    details: Sign in on a fresh device to discover authorized server workspaces, see honest device and backup state, and collaborate according to your workspace role.
   - title: Make explainable moves
     details: Plans consider suitability, capacity, grouping, access, distance, and whole-container moves. Every completed change is reversible.
 ---

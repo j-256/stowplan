@@ -15,9 +15,9 @@ The distinction between *uncounted* and *known empty* matters: plans must never 
 
 ## Link to a workspace view
 
-An open workspace uses a path that starts with `/workspaces/READABLE-NAME@WORKSPACE-ID` and ends in `/capture`, `/spaces`, `/inventory`, `/plan`, `/activity`, or `/settings`. Capture and Spaces include the selected space, while Inventory includes a container filter or open item editor. Reloading the page or using browser back and forward restores that context.
+An open workspace uses a path that starts with `/workspaces/READABLE-NAME@WORKSPACE-ID` and ends in `/capture`, `/spaces`, `/inventory`, `/plan`, `/activity`, `/settings`, or `/access`. Capture and Spaces include the selected space, while Inventory includes a container filter or open item editor. Reloading the page or using browser back and forward restores that context.
 
-Choose **Share this view** to use the device share sheet or copy the exact address. Anyone who already has access to the workspace can open that address on another device; Stowplan asks them to sign in when necessary and returns them to the same view. To grant short guest access, open **Settings → Sign in, sync, or create a guest link to this view** and send the one-time confirmation URL. Workspace URLs pair readable workspace, space, and item slugs with stable record IDs, so links remain understandable without breaking when something is renamed. Searches and unsaved form text stay out of the URL.
+Choose **Share this view** to use the device share sheet or copy the exact address. Anyone who already has access to the workspace can open that address on another device; Stowplan asks them to sign in when necessary and returns them to the same view. To enroll a new member as an owner, open **Workspace access**, choose the viewer or editor role and invitation expiry, and send the single-use confirmation URL. The recipient signs in, confirms once before expiry, and then uses the ordinary workspace URL. The resulting account membership remains until the member leaves or is removed. Workspace URLs pair readable workspace, space, and item slugs with stable record IDs, so links remain understandable without breaking when something is renamed. Searches and unsaved form text stay out of the URL.
 
 ## A practical coding scheme
 
@@ -31,8 +31,10 @@ Press **Command-K** on macOS or **Control-K** elsewhere to search workspace view
 
 ## Return to the main menu
 
-Choose the house icon in the page header, or open **Settings → Open workspace menu**. The home screen lists every workspace stored on this device. Each card shows the last local edit, the last successful online backup, pending and blocked counts, and the actual changes waiting to upload. From there you can continue, switch, start another workspace, or open the kitchen demo.
+Choose the house icon in the page header, or open **Settings → Workspaces and backup status**. The home screen merges workspaces stored on this device with every authorized server workspace discovered after sign-in. Matching stable workspace IDs produce one card, never duplicate device and server cards. A fresh signed-in browser can find a shared workspace without a saved deep link.
 
-**Remove from this device** is deliberately literal. If a server copy exists, it remains available to reopen; the confirmation names the last backup. If the workspace was never backed up, the confirmation warns that the device holds the only copy. Any unsynced changes are counted before removal.
+Each card shows the workspace role when server-backed, the last local edit, the last successful online backup, pending and blocked counts, and clear device and server state. From there you can search, continue, switch, start another workspace, open the kitchen demo, load more authorized server results, or open **Workspace access**. Downloading a server-only workspace validates and saves a new local replica before activation without removing any other replica.
+
+**Remove from this device** is deliberately literal. It never deletes the server copy or changes membership. If the workspace was never backed up, the confirmation warns that the device holds the only copy. Pending and blocked changes are counted before removal. Leaving a shared workspace and deleting its server copy are different guarded actions. See [Workspaces and collaboration](/guide/collaboration).
 
 When the kitchen demo is active, the main menu also shows **Reset kitchen demo**. Reset requires confirmation, discards only that demo's changes and queued backup commands, and creates a fresh demo. It does not touch any other workspace on the device.

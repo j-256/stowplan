@@ -25,5 +25,15 @@ export default defineConfig({
     { name:"tablet-landscape", use:{ ...devices["iPad Mini landscape"], browserName:"chromium" } },
     { name:"desktop-compact", use:{ ...devices["Desktop Chrome"], viewport:{ width:1024, height:700 } } },
     { name:"desktop-chromium", use:{ ...devices["Desktop Chrome"], viewport:{ width:1440, height:900 } } },
+    {
+      name: "webkit-phone",
+      testMatch: /safe-beta\.spec\.ts/,
+      use: { ...devices["iPhone 15"] },
+    },
+    {
+      name: "webkit-tablet-landscape",
+      testMatch: /safe-beta\.spec\.ts/,
+      use: { ...devices["iPad Mini landscape"] },
+    },
   ],
 });

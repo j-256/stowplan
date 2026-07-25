@@ -1,0 +1,254 @@
+.hub {
+  margin: 0 auto;
+  max-width: 92rem;
+  min-height: 100dvh;
+  padding:
+    max(1rem, env(safe-area-inset-top))
+    max(1rem, env(safe-area-inset-right))
+    max(2rem, env(safe-area-inset-bottom))
+    max(1rem, env(safe-area-inset-left));
+}
+
+.hub > header {
+  align-items: start;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+}
+
+.hub > header p:not(.eyebrow) {
+  color: var(--muted);
+  line-height: 1.6;
+  max-width: 48rem;
+}
+
+.headerActions,
+.actions,
+.dialogActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.headerActions {
+  justify-content: flex-end;
+}
+
+.alert,
+.notice {
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+  display: block;
+  margin: 1rem 0;
+  padding: 0.85rem 1rem;
+}
+
+.alert {
+  background: var(--danger-bg);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.notice {
+  background: var(--sage2);
+}
+
+.toolbar {
+  align-items: end;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: minmax(14rem, 1fr) minmax(20rem, 1.4fr) auto;
+  margin: 1.25rem 0;
+  padding: 1rem;
+}
+
+.toolbar label,
+.toolbar form {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.toolbar label span {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.toolbar input {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+  min-height: 44px;
+  min-width: 0;
+  padding: 0.65rem;
+  width: 100%;
+}
+
+.toolbar form {
+  align-items: end;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.cards {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 21rem), 1fr));
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 1rem;
+}
+
+.card > header {
+  align-items: start;
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+}
+
+.card > header span {
+  min-width: 0;
+}
+
+.card h2,
+.card small,
+.cardError {
+  overflow-wrap: anywhere;
+}
+
+.card h2 {
+  margin-bottom: 0.25rem;
+}
+
+.card > header b {
+  background: var(--sage2);
+  border-radius: 99px;
+  flex: none;
+  font-size: 0.7rem;
+  padding: 0.4rem 0.6rem;
+  text-transform: capitalize;
+}
+
+.state {
+  border-left: 4px solid var(--line);
+  margin: 0.8rem 0;
+  padding: 0.45rem 0.65rem;
+}
+
+.state[data-state="blocked"],
+.state[data-state="unavailable"] {
+  border-left-color: var(--danger);
+}
+
+.state[data-state="pending-upload"],
+.state[data-state="locally-newer"],
+.state[data-state="server-newer"],
+.state[data-state="offline"] {
+  border-left-color: var(--warning);
+}
+
+.state[data-state="synchronized"] {
+  border-left-color: var(--sage);
+}
+
+.card dl {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+}
+
+.card dl div {
+  background: var(--bg);
+  border-radius: 0.6rem;
+  min-width: 0;
+  padding: 0.6rem;
+}
+
+.card dt {
+  color: var(--muted);
+  font-size: 0.67rem;
+}
+
+.card dd {
+  margin: 0.2rem 0 0;
+  overflow-wrap: anywhere;
+}
+
+.cardError {
+  color: var(--danger);
+  font-size: 0.8rem;
+}
+
+.actions {
+  align-items: stretch;
+  margin-top: auto;
+  padding-top: 1rem;
+}
+
+.actions > * {
+  flex: 1 1 9rem;
+  justify-content: center;
+  text-align: center;
+}
+
+.empty {
+  color: var(--muted);
+  grid-column: 1 / -1;
+  padding: 3rem 1rem;
+  text-align: center;
+}
+
+.more {
+  align-items: center;
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  margin: 1.5rem 0;
+}
+
+.more p {
+  margin: 0;
+}
+
+.dialogActions {
+  justify-content: flex-end;
+}
+
+@media (max-width: 760px) {
+  .hub > header {
+    flex-direction: column;
+  }
+
+  .headerActions {
+    display: grid;
+    width: 100%;
+  }
+
+  .toolbar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .toolbar form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dialogActions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dialogActions button {
+    width: 100%;
+  }
+}

@@ -7,12 +7,95 @@ import {
     type ActivityRecord,
     type AuditEvent,
 } from "../src/domain";
+import type {
+    SnapshotAuthorizationExpectation,
+    WorkspaceAuthorizationState,
+} from "../src/adapters/d1-snapshot-store";
+import type { WorkspaceRole } from "../src/domain/workspace-access";
+import type { WorkspaceState } from "../src/domain/types";
 import {
     MemorySnapshotStore,
     synchronize,
+    WorkspaceSyncAuthorizationError,
 } from "../src/server";
 import { serializedJsonBytes } from "../src/server/quotas";
 import { API_QUOTAS } from "../src/shared/api-quotas";
+
+class AuthorizedMemorySnapshotStore extends MemorySnapshotStore {
+    authorization: WorkspaceAuthorizationState;
+    beforeAuthorizedSwap?: () => void;
+
+    constructor(
+        state: WorkspaceState,
+        role: WorkspaceRole | null = "editor",
+    ) {
+        super([state]);
+        this.authorization = {
+            accessRevision: 7,
+            active: true,
+            deleted: false,
+            membershipRevision: 11,
+            role,
+        };
+    }
+
+    async loadAuthorization() {
+        return structuredClone(this.authorization);
+    }
+
+    async loadAuthorized(workspaceId: string) {
+        const state = await this.load(workspaceId);
+        const authorization = this.authorization;
+        if (
+            !state ||
+            !authorization.active ||
+            authorization.deleted ||
+            !authorization.role ||
+            authorization.accessRevision === null
+        ) {
+            return null;
+        }
+        return {
+            accessRevision: authorization.accessRevision,
+            membershipRevision: authorization.membershipRevision,
+            role: authorization.role,
+            state,
+        };
+    }
+
+    async compareAndSwapAuthorized(
+        workspaceId: string,
+        expectedRevision: number,
+        state: WorkspaceState,
+        expected: SnapshotAuthorizationExpectation,
+    ) {
+        const beforeSwap = this.beforeAuthorizedSwap;
+        this.beforeAuthorizedSwap = undefined;
+        beforeSwap?.();
+        const authorization = this.authorization;
+        const roleAccepted = expected.requiredRole === "owner"
+            ? authorization.role === "owner"
+            : authorization.role === "owner" ||
+                authorization.role === "editor";
+        const basisAccepted =
+            authorization.membershipRevision ===
+                expected.membershipRevision ||
+            authorization.accessRevision === expected.accessRevision;
+        if (
+            !authorization.active ||
+            authorization.deleted ||
+            !roleAccepted ||
+            !basisAccepted
+        ) {
+            return false;
+        }
+        return this.compareAndSwap(
+            workspaceId,
+            expectedRevision,
+            state,
+        );
+    }
+}
 
 function editableDemoState() {
     const state = createDemoState();
@@ -47,6 +130,236 @@ function retainedAudit(index: number, activityId: string): AuditEvent {
 }
 
 describe("synchronization", () => {
+    it("rejects viewer commands before applying workspace state", async () => {
+        const initial = editableDemoState();
+        const store = new AuthorizedMemorySnapshotStore(
+            initial,
+            "viewer",
+        );
+        const command = createEnvelope(
+            initial,
+            {
+                changes: { quantity: 10 },
+                id: "item_pasta",
+                type: "item.update",
+            },
+            { id: "cmd_viewer_write" },
+        );
+
+        let refusal: WorkspaceSyncAuthorizationError | null = null;
+        try {
+            await synchronize(
+                store,
+                initial.workspace.id,
+                [command],
+                {
+                    authorization: {
+                        basis: {
+                            membershipRevision: 11,
+                            workspaceAccessRevision: 7,
+                        },
+                        userId: "usr_viewer",
+                    },
+                },
+            );
+        } catch (error) {
+            if (error instanceof WorkspaceSyncAuthorizationError) {
+                refusal = error;
+            } else {
+                throw error;
+            }
+        }
+
+        expect(refusal).toMatchObject({
+            authorization: {
+                role: "viewer",
+            },
+            failure: "write",
+            receipts: [{
+                commandId: "cmd_viewer_write",
+                status: "rejected",
+            }],
+        });
+        expect(
+            (await store.load(initial.workspace.id))?.items.find(
+                item => item.id === "item_pasta",
+            )?.quantity,
+        ).toBe(6);
+    });
+
+    it("rechecks a role downgrade at the final authorized swap", async () => {
+        const initial = editableDemoState();
+        const store = new AuthorizedMemorySnapshotStore(initial);
+        const command = createEnvelope(
+            initial,
+            {
+                changes: { quantity: 10 },
+                id: "item_pasta",
+                type: "item.update",
+            },
+            { id: "cmd_downgrade_race" },
+        );
+        store.beforeAuthorizedSwap = () => {
+            store.authorization = {
+                accessRevision: 8,
+                active: true,
+                deleted: false,
+                membershipRevision: 12,
+                role: "viewer",
+            };
+        };
+
+        let refusal: WorkspaceSyncAuthorizationError | null = null;
+        try {
+            await synchronize(
+                store,
+                initial.workspace.id,
+                [command],
+                {
+                    authorization: {
+                        basis: {
+                            membershipRevision: 11,
+                            workspaceAccessRevision: 7,
+                        },
+                        userId: "usr_editor",
+                    },
+                },
+            );
+        } catch (error) {
+            if (error instanceof WorkspaceSyncAuthorizationError) {
+                refusal = error;
+            } else {
+                throw error;
+            }
+        }
+
+        expect(refusal).toMatchObject({
+            authorization: {
+                accessRevision: 8,
+                membershipRevision: 12,
+                role: "viewer",
+            },
+            failure: "write",
+            receipts: [{
+                commandId: "cmd_downgrade_race",
+                message: expect.stringContaining("Viewer"),
+                revision: initial.workspace.revision,
+                status: "rejected",
+            }],
+        });
+        expect(
+            (await store.load(initial.workspace.id))?.items.find(
+                item => item.id === "item_pasta",
+            )?.quantity,
+        ).toBe(6);
+    });
+
+    it("accepts authorization when either paired counter still matches", async () => {
+        const membershipChanged = editableDemoState();
+        const membershipStore = new AuthorizedMemorySnapshotStore(
+            membershipChanged,
+        );
+        membershipStore.authorization.membershipRevision = 12;
+        const membershipResult = await synchronize(
+            membershipStore,
+            membershipChanged.workspace.id,
+            [
+                createEnvelope(
+                    membershipChanged,
+                    {
+                        changes: { notes: "Membership counter changed" },
+                        id: "item_pasta",
+                        type: "item.update",
+                    },
+                    { id: "cmd_membership_counter" },
+                ),
+            ],
+            {
+                authorization: {
+                    basis: {
+                        membershipRevision: 11,
+                        workspaceAccessRevision: 7,
+                    },
+                    userId: "usr_editor",
+                },
+            },
+        );
+        expect(membershipResult.receipts[0]?.status).toBe("applied");
+
+        const accessChanged = editableDemoState();
+        const accessStore = new AuthorizedMemorySnapshotStore(
+            accessChanged,
+        );
+        accessStore.authorization.accessRevision = 8;
+        const accessResult = await synchronize(
+            accessStore,
+            accessChanged.workspace.id,
+            [
+                createEnvelope(
+                    accessChanged,
+                    {
+                        changes: { notes: "Access counter changed" },
+                        id: "item_pasta",
+                        type: "item.update",
+                    },
+                    { id: "cmd_access_counter" },
+                ),
+            ],
+            {
+                authorization: {
+                    basis: {
+                        membershipRevision: 11,
+                        workspaceAccessRevision: 7,
+                    },
+                    userId: "usr_editor",
+                },
+            },
+        );
+        expect(accessResult.receipts[0]?.status).toBe("applied");
+    });
+
+    it("rejects stale commands when both paired counters changed", async () => {
+        const initial = editableDemoState();
+        const store = new AuthorizedMemorySnapshotStore(initial);
+        store.authorization.accessRevision = 8;
+        store.authorization.membershipRevision = 12;
+        const command = createEnvelope(
+            initial,
+            {
+                changes: { notes: "Stale edit" },
+                id: "item_pasta",
+                type: "item.update",
+            },
+            { id: "cmd_stale_access" },
+        );
+
+        await expect(synchronize(
+            store,
+            initial.workspace.id,
+            [command],
+            {
+                authorization: {
+                    basis: {
+                        membershipRevision: 11,
+                        workspaceAccessRevision: 7,
+                    },
+                    userId: "usr_editor",
+                },
+            },
+        )).rejects.toMatchObject({
+            failure: "stale",
+            receipts: [{
+                commandId: "cmd_stale_access",
+                status: "rejected",
+            }],
+        });
+        expect(
+            (await store.load(initial.workspace.id))?.items.find(
+                item => item.id === "item_pasta",
+            )?.notes,
+        ).toBe("");
+    });
+
     it("deduplicates retries by command id", async () => {
         const initial = editableDemoState();
         const store = new MemorySnapshotStore([initial]);

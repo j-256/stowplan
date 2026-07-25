@@ -1,4 +1,6 @@
 export const CONTROL_REQUEST_MAX_BYTES = 256 * 1024;
+export const INVITATION_REQUEST_MAX_BYTES = 4 * 1024;
+export const WORKSPACE_ACCESS_REQUEST_MAX_BYTES = 32 * 1024;
 export const SNAPSHOT_REQUEST_MAX_BYTES = 8 * 1024 * 1024;
 export const SYNC_REQUEST_MAX_BYTES = 8 * 1024 * 1024;
 
@@ -18,10 +20,10 @@ function declaredLength(request: Request): number | null {
   return Number.isSafeInteger(length) ? length : null;
 }
 
-export async function readJsonRequest<T>(
+export async function readTextRequest(
   request: Request,
   maximumBytes: number,
-): Promise<T> {
+): Promise<string> {
   const length = declaredLength(request);
   if (length !== null && length > maximumBytes) {
     throw new RequestBodyTooLargeError(maximumBytes);
@@ -54,11 +56,17 @@ export async function readJsonRequest<T>(
     offset += chunk.byteLength;
   }
 
-  let text: string;
   try {
-    text = new TextDecoder("utf-8", { fatal: true }).decode(body);
+    return new TextDecoder("utf-8", { fatal: true }).decode(body);
   } catch {
     throw new SyntaxError("Request body is not valid UTF-8");
   }
+}
+
+export async function readJsonRequest<T>(
+  request: Request,
+  maximumBytes: number,
+): Promise<T> {
+  const text = await readTextRequest(request, maximumBytes);
   return JSON.parse(text) as T;
 }
