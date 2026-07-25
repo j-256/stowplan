@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
+import { GUEST_LINK_EXPIRY_HOURS } from "../src/shared/quotas.js";
 
 const origin = "http://127.0.0.1:3000";
 const workspaceId = `ws_next_d1_smoke_${process.pid}`;
@@ -201,7 +202,10 @@ try {
   const ownerAccess = await ownerAccessResponse.json();
   assert.equal(ownerAccess.access.role, "owner");
   assert.equal(ownerAccess.access.capabilities.delete, true);
-  assert.equal(ownerAccess.guestLinkPolicy.maximumExpiryHours, 168);
+  assert.equal(
+    ownerAccess.guestLinkPolicy.maximumExpiryHours,
+    GUEST_LINK_EXPIRY_HOURS.maximum,
+  );
 
   const inviteLink = await fetch(
     `${origin}/api/workspaces/${encodeURIComponent(discoveredWorkspace.id)}/guest-links`,

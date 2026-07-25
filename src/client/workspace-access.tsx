@@ -14,13 +14,10 @@ import {
   type WorkspaceCapabilities,
   type WorkspaceRole,
 } from "../domain/workspace-access";
+import { GUEST_LINK_EXPIRY_HOURS } from "../shared/api-quotas";
 import { ModalDialog } from "./modal-dialog";
 import styles from "./workspace-access.module.css";
 
-export const GUEST_LINK_MINIMUM_EXPIRY_HOURS = 1;
-export const GUEST_LINK_MAXIMUM_EXPIRY_HOURS = 168;
-
-const DEFAULT_GUEST_LINK_EXPIRY_HOURS = 24;
 const MEMBER_ROLES = Object.freeze([
   "viewer",
   "editor",
@@ -338,8 +335,8 @@ function errorMessage(error: unknown, fallback: string): string {
 
 export function validGuestLinkExpiry(value: number): boolean {
   return Number.isSafeInteger(value) &&
-    value >= GUEST_LINK_MINIMUM_EXPIRY_HOURS &&
-    value <= GUEST_LINK_MAXIMUM_EXPIRY_HOURS;
+    value >= GUEST_LINK_EXPIRY_HOURS.minimum &&
+    value <= GUEST_LINK_EXPIRY_HOURS.maximum;
 }
 
 export function matchesWorkspaceDeletionConfirmation(
@@ -501,7 +498,7 @@ function WorkspaceAccessContent({
     useState<GuestLinkStatusFilter>(null);
   const [guestRole, setGuestRole] = useState<GuestLinkRole>("viewer");
   const [guestExpiry, setGuestExpiry] = useState(
-    String(DEFAULT_GUEST_LINK_EXPIRY_HOURS),
+    String(GUEST_LINK_EXPIRY_HOURS.default),
   );
   const [pendingRoleChange, setPendingRoleChange] =
     useState<PendingRoleChange | null>(null);
@@ -583,9 +580,9 @@ function WorkspaceAccessContent({
     !terminalKind;
   const policyMatchesServerContract =
     data.guestLinkPolicy.minimumExpiryHours ===
-      GUEST_LINK_MINIMUM_EXPIRY_HOURS &&
+      GUEST_LINK_EXPIRY_HOURS.minimum &&
     data.guestLinkPolicy.maximumExpiryHours ===
-      GUEST_LINK_MAXIMUM_EXPIRY_HOURS &&
+      GUEST_LINK_EXPIRY_HOURS.maximum &&
     GUEST_LINK_ROLES.every((role) =>
       data.guestLinkPolicy.roles.includes(role)
     );
@@ -779,7 +776,7 @@ function WorkspaceAccessContent({
     }
     if (!validGuestLinkExpiry(expiresInHours)) {
       setFeedback({
-        message: `Expiry must be a whole number from ${GUEST_LINK_MINIMUM_EXPIRY_HOURS} through ${GUEST_LINK_MAXIMUM_EXPIRY_HOURS} hours`,
+        message: `Expiry must be a whole number from ${GUEST_LINK_EXPIRY_HOURS.minimum} through ${GUEST_LINK_EXPIRY_HOURS.maximum} hours`,
         tone: "error",
       });
       return;
@@ -1279,7 +1276,7 @@ function WorkspaceAccessContent({
 
             {!policyMatchesServerContract &&
               <p className={styles.alert} role="alert">
-                Invite-link creation is disabled because the server did not report the supported 1 through 168 hour policy.
+                Invite-link creation is disabled because the server did not report the supported {GUEST_LINK_EXPIRY_HOURS.minimum} through {GUEST_LINK_EXPIRY_HOURS.maximum} hour policy.
               </p>}
 
             <form className={styles.guestForm} onSubmit={createGuestLink}>
@@ -1303,8 +1300,8 @@ function WorkspaceAccessContent({
                 <span>Invitation expires after hours</span>
                 <input
                   inputMode="numeric"
-                  max={GUEST_LINK_MAXIMUM_EXPIRY_HOURS}
-                  min={GUEST_LINK_MINIMUM_EXPIRY_HOURS}
+                  max={GUEST_LINK_EXPIRY_HOURS.maximum}
+                  min={GUEST_LINK_EXPIRY_HOURS.minimum}
                   onChange={(event) =>
                     setGuestExpiry(event.currentTarget.value)}
                   required
@@ -1312,7 +1309,7 @@ function WorkspaceAccessContent({
                   type="number"
                   value={guestExpiry}
                 />
-                <small>Choose a whole number from 1 through 168. Expiry controls enrollment, not the resulting membership duration.</small>
+                <small>Choose a whole number from {GUEST_LINK_EXPIRY_HOURS.minimum} through {GUEST_LINK_EXPIRY_HOURS.maximum}. Expiry controls enrollment, not the resulting membership duration.</small>
               </label>
               <button
                 className="primary"

@@ -11,7 +11,10 @@ import {
   type WorkspaceRole,
 } from "../domain/workspace-access";
 import { newId, nowIso } from "../domain/factories";
-import { API_QUOTAS } from "../shared/api-quotas";
+import {
+  API_QUOTAS,
+  GUEST_LINK_EXPIRY_HOURS,
+} from "../shared/api-quotas";
 import {
   authenticate,
   isTrustedMutation,
@@ -39,8 +42,6 @@ const DEFAULT_PAGE_LIMIT = 25;
 const MAXIMUM_PAGE_LIMIT = 50;
 const MAXIMUM_QUERY_LENGTH = 120;
 const MAXIMUM_CURSOR_LENGTH = 2_048;
-const GUEST_LINK_MINIMUM_HOURS = 1;
-const GUEST_LINK_MAXIMUM_HOURS = 168;
 const MAXIMUM_SAFE_REVISION = Number.MAX_SAFE_INTEGER;
 
 const GUEST_LINK_ROLES = Object.freeze([
@@ -885,12 +886,12 @@ function parseCreateGuestLink(value: unknown): CreateGuestLinkInput {
   if (
     typeof expiresInHours !== "number" ||
     !Number.isSafeInteger(expiresInHours) ||
-    expiresInHours < GUEST_LINK_MINIMUM_HOURS ||
-    expiresInHours > GUEST_LINK_MAXIMUM_HOURS
+    expiresInHours < GUEST_LINK_EXPIRY_HOURS.minimum ||
+    expiresInHours > GUEST_LINK_EXPIRY_HOURS.maximum
   ) {
     throw new ApiProblem(
       "INVALID_REQUEST",
-      `expiresInHours must be an integer from ${GUEST_LINK_MINIMUM_HOURS} through ${GUEST_LINK_MAXIMUM_HOURS}`,
+      `expiresInHours must be an integer from ${GUEST_LINK_EXPIRY_HOURS.minimum} through ${GUEST_LINK_EXPIRY_HOURS.maximum}`,
       400,
     );
   }
@@ -1206,8 +1207,8 @@ export async function getWorkspaceAccess(
   const response: Record<string, unknown> = {
     access: accessFromContext(context),
     guestLinkPolicy: {
-      maximumExpiryHours: GUEST_LINK_MAXIMUM_HOURS,
-      minimumExpiryHours: GUEST_LINK_MINIMUM_HOURS,
+      maximumExpiryHours: GUEST_LINK_EXPIRY_HOURS.maximum,
+      minimumExpiryHours: GUEST_LINK_EXPIRY_HOURS.minimum,
       roles: [...GUEST_LINK_ROLES],
     },
     workspace: summaryFromRow(context),

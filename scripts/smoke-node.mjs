@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
+import { GUEST_LINK_EXPIRY_HOURS } from "../src/shared/quotas.js";
 
 const MigrationStream = Object.freeze({
   NUMBERED: "numbered",
@@ -360,7 +361,10 @@ try {
   assert.equal(ownerAccess.access.role, "owner");
   assert.equal(ownerAccess.access.capabilities.delete, true);
   assert.equal(ownerAccess.access.capabilities.manageAccess, true);
-  assert.equal(ownerAccess.guestLinkPolicy.minimumExpiryHours, 1);
+  assert.equal(
+    ownerAccess.guestLinkPolicy.minimumExpiryHours,
+    GUEST_LINK_EXPIRY_HOURS.minimum,
+  );
 
   const admin = await fetch(`${origin}/api/admin/overview`, { headers: authenticatedHeaders });
   await assertStatus(admin, 200);

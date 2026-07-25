@@ -24,7 +24,10 @@ import {
   createOrLinkUser,
   type SessionUser,
 } from "../src/server/auth";
-import { API_QUOTAS } from "../src/shared/api-quotas";
+import {
+  API_QUOTAS,
+  GUEST_LINK_EXPIRY_HOURS,
+} from "../src/shared/api-quotas";
 import { numberedMigrationDatabase } from "./helpers/sqlite-d1";
 
 type TestDatabase = ReturnType<typeof numberedMigrationDatabase>;
@@ -1161,7 +1164,7 @@ describe("owner guest-link lifecycle", () => {
       owner.userId,
       {
         expectedAccessRevision: before.access_revision,
-        expiresInHours: 169,
+        expiresInHours: GUEST_LINK_EXPIRY_HOURS.maximum + 1,
         role: "viewer",
       },
     )).rejects.toMatchObject({

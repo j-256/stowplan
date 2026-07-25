@@ -5,7 +5,10 @@ import type {
   D1StatementLike,
 } from "../adapters/d1-snapshot-store";
 import { newId, nowIso } from "../domain/factories";
-import { API_QUOTAS } from "../shared/api-quotas";
+import {
+  API_QUOTAS,
+  GUEST_LINK_EXPIRY_HOURS,
+} from "../shared/api-quotas";
 import { QuotaExceededError } from "./quotas";
 import type { RuntimeEnv } from "./runtime";
 
@@ -20,11 +23,6 @@ export interface SessionUser { userId:string; email:string; displayName:string; 
 export interface ProviderProfile { provider:string; subject:string; email:string; displayName:string }
 
 export const AUTH_CLEANUP_BATCH_SIZE = 64;
-export const GUEST_LINK_EXPIRY_HOURS = Object.freeze({
-  default: 24,
-  maximum: 168,
-  minimum: 1,
-});
 const GUEST_LINK_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
 const OAUTH_STATE_RETENTION_MS = 24 * 60 * 60 * 1_000;
 const SESSION_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;

@@ -2,8 +2,6 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import {
-  GUEST_LINK_MAXIMUM_EXPIRY_HOURS,
-  GUEST_LINK_MINIMUM_EXPIRY_HOURS,
   RetainedWorkspaceAccess,
   WorkspaceAccess,
   isShareCancellation,
@@ -14,6 +12,7 @@ import {
   type WorkspaceGuestLink,
   type WorkspaceMember,
 } from "../src/client/workspace-access";
+import { GUEST_LINK_EXPIRY_HOURS } from "../src/shared/api-quotas";
 import {
   persistConfirmedTerminalAccess,
   TERMINAL_ACCESS_PERSISTENCE_WARNING,
@@ -97,8 +96,8 @@ function accessData(role: "owner" | "editor" | "viewer"): WorkspaceAccessData {
       role,
     },
     guestLinkPolicy: {
-      maximumExpiryHours: GUEST_LINK_MAXIMUM_EXPIRY_HOURS,
-      minimumExpiryHours: GUEST_LINK_MINIMUM_EXPIRY_HOURS,
+      maximumExpiryHours: GUEST_LINK_EXPIRY_HOURS.maximum,
+      minimumExpiryHours: GUEST_LINK_EXPIRY_HOURS.minimum,
       roles: ["viewer", "editor"],
     },
     ...(role === "owner"
@@ -305,8 +304,8 @@ describe("workspace access surface", () => {
     expect(markup).toContain("Members");
     expect(markup).toContain("Transfer ownership");
     expect(markup).toContain("Create invite link");
-    expect(markup).toContain('min="1"');
-    expect(markup).toContain('max="168"');
+    expect(markup).toContain(`min="${GUEST_LINK_EXPIRY_HOURS.minimum}"`);
+    expect(markup).toContain(`max="${GUEST_LINK_EXPIRY_HOURS.maximum}"`);
     expect(markup).toContain("Active");
     expect(markup).toContain("Used");
     expect(markup).toContain("Expired");
@@ -551,11 +550,17 @@ describe("workspace access surface", () => {
   });
 
   it("validates the exact guest expiry range and share cancellation", () => {
-    expect(validGuestLinkExpiry(1)).toBe(true);
-    expect(validGuestLinkExpiry(168)).toBe(true);
-    expect(validGuestLinkExpiry(0)).toBe(false);
-    expect(validGuestLinkExpiry(169)).toBe(false);
-    expect(validGuestLinkExpiry(1.5)).toBe(false);
+    expect(validGuestLinkExpiry(GUEST_LINK_EXPIRY_HOURS.minimum)).toBe(true);
+    expect(validGuestLinkExpiry(GUEST_LINK_EXPIRY_HOURS.maximum)).toBe(true);
+    expect(validGuestLinkExpiry(
+      GUEST_LINK_EXPIRY_HOURS.minimum - 1,
+    )).toBe(false);
+    expect(validGuestLinkExpiry(
+      GUEST_LINK_EXPIRY_HOURS.maximum + 1,
+    )).toBe(false);
+    expect(validGuestLinkExpiry(
+      GUEST_LINK_EXPIRY_HOURS.minimum + 0.5,
+    )).toBe(false);
     expect(matchesWorkspaceDeletionConfirmation(
       "Shared home",
       "Shared home",

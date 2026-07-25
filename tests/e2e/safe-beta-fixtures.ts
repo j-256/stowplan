@@ -21,6 +21,7 @@ import type {
   WorkspaceRole,
 } from "../../src/domain/workspace-access";
 import { ACCOUNT_CONTEXT_HEADER } from "../../src/shared/account-context";
+import { GUEST_LINK_EXPIRY_HOURS } from "../../src/shared/api-quotas";
 
 const DATABASE_NAME = "stowplan-v1";
 const DATABASE_STORE = "records";
@@ -436,7 +437,7 @@ export const test = base.extend<{ safeBeta: SafeBetaFixture }>({
       context: BrowserContext,
       workspaceIdValue: string,
       role: "editor" | "viewer",
-      expiresInHours = 24,
+      expiresInHours: number = GUEST_LINK_EXPIRY_HOURS.default,
       returnTo = `/workspaces/${workspaceIdValue}/capture`,
     ): Promise<SyntheticInvite> => {
       const access = await workspaceAccess(

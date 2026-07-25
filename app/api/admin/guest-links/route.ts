@@ -1,6 +1,5 @@
 import {
   authenticate,
-  GUEST_LINK_EXPIRY_HOURS,
   isTrustedMutation,
 } from "../../../../src/server/auth";
 import {
@@ -15,6 +14,7 @@ import {
   WORKSPACE_ACCESS_REQUEST_MAX_BYTES,
 } from "../../../../src/server/request-body";
 import { runtimeEnv } from "../../../../src/server/runtime";
+import { GUEST_LINK_EXPIRY_HOURS } from "../../../../src/shared/api-quotas";
 import {
   createWorkspaceGuestLink,
   getWorkspaceAccess,

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CONTROL_REQUEST_MAX_BYTES } from "../src/server/request-body";
 import { ACCOUNT_CONTEXT_HEADER } from "../src/shared/account-context";
+import { GUEST_LINK_EXPIRY_HOURS } from "../src/shared/api-quotas";
 
 const OWNER_ACCOUNT_ID = "usr_owner";
 
@@ -386,7 +387,11 @@ describe("control route request limits", () => {
     },
   );
 
-  it.each([0, 169, 1.5])(
+  it.each([
+    GUEST_LINK_EXPIRY_HOURS.minimum - 1,
+    GUEST_LINK_EXPIRY_HOURS.maximum + 1,
+    GUEST_LINK_EXPIRY_HOURS.minimum + 0.5,
+  ])(
     "strictly refuses the invalid legacy expiry %s",
     async (hours) => {
       const response = await postGuestLink(new Request(
@@ -405,7 +410,9 @@ describe("control route request limits", () => {
       expect(response.headers.get("cache-control")).toBe("no-store");
       await expect(response.json()).resolves.toMatchObject({
         code: "INVALID_REQUEST",
-        error: expect.stringContaining("integer from 1 through 168"),
+        error: expect.stringContaining(
+          `integer from ${GUEST_LINK_EXPIRY_HOURS.minimum} through ${GUEST_LINK_EXPIRY_HOURS.maximum}`,
+        ),
       });
       expect(mocks.getWorkspaceAccess).not.toHaveBeenCalled();
       expect(mocks.createWorkspaceGuestLink).not.toHaveBeenCalled();

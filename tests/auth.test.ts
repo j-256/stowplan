@@ -17,7 +17,10 @@ import {
   revokeCurrentSession,
 } from "../src/server/auth";
 import { QuotaExceededError } from "../src/server/quotas";
-import { API_QUOTAS } from "../src/shared/api-quotas";
+import {
+  API_QUOTAS,
+  GUEST_LINK_EXPIRY_HOURS,
+} from "../src/shared/api-quotas";
 import { numberedMigrationDatabase } from "./helpers/sqlite-d1";
 
 function database() {
@@ -257,14 +260,20 @@ describe("authentication",()=>{
         status: 403,
       } satisfies Partial<AuthorizationError>);
     }
-    for (const hours of [0, 169, 1.5]) {
+    for (const hours of [
+      GUEST_LINK_EXPIRY_HOURS.minimum - 1,
+      GUEST_LINK_EXPIRY_HOURS.maximum + 1,
+      GUEST_LINK_EXPIRY_HOURS.minimum + 0.5,
+    ]) {
       await expect(createGuestLink(
         db,
         state.workspace.id,
         owner.userId,
         "viewer",
         hours,
-      )).rejects.toThrow(/integer from 1 through 168 hours/);
+      )).rejects.toThrow(
+        `integer from ${GUEST_LINK_EXPIRY_HOURS.minimum} through ${GUEST_LINK_EXPIRY_HOURS.maximum} hours`,
+      );
     }
     expect(sqlite.prepare(
       "SELECT COUNT(*) AS count FROM guest_links",

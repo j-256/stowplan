@@ -1,3 +1,6 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { extname, join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { createEmptyState } from "../src/domain/factories";
 import {
@@ -7,9 +10,85 @@ import {
   serializedJsonBytes,
   snapshotQuotaUsage,
 } from "../src/server/quotas";
-import { API_QUOTAS } from "../src/shared/api-quotas";
+import {
+  API_QUOTA_CODE,
+  API_QUOTAS,
+  GUEST_LINK_EXPIRY_HOURS,
+} from "../src/shared/api-quotas";
+import {
+  API_QUOTA_CODE as COMMENTED_API_QUOTA_CODE,
+  API_QUOTAS as COMMENTED_API_QUOTAS,
+  GUEST_LINK_EXPIRY_HOURS as COMMENTED_GUEST_LINK_EXPIRY_HOURS,
+} from "../src/shared/quotas.js";
+
+const PRODUCTION_SOURCE_EXTENSIONS = new Set([
+  ".js",
+  ".ts",
+  ".tsx",
+]);
+
+function sourceFiles(directory: string): string[] {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) return sourceFiles(path);
+    return PRODUCTION_SOURCE_EXTENSIONS.has(extname(path)) ? [path] : [];
+  });
+}
 
 describe("API quotas", () => {
+  it("keeps tunable quota values in the commentable source", () => {
+    expect(API_QUOTA_CODE).toBe(COMMENTED_API_QUOTA_CODE);
+    expect(API_QUOTAS).toBe(COMMENTED_API_QUOTAS);
+    expect(GUEST_LINK_EXPIRY_HOURS)
+      .toBe(COMMENTED_GUEST_LINK_EXPIRY_HOURS);
+    expect(Object.isFrozen(COMMENTED_API_QUOTAS)).toBe(true);
+    expect(Object.isFrozen(COMMENTED_GUEST_LINK_EXPIRY_HOURS)).toBe(true);
+    expect(Object.values(COMMENTED_API_QUOTAS).every((value) =>
+      Number.isSafeInteger(value) && value > 0
+    )).toBe(true);
+    expect(COMMENTED_GUEST_LINK_EXPIRY_HOURS.minimum)
+      .toBeLessThanOrEqual(COMMENTED_GUEST_LINK_EXPIRY_HOURS.default);
+    expect(COMMENTED_GUEST_LINK_EXPIRY_HOURS.default)
+      .toBeLessThanOrEqual(COMMENTED_GUEST_LINK_EXPIRY_HOURS.maximum);
+
+    const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
+    const canonicalPath = fileURLToPath(
+      new URL("../src/shared/quotas.js", import.meta.url),
+    );
+    const definitionPatterns = [
+      ...Object.keys(COMMENTED_API_QUOTAS).map((quota) => ({
+        label: quota,
+        pattern: new RegExp(`\\b${quota}\\s*:\\s*[\\d_]`, "u"),
+      })),
+      {
+        label: "API_QUOTA_CODE",
+        pattern: /\bAPI_QUOTA_CODE\s*=\s*["']/u,
+      },
+      {
+        label: "GUEST_LINK_EXPIRY_HOURS",
+        pattern:
+          /\bGUEST_LINK_EXPIRY_HOURS\s*=\s*Object\.freeze\s*\(/u,
+      },
+      {
+        label: "numeric guest-link expiry constant",
+        pattern:
+          /\b[A-Z0-9_]*GUEST_LINK[A-Z0-9_]*(?:EXPIRY|HOURS)[A-Z0-9_]*\s*=\s*[\d_]+/u,
+      },
+    ];
+    const duplicateDefinitions = [
+      ...sourceFiles(join(repositoryRoot, "app")),
+      ...sourceFiles(join(repositoryRoot, "src")),
+    ].flatMap((path) => {
+      if (path === canonicalPath) return [];
+      const contents = readFileSync(path, "utf8");
+      return definitionPatterns
+        .filter(({ pattern }) => pattern.test(contents))
+        .map(({ label }) => `${relative(repositoryRoot, path)}: ${label}`);
+    });
+
+    expect(duplicateDefinitions).toEqual([]);
+  });
+
   it("accepts an empty workspace snapshot", () => {
     const state = createEmptyState("Within quota");
 

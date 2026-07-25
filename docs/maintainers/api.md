@@ -146,7 +146,7 @@ Same-field stale edits reject. Unrelated stale edits can merge because expectati
 
 ## Application quotas
 
-`src/shared/api-quotas.ts` is the source of truth for these deliberately generous application limits:
+`src/shared/quotas.js` is the commented source of truth for these deliberately generous application limits and the guest-link expiry policy. Transport security ceilings, pagination and query bounds, retry timing, and presentation limits stay beside their enforcement because they are not application quotas:
 
 | Resource | Limit |
 |---|---:|
