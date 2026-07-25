@@ -213,10 +213,24 @@ test("starts workspaces and primary views at the top", async ({ page }) => {
   });
   await demo.scrollIntoViewIfNeeded();
   await demo.click();
+  const appMain = page.locator(".app-shell > main");
+  await expect(appMain).toBeVisible();
+  await expect.poll(() => appMain.evaluate((element) => element.scrollTop)).toBe(0);
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
 
-  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  const usesAppScroller = await appMain.evaluate(
+    (element) => getComputedStyle(element).overflowY === "auto",
+  );
+  if (usesAppScroller) {
+    await appMain.evaluate((element) => element.scrollTo(0, element.scrollHeight));
+    await expect.poll(
+      () => appMain.evaluate((element) => element.scrollTop),
+    ).toBeGreaterThan(0);
+  } else {
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  }
   await page.locator(".nav:visible", { hasText: "Spaces" }).click();
+  await expect.poll(() => appMain.evaluate((element) => element.scrollTop)).toBe(0);
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
 });
 
@@ -527,8 +541,10 @@ test("keeps short touch landscape navigation fully visible", async ({ page }, te
     .toBeVisible();
   const spaces = page.locator(".split.resizable-panels");
   await expect(spaces).toHaveAttribute("data-panel-layout", "stacked");
-  await expect(page.getByRole("group", { name: "Space panels layout" })
-    .getByRole("button", { name: "Side by side" })).toBeDisabled();
+  await expect(page.getByRole("group", {
+    name: "Space panels navigation",
+  })).toBeVisible();
+  await expect(spaces.locator(":scope > .panel-layout-toolbar")).toBeHidden();
 });
 
 test("uses a compact icon rail at both narrow-tablet boundaries and orientations", async ({ page }, testInfo) => {
@@ -566,9 +582,18 @@ test("switches, resizes, and persists responsive panel layouts", async ({ page }
   const captureLayout = page.getByRole("group", { name: "Capture panels layout" });
   const sideBySide = captureLayout.getByRole("button", { name: "Side by side" });
   const stacked = captureLayout.getByRole("button", { name: "Stacked" });
+  const captureNavigation = page.getByRole("group", {
+    name: "Capture panels navigation",
+  });
   await expect(capture).toBeVisible();
 
-  if (await sideBySide.isDisabled()) {
+  if (await captureNavigation.isVisible()) {
+    await expect(capture.locator(":scope > .panel-layout-toolbar")).toBeHidden();
+    await expect(capture).toHaveAttribute("data-panel-layout", "stacked");
+    await expect(page.getByRole("separator", { name: "Resize capture queue" }))
+      .toBeHidden();
+    await expectCompactPanelSpacing(capture);
+  } else if (await sideBySide.isDisabled()) {
     await expect(capture).toHaveAttribute("data-panel-layout", "stacked");
     await expect(page.getByRole("separator", { name: "Resize capture queue" }))
       .toBeHidden();
@@ -615,7 +640,14 @@ test("switches, resizes, and persists responsive panel layouts", async ({ page }
   const spaces = page.locator(".split.resizable-panels");
   const spacesLayout = page.getByRole("group", { name: "Space panels layout" });
   const spacesSideBySide = spacesLayout.getByRole("button", { name: "Side by side" });
-  if (await spacesSideBySide.isDisabled()) {
+  const spacesNavigation = page.getByRole("group", {
+    name: "Space panels navigation",
+  });
+  if (await spacesNavigation.isVisible()) {
+    await expect(spaces.locator(":scope > .panel-layout-toolbar")).toBeHidden();
+    await expect(spaces).toHaveAttribute("data-panel-layout", "stacked");
+    await expectCompactPanelSpacing(spaces);
+  } else if (await spacesSideBySide.isDisabled()) {
     await expect(spaces).toHaveAttribute("data-panel-layout", "stacked");
     await expectCompactPanelSpacing(spaces);
   } else {
@@ -1365,97 +1397,329 @@ test("resets the active demo from the main menu", async ({ page }) => {
   expect(after.state.workspace.id).not.toBe(before.state.workspace.id);
 });
 
-test("reorders sibling spaces in Capture and advances in visible hierarchy order", async ({ page }) => {
+test("collapses Capture branches while search temporarily reveals matches", async ({ page }) => {
   await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
 
-  await expect(page.locator('.capture-location-row[data-location-id="loc_right"] .drag-handle[title="Drag Right side to reorder within Kitchen"]')).toBeVisible();
-  await reopenCurrentCapture(page);
-  await page.getByLabel("What is it?").fill("Draft for the wrong space");
-  await page.locator('.capture-location-row[data-location-id="loc_right"] .queue-row').click();
-  await expect(page.getByLabel("What is it?")).toHaveCount(0);
-  await reopenCurrentCapture(page);
-  await page.getByLabel("Short ID").fill("NEW");
-  await page.getByLabel("Friendly name").fill("Priority bin");
-  await page.getByRole("button", { name: "Add inside Right side" }).click();
+  const left = page.locator(
+    '.capture-location-row[data-location-id="loc_left"]',
+  );
+  const food = page.locator(
+    '.capture-location-row[data-location-id="loc_food"]',
+  );
+  const warm = page.locator(
+    '.capture-location-row[data-location-id="loc_warm"]',
+  );
+  const drawer = page.locator(
+    '.capture-location-row[data-location-id="loc_drawer"]',
+  );
+  const collapseLeft = page.getByRole("button", {
+    name: "Collapse Left side",
+  });
+  await expect(collapseLeft).toHaveAttribute("aria-expanded", "true");
+  await collapseLeft.click();
+  await expect(food).toHaveCount(0);
+  await expect(warm).toHaveCount(0);
+  await expect(drawer).toHaveCount(0);
+  await expect(page.locator(
+    '.capture-location-row[data-location-id="loc_right"]',
+  )).toBeVisible();
 
-  const priority = page.locator(".capture-location-row", { hasText: "Priority bin" });
-  await expect(priority.locator('.drag-handle[title="Drag Priority bin to reorder within Right side"]')).toBeVisible();
-  const movePriorityUp = page.getByRole("button", { name: "Move Priority bin up" });
-  await movePriorityUp.focus();
-  await page.keyboard.press("Enter");
-  await expect.poll(async () => {
-    const replica = await localReplica(page) as { state: { locations: { code: string; order: number }[] } };
-    const created = replica.state.locations.find((location) => location.code === "NEW")?.order ?? Number.POSITIVE_INFINITY;
-    const existing = replica.state.locations.find((location) => location.code === "C-04")?.order ?? Number.NEGATIVE_INFINITY;
-    return created < existing;
-  }).toBe(true);
+  const search = page.getByLabel("Find container");
+  await search.fill("Food cabinet");
+  await expect(left).toBeVisible();
+  await expect(food).toBeVisible();
+  await expect(left.locator(".drag-handle")).not.toHaveAttribute(
+    "aria-expanded",
+  );
+  await expect(page.locator(
+    ".capture-location-row[data-location-id]",
+  )).toHaveCount(3);
 
-  await page.getByRole("button", { name: "Counted & next" }).click();
-  await expect(page.getByRole("heading", { name: "NEW · Priority bin" })).toBeVisible();
-
-  await page.locator(".nav:visible", { hasText: "Spaces" }).click();
-  const overflow = await page.locator(".tree-panel").evaluate((panel) => ({
-    labels: [...panel.querySelectorAll<HTMLElement>(".tree-name")].filter((label) => label.scrollWidth > label.clientWidth || label.scrollHeight > label.clientHeight).map((label) => label.innerText),
-    panel: panel.scrollWidth > panel.clientWidth,
-  }));
-  expect(overflow).toEqual({ labels: [], panel: false });
+  await search.clear();
+  await expect(food).toHaveCount(0);
+  await page.getByRole("button", { name: "Expand Left side" }).click();
+  await expect(food).toBeVisible();
+  await expect(warm).toBeVisible();
+  await expect(drawer).toBeVisible();
 });
 
-test("previews desktop reorder destinations before committing them", async ({ page }, testInfo) => {
+test("keeps combined Capture branch handles stable across Pixel taps and drags", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "mobile-chromium",
+    "The Pixel 7 Pro project covers combined touch controls",
+  );
+  await page.getByRole("button", {
+    name: "Explore the kitchen demo instead",
+  }).click();
+
+  const lower = page.locator(
+    '.capture-location-row[data-location-id="loc_lower"]',
+  );
+  const bin = page.locator(
+    '.capture-location-row[data-location-id="loc_bin"]',
+  );
+  const counter = page.locator(
+    '.capture-location-row[data-location-id="loc_counter"]',
+  );
+  const handle = lower.locator(".drag-handle");
+  await lower.evaluate((element) =>
+    element.scrollIntoView({ block: "center" })
+  );
+  await expect(handle).toHaveAttribute("aria-expanded", "true");
+  await expect(bin).toBeVisible();
+
+  const before = await localReplica(page) as {
+    state: {
+      activities: unknown[];
+      locations: { id: string; order: number }[];
+      workspace: { revision: number };
+    };
+  };
+  await handle.tap();
+  await expect(handle).toHaveAttribute("aria-expanded", "false");
+  await expect(bin).toHaveCount(0);
+  const afterCollapse = await localReplica(page) as typeof before;
+  expect(afterCollapse.state.activities).toHaveLength(
+    before.state.activities.length,
+  );
+  expect(afterCollapse.state.workspace.revision).toBe(
+    before.state.workspace.revision,
+  );
+  await expect(page.locator(".feedback-toast")).toBeHidden();
+
+  await handle.tap();
+  await expect(handle).toHaveAttribute("aria-expanded", "true");
+  await expect(bin).toBeVisible();
+  const afterExpand = await localReplica(page) as typeof before;
+  expect(afterExpand.state.activities).toHaveLength(
+    before.state.activities.length,
+  );
+  expect(afterExpand.state.workspace.revision).toBe(
+    before.state.workspace.revision,
+  );
+  await expect(page.locator(".feedback-toast")).toBeHidden();
+
+  await page.locator(".capture-tree").evaluate((tree) => {
+    const sourceRow = tree.querySelector<HTMLElement>(
+      '.capture-location-row[data-location-id="loc_lower"]',
+    );
+    const targetRow = tree.querySelector<HTMLElement>(
+      '.capture-location-row[data-location-id="loc_counter"]',
+    );
+    if (!sourceRow || !targetRow) {
+      throw new Error("Combined touch-control rows are unavailable");
+    }
+    const treeBounds = tree.getBoundingClientRect();
+    const sourceBounds = sourceRow.getBoundingClientRect();
+    const targetBounds = targetRow.getBoundingClientRect();
+    const pairCenter = (
+      sourceBounds.top +
+      sourceBounds.bottom +
+      targetBounds.top +
+      targetBounds.bottom
+    ) / 4;
+    tree.scrollBy({
+      behavior: "auto",
+      top: pairCenter - (treeBounds.top + treeBounds.bottom) / 2,
+    });
+  });
+  const sourceBox = await handle.boundingBox();
+  const targetBox = await counter.boundingBox();
+  if (!sourceBox || !targetBox) {
+    throw new Error("Combined touch-control drag endpoints are not visible");
+  }
+  const start = {
+    x: sourceBox.x + sourceBox.width / 2,
+    y: sourceBox.y + sourceBox.height / 2,
+  };
+  const end = {
+    x: targetBox.x + targetBox.width / 2,
+    y: targetBox.y + targetBox.height * 0.8,
+  };
+  const session = await page.context().newCDPSession(page);
+  await session.send("Input.dispatchTouchEvent", {
+    type: "touchStart",
+    touchPoints: [{
+      id: 21,
+      radiusX: 3,
+      radiusY: 3,
+      x: start.x,
+      y: start.y,
+    }],
+  });
+  for (let step = 1; step <= 12; step += 1) {
+    await session.send("Input.dispatchTouchEvent", {
+      type: "touchMove",
+      touchPoints: [{
+        id: 21,
+        radiusX: 3,
+        radiusY: 3,
+        x: start.x + (end.x - start.x) * step / 12,
+        y: start.y + (end.y - start.y) * step / 12,
+      }],
+    });
+  }
+  await expect(counter).toHaveAttribute("data-touch-drop-intent", "after");
+  await session.send("Input.dispatchTouchEvent", {
+    type: "touchEnd",
+    touchPoints: [],
+  });
+  await expect.poll(async () => {
+    const replica = await localReplica(page) as typeof before;
+    const locations = replica.state.locations;
+    return {
+      activityCount: replica.state.activities.length,
+      reordered:
+        (locations.find((location) => location.id === "loc_lower")?.order ?? 0) >
+        (locations.find((location) => location.id === "loc_counter")?.order ?? 0),
+      revision: replica.state.workspace.revision,
+    };
+  }).toEqual({
+    activityCount: before.state.activities.length + 1,
+    reordered: true,
+    revision: before.state.workspace.revision + 1,
+  });
+  await expect(handle).toHaveAttribute("aria-expanded", "true");
+  await expect(bin).toBeVisible();
+  await expect(page.getByRole("dialog", {
+    name: "Reopen completed spaces?",
+  })).toHaveCount(0);
+});
+
+test("previews desktop hierarchy destinations and confirms completed-parent changes", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "Native mouse feedback is a desktop contract");
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
-  await reopenCurrentCapture(page);
 
-  const left = page.locator('.capture-location-row[data-location-id="loc_left"]');
+  const before = await localReplica(page) as {
+    state: {
+      activities: unknown[];
+      locations: {
+        captureStatus: string;
+        id: string;
+        parentId: string | null;
+      }[];
+      workspace: { revision: number };
+    };
+  };
+  const source = page.locator(
+    '.capture-location-row[data-location-id="loc_food"]',
+  );
   const right = page.locator('.capture-location-row[data-location-id="loc_right"]');
-  const differentParent = page.locator('.capture-location-row[data-location-id="loc_warm"]');
   const idleDropStyles = await right.evaluate((row) => ({
     background: getComputedStyle(row).backgroundColor,
-    boxShadow: getComputedStyle(row).boxShadow,
+    outline: getComputedStyle(row).outline,
   }));
-  await holdNativeDrag(page, left.locator(".drag-handle"), right, 0.8);
-  await expect(left).toHaveAttribute("data-dragging", "true");
+  await holdNativeDrag(page, source.locator(".drag-handle"), right);
+  await expect(source).toHaveAttribute("data-dragging", "true");
   await expect(right).toHaveAttribute("data-drop-valid", "true");
-  await expect(right).toHaveAttribute("data-drop-intent", "after");
-  await expect(differentParent).toHaveAttribute("data-drop-valid", "false");
-  await expect(right.locator(".reorder-drop-copy")).toHaveText("Place after");
+  await expect(right).toHaveAttribute("data-drop-intent", "inside");
+  await expect(right.locator(".reorder-drop-copy")).toHaveText("Move inside");
   const dropStyles = await right.evaluate((row) => ({
     background: getComputedStyle(row).backgroundColor,
-    boxShadow: getComputedStyle(row).boxShadow,
+    outline: getComputedStyle(row).outline,
   }));
   expect(dropStyles.background).not.toBe(idleDropStyles.background);
-  expect(dropStyles.boxShadow).not.toBe(idleDropStyles.boxShadow);
-  expect(dropStyles.boxShadow).toContain("inset");
+  expect(dropStyles.outline).not.toBe(idleDropStyles.outline);
   await page.mouse.up();
+  const confirmation = page.getByRole("dialog", {
+    name: "Reopen completed spaces?",
+  });
+  await expect(confirmation).toBeVisible();
+  await expect(confirmation).toContainText("C-01 · Food cabinet");
+  await expect(confirmation).toContainText("KIT-L · Left side");
+  await expect(confirmation).toContainText("KIT-R · Right side");
+  await confirmation.getByRole("button", { name: "Cancel" }).click();
+  await expect(confirmation).toHaveCount(0);
+  await expect(source.locator(".queue-row")).toBeFocused();
+  const afterCancel = await localReplica(page) as typeof before;
+  expect(afterCancel.state.workspace.revision).toBe(
+    before.state.workspace.revision,
+  );
+  expect(afterCancel.state.activities).toHaveLength(
+    before.state.activities.length,
+  );
+  expect(
+    afterCancel.state.locations.find((location) => location.id === "loc_food")
+      ?.parentId,
+  ).toBe("loc_left");
+
+  const rootTarget = page.locator(".capture-root-drop");
+  const rootDataTransfer = await page.evaluateHandle(() => new DataTransfer());
+  try {
+    await source.locator(".drag-handle").dispatchEvent("dragstart", {
+      dataTransfer: rootDataTransfer,
+    });
+    await expect(rootTarget).toBeVisible();
+    const kitchen = page.locator(
+      '.capture-location-row[data-location-id="loc_kitchen"]',
+    );
+    const kitchenBounds = await kitchen.boundingBox();
+    if (!kitchenBounds) throw new Error("The first Capture row is not visible");
+    const firstRowTarget = await page.evaluate(({ x, y }) => {
+      const target = document.elementFromPoint(x, y)
+        ?.closest<HTMLElement>("[data-drop-target]");
+      return {
+        id: target?.dataset.dropId,
+        kind: target?.dataset.dropTarget,
+      };
+    }, {
+      x: kitchenBounds.x + kitchenBounds.width * 0.25,
+      y: kitchenBounds.y + kitchenBounds.height / 2,
+    });
+    expect(firstRowTarget).toEqual({
+      id: "loc_kitchen",
+      kind: "location",
+    });
+    const rootBounds = await rootTarget.boundingBox();
+    if (!rootBounds) throw new Error("The Capture top-level target is not visible");
+    const clientX = rootBounds.x + rootBounds.width / 2;
+    const clientY = rootBounds.y + rootBounds.height / 2;
+    await rootTarget.dispatchEvent("dragover", {
+      clientX,
+      clientY,
+      dataTransfer: rootDataTransfer,
+    });
+    await expect(rootTarget).toHaveAttribute("data-drop-intent", "inside");
+    await expect(rootTarget).toContainText("Make top level");
+    await rootTarget.dispatchEvent("drop", {
+      clientX,
+      clientY,
+      dataTransfer: rootDataTransfer,
+    });
+    await source.locator(".drag-handle").dispatchEvent("dragend", {
+      dataTransfer: rootDataTransfer,
+    });
+  } finally {
+    await rootDataTransfer.dispose();
+  }
+  await expect(confirmation).toBeVisible();
+  await expect(confirmation.locator(".hierarchy-review-list li")).toHaveCount(1);
+  await expect(confirmation).toContainText("KIT-L · Left side");
+  await expect(confirmation).not.toContainText("KIT-R · Right side");
+  await confirmation.getByRole("button", {
+    name: "Move and reopen",
+  }).click();
   await expect.poll(async () => {
-    const replica = await localReplica(page) as {
-      state: { locations: { id: string; order: number }[] };
+    const replica = await localReplica(page) as typeof before;
+    return {
+      activityCount: replica.state.activities.length,
+      leftStatus: replica.state.locations.find(
+        (location) => location.id === "loc_left",
+      )?.captureStatus,
+      parentId: replica.state.locations.find(
+        (location) => location.id === "loc_food",
+      )?.parentId,
+      revision: replica.state.workspace.revision,
     };
-    const locations = replica.state.locations;
-    return (locations.find((location) => location.id === "loc_left")?.order ?? 0) >
-      (locations.find((location) => location.id === "loc_right")?.order ?? 0);
-  }).toBe(true);
-
-  await expect(left).not.toHaveAttribute("data-dragging", "true");
-  await dispatchNativeDrop(page, left.locator(".drag-handle"), right, 0.8);
-  await expect(page.locator(".feedback-toast[role='alert']")).toContainText(
-    "Left side is already in that position",
-  );
-  await page.getByRole("button", { name: "Dismiss message" }).click();
-
-  await holdNativeDrag(page, left.locator(".drag-handle"), differentParent);
-  await page.mouse.up();
-  await expect(page.locator(".feedback-toast")).toBeHidden();
-  await dispatchNativeDrop(
-    page,
-    left.locator(".drag-handle"),
-    differentParent,
-  );
-  await expect(page.locator(".feedback-toast[role='alert']")).toContainText(
-    "Capture only reorders sibling spaces",
-  );
-  await page.getByRole("button", { name: "Dismiss message" }).click();
+  }).toEqual({
+    activityCount: before.state.activities.length + 1,
+    leftStatus: "in_progress",
+    parentId: null,
+    revision: before.state.workspace.revision + 1,
+  });
 
   await page.locator('.capture-location-row[data-location-id="loc_bin"] .queue-row').click();
   await reopenCurrentCapture(page);
@@ -1529,7 +1793,28 @@ test("previews desktop reorder destinations before committing them", async ({ pa
 test("keeps touch reordering available on draggable handles", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "mobile-chromium", "Touch input is a mobile contract");
   await page.getByRole("button", { name: "Explore the kitchen demo instead" }).click();
-  await reopenCaptureLocation(page, "loc_left");
+  const capturePanelNavigation = page.getByRole("group", {
+    name: "Capture panels navigation",
+  });
+  await expect(capturePanelNavigation).toBeVisible();
+  await expect(page.getByRole("group", {
+    name: "Capture panels layout",
+  })).toBeHidden();
+  await capturePanelNavigation.getByRole("button", {
+    name: "current container",
+  }).click();
+  await expect(page.locator(".capture-card")).toBeInViewport();
+  await capturePanelNavigation.getByRole("button", {
+    name: "capture queue",
+  }).click();
+  await expect(page.locator(".queue")).toBeInViewport();
+  const untouched = await localReplica(page) as {
+    state: { locations: { captureStatus: string; id: string }[] };
+  };
+  expect(
+    untouched.state.locations.find((location) => location.id === "loc_left")
+      ?.captureStatus,
+  ).toBe("counted");
 
   const source = page.locator('.capture-location-row[data-location-id="loc_food"]');
   const target = page.locator('.capture-location-row[data-location-id="loc_warm"]');
@@ -1577,8 +1862,80 @@ test("keeps touch reordering available on draggable handles", async ({ page }, t
     content: '"Place after"',
     display: "block",
   });
+  const nativeDragCanceled = await source.locator(".drag-handle").evaluate(
+    (handle) => !handle.dispatchEvent(new DragEvent("dragstart", {
+      bubbles: true,
+      cancelable: true,
+    })),
+  );
+  expect(nativeDragCanceled).toBe(true);
+  await expect(source).not.toHaveAttribute("data-dragging");
+  await source.locator(".drag-handle").evaluate((handle) =>
+    handle.dispatchEvent(new PointerEvent("pointerup", {
+      bubbles: true,
+      clientX: 1,
+      clientY: 1,
+      pointerId: 1,
+      pointerType: "touch",
+    }))
+  );
+  await expect.poll(() => page.evaluate(
+    () => document.documentElement.dataset.touchDragging,
+  )).toBe("true");
+  await expect(target).toHaveAttribute("data-touch-drop-active", "true");
   await session.send("Input.dispatchTouchEvent", {
     type: "touchEnd",
+    touchPoints: [],
+  });
+  await expect(target).not.toHaveAttribute("data-touch-drop-active");
+  await expect.poll(async () => {
+    const replica = await localReplica(page) as {
+      state: {
+        locations: { captureStatus: string; id: string; order: number }[];
+      };
+    };
+    const locations = replica.state.locations;
+    return {
+      parentStatus: locations.find((location) => location.id === "loc_left")
+        ?.captureStatus,
+      reordered:
+        (locations.find((location) => location.id === "loc_food")?.order ?? 0) >
+        (locations.find((location) => location.id === "loc_warm")?.order ?? 0),
+    };
+  }).toEqual({ parentStatus: "counted", reordered: true });
+  await expect(page.locator(".feedback-toast[role='status']")).toContainText(
+    "C-01 · Food cabinet reordered",
+  );
+  await page.getByRole("button", { name: "Dismiss message" }).click();
+
+  const cancelSourceBox = await source.locator(".drag-handle").boundingBox();
+  const cancelTargetBox = await target.boundingBox();
+  if (!cancelSourceBox || !cancelTargetBox) {
+    throw new Error("Touch cancel endpoints are not visible");
+  }
+  await session.send("Input.dispatchTouchEvent", {
+    type: "touchStart",
+    touchPoints: [{
+      id: 5,
+      radiusX: 3,
+      radiusY: 3,
+      x: cancelSourceBox.x + cancelSourceBox.width / 2,
+      y: cancelSourceBox.y + cancelSourceBox.height / 2,
+    }],
+  });
+  await session.send("Input.dispatchTouchEvent", {
+    type: "touchMove",
+    touchPoints: [{
+      id: 5,
+      radiusX: 3,
+      radiusY: 3,
+      x: cancelTargetBox.x + cancelTargetBox.width / 2,
+      y: cancelTargetBox.y + cancelTargetBox.height * 0.2,
+    }],
+  });
+  await expect(target).toHaveAttribute("data-touch-drop-intent", "before");
+  await session.send("Input.dispatchTouchEvent", {
+    type: "touchCancel",
     touchPoints: [],
   });
   await expect(target).not.toHaveAttribute("data-touch-drop-active");
@@ -1590,6 +1947,112 @@ test("keeps touch reordering available on draggable handles", async ({ page }, t
     return (locations.find((location) => location.id === "loc_food")?.order ?? 0) >
       (locations.find((location) => location.id === "loc_warm")?.order ?? 0);
   }).toBe(true);
+
+  const hierarchyTarget = page.locator(
+    '.capture-location-row[data-location-id="loc_right"]',
+  );
+  await page.locator(".capture-tree").evaluate((tree) => {
+    const sourceRow = tree.querySelector<HTMLElement>(
+      '.capture-location-row[data-location-id="loc_food"]',
+    );
+    const targetRow = tree.querySelector<HTMLElement>(
+      '.capture-location-row[data-location-id="loc_right"]',
+    );
+    if (!sourceRow || !targetRow) {
+      throw new Error("Touch hierarchy rows are unavailable");
+    }
+    const treeBounds = tree.getBoundingClientRect();
+    const sourceBounds = sourceRow.getBoundingClientRect();
+    const targetBounds = targetRow.getBoundingClientRect();
+    const pairCenter = (
+      sourceBounds.top +
+      sourceBounds.bottom +
+      targetBounds.top +
+      targetBounds.bottom
+    ) / 4;
+    tree.scrollBy({
+      behavior: "auto",
+      top: pairCenter - (treeBounds.top + treeBounds.bottom) / 2,
+    });
+  });
+  const hierarchySourceBox = await source.locator(".drag-handle").boundingBox();
+  const hierarchyTargetBox = await hierarchyTarget.boundingBox();
+  if (!hierarchySourceBox || !hierarchyTargetBox) {
+    throw new Error("Touch hierarchy endpoints are not visible");
+  }
+  await session.send("Input.dispatchTouchEvent", {
+    type: "touchStart",
+    touchPoints: [{
+      id: 6,
+      radiusX: 3,
+      radiusY: 3,
+      x: hierarchySourceBox.x + hierarchySourceBox.width / 2,
+      y: hierarchySourceBox.y + hierarchySourceBox.height / 2,
+    }],
+  });
+  await session.send("Input.dispatchTouchEvent", {
+    type: "touchMove",
+    touchPoints: [{
+      id: 6,
+      radiusX: 3,
+      radiusY: 3,
+      x: hierarchyTargetBox.x + hierarchyTargetBox.width / 2,
+      y: hierarchyTargetBox.y + hierarchyTargetBox.height / 2,
+    }],
+  });
+  await expect(hierarchyTarget).toHaveAttribute(
+    "data-touch-drop-intent",
+    "inside",
+  );
+  const hierarchyCopyStyles = await hierarchyTarget.locator(
+    ".reorder-drop-copy",
+  ).evaluate((copy) => ({
+    content: getComputedStyle(copy, "::after").content,
+    display: getComputedStyle(copy).display,
+  }));
+  expect(hierarchyCopyStyles).toEqual({
+    content: '"Move inside"',
+    display: "block",
+  });
+  await session.send("Input.dispatchTouchEvent", {
+    type: "touchEnd",
+    touchPoints: [],
+  });
+  const hierarchyConfirmation = page.getByRole("dialog", {
+    name: "Reopen completed spaces?",
+  });
+  await expect(hierarchyConfirmation).toBeVisible();
+  await expect(hierarchyConfirmation).toContainText("KIT-L · Left side");
+  await expect(hierarchyConfirmation).toContainText("KIT-R · Right side");
+  const beforeHierarchyConfirmation = await localReplica(page) as {
+    state: {
+      locations: {
+        captureStatus: string;
+        id: string;
+        parentId: string | null;
+      }[];
+    };
+  };
+  expect(
+    beforeHierarchyConfirmation.state.locations.find(
+      (location) => location.id === "loc_food",
+    )?.parentId,
+  ).toBe("loc_left");
+  expect(
+    beforeHierarchyConfirmation.state.locations.find(
+      (location) => location.id === "loc_left",
+    )?.captureStatus,
+  ).toBe("counted");
+  expect(
+    beforeHierarchyConfirmation.state.locations.find(
+      (location) => location.id === "loc_right",
+    )?.captureStatus,
+  ).toBe("counted");
+  await hierarchyConfirmation.getByRole("button", {
+    name: "Cancel",
+  }).click();
+  await expect(hierarchyConfirmation).toHaveCount(0);
+  await expect(source.locator(".queue-row")).toBeFocused();
 
   const invalidSourceBox = await source.locator(".drag-handle").boundingBox();
   if (!invalidSourceBox) throw new Error("Touch reorder source is not visible");
@@ -1614,11 +2077,80 @@ test("keeps touch reordering available on draggable handles", async ({ page }, t
     touchPoints: [],
   });
   await expect(page.locator(".feedback-toast[role='alert']")).toContainText(
-    "Capture only reorders sibling spaces",
+    "Choose a valid destination for Food cabinet",
   );
   await page.getByRole("button", { name: "Dismiss message" }).click();
 
   await page.locator(".nav:visible", { hasText: "Spaces" }).click();
+  const spacesSource = page.locator(
+    '.tree-row[data-location-id="loc_food"] .drag-handle',
+  );
+  const spacesTarget = page.locator(
+    '.tree-row[data-location-id="loc_warm"]',
+  );
+  await spacesSource.evaluate((element) =>
+    element.closest(".tree-row")?.scrollIntoView({ block: "center" })
+  );
+  const spacesSourceBox = await spacesSource.boundingBox();
+  const spacesTargetBox = await spacesTarget.boundingBox();
+  if (!spacesSourceBox || !spacesTargetBox) {
+    throw new Error("Spaces touch reorder rows are not visible");
+  }
+  const spacesReorderStart = {
+    x: spacesSourceBox.x + spacesSourceBox.width / 2,
+    y: spacesSourceBox.y + spacesSourceBox.height / 2,
+  };
+  const spacesReorderEnd = {
+    x: spacesTargetBox.x + spacesTargetBox.width / 2,
+    y: spacesTargetBox.y + 2,
+  };
+  await session.send("Input.dispatchTouchEvent", {
+    type: "touchStart",
+    touchPoints: [{
+      id: 3,
+      radiusX: 3,
+      radiusY: 3,
+      x: spacesReorderStart.x,
+      y: spacesReorderStart.y,
+    }],
+  });
+  await session.send("Input.dispatchTouchEvent", {
+    type: "touchMove",
+    touchPoints: [{
+      id: 3,
+      radiusX: 3,
+      radiusY: 3,
+      x: spacesReorderEnd.x,
+      y: spacesReorderEnd.y,
+    }],
+  });
+  await expect(spacesTarget).toHaveAttribute(
+    "data-touch-drop-intent",
+    "before",
+  );
+  await session.send("Input.dispatchTouchEvent", {
+    type: "touchEnd",
+    touchPoints: [],
+  });
+  await expect.poll(async () => {
+    const replica = await localReplica(page) as {
+      state: {
+        locations: { captureStatus: string; id: string; order: number }[];
+      };
+    };
+    const locations = replica.state.locations;
+    return {
+      parentStatus: locations.find((location) => location.id === "loc_left")
+        ?.captureStatus,
+      reordered:
+        (locations.find((location) => location.id === "loc_food")?.order ?? 0) <
+        (locations.find((location) => location.id === "loc_warm")?.order ?? 0),
+    };
+  }).toEqual({ parentStatus: "counted", reordered: true });
+  await expect(page.getByRole("dialog", {
+    name: "Reopen completed spaces?",
+  })).toHaveCount(0);
+
   const spacesHandle = page.locator(
     '.tree-row[data-location-id="loc_bin"] .drag-handle',
   );
@@ -1674,6 +2206,573 @@ test("keeps touch reordering available on draggable handles", async ({ page }, t
   await expect(page.locator(".feedback-toast[role='alert']")).toContainText(
     "Choose a different destination for Brown sugar",
   );
+});
+
+test("confirms a Capture touch reparent and atomically reopens completed parents", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "mobile-chromium",
+    "The Pixel 7 Pro project covers touch hierarchy changes",
+  );
+  await page.getByRole("button", {
+    name: "Explore the kitchen demo instead",
+  }).click();
+
+  const source = page.locator(
+    '.capture-location-row[data-location-id="loc_food"]',
+  );
+  const target = page.locator(
+    '.capture-location-row[data-location-id="loc_right"]',
+  );
+  await page.locator(".capture-tree").evaluate((tree) => {
+    const sourceRow = tree.querySelector<HTMLElement>(
+      '.capture-location-row[data-location-id="loc_food"]',
+    );
+    const targetRow = tree.querySelector<HTMLElement>(
+      '.capture-location-row[data-location-id="loc_right"]',
+    );
+    if (!sourceRow || !targetRow) {
+      throw new Error("Capture hierarchy rows are unavailable");
+    }
+    const treeBounds = tree.getBoundingClientRect();
+    const sourceBounds = sourceRow.getBoundingClientRect();
+    const targetBounds = targetRow.getBoundingClientRect();
+    const pairCenter = (
+      sourceBounds.top +
+      sourceBounds.bottom +
+      targetBounds.top +
+      targetBounds.bottom
+    ) / 4;
+    tree.scrollBy({
+      behavior: "auto",
+      top: pairCenter - (treeBounds.top + treeBounds.bottom) / 2,
+    });
+  });
+  const sourceBox = await source.locator(".drag-handle").boundingBox();
+  const targetBox = await target.boundingBox();
+  if (!sourceBox || !targetBox) {
+    throw new Error("Capture touch hierarchy endpoints are not visible");
+  }
+  const start = {
+    x: sourceBox.x + sourceBox.width / 2,
+    y: sourceBox.y + sourceBox.height / 2,
+  };
+  const end = {
+    x: targetBox.x + targetBox.width / 2,
+    y: targetBox.y + targetBox.height / 2,
+  };
+  const before = await localReplica(page) as {
+    state: {
+      activities: {
+        patches: {
+          after?: unknown;
+          before?: unknown;
+          id: string;
+          path: string;
+          target: string;
+        }[];
+      }[];
+      locations: {
+        captureStatus: string;
+        id: string;
+        parentId: string | null;
+      }[];
+      workspace: { revision: number };
+    };
+  };
+  const session = await page.context().newCDPSession(page);
+  await session.send("Input.dispatchTouchEvent", {
+    type: "touchStart",
+    touchPoints: [{
+      id: 22,
+      radiusX: 3,
+      radiusY: 3,
+      x: start.x,
+      y: start.y,
+    }],
+  });
+  for (let step = 1; step <= 12; step += 1) {
+    await session.send("Input.dispatchTouchEvent", {
+      type: "touchMove",
+      touchPoints: [{
+        id: 22,
+        radiusX: 3,
+        radiusY: 3,
+        x: start.x + (end.x - start.x) * step / 12,
+        y: start.y + (end.y - start.y) * step / 12,
+      }],
+    });
+  }
+  await expect(target).toHaveAttribute("data-touch-drop-intent", "inside");
+  await session.send("Input.dispatchTouchEvent", {
+    type: "touchEnd",
+    touchPoints: [],
+  });
+
+  const confirmation = page.getByRole("dialog", {
+    name: "Reopen completed spaces?",
+  });
+  await expect(confirmation).toBeVisible();
+  await expect(confirmation).toContainText("KIT-L · Left side");
+  await expect(confirmation).toContainText("KIT-R · Right side");
+  const awaitingConfirmation = await localReplica(page) as typeof before;
+  expect(awaitingConfirmation.state.activities).toHaveLength(
+    before.state.activities.length,
+  );
+  expect(
+    awaitingConfirmation.state.locations.find(
+      (location) => location.id === "loc_food",
+    )?.parentId,
+  ).toBe("loc_left");
+  expect(
+    awaitingConfirmation.state.locations.find(
+      (location) => location.id === "loc_left",
+    )?.captureStatus,
+  ).toBe("counted");
+  expect(
+    awaitingConfirmation.state.locations.find(
+      (location) => location.id === "loc_right",
+    )?.captureStatus,
+  ).toBe("counted");
+  expect(awaitingConfirmation.state.workspace.revision).toBe(
+    before.state.workspace.revision,
+  );
+
+  await confirmation.getByRole("button", {
+    name: "Move and reopen",
+  }).click();
+  await expect.poll(async () => {
+    const replica = await localReplica(page) as typeof before;
+    return {
+      activityCount: replica.state.activities.length,
+      leftStatus: replica.state.locations.find(
+        (location) => location.id === "loc_left",
+      )?.captureStatus,
+      parentId: replica.state.locations.find(
+        (location) => location.id === "loc_food",
+      )?.parentId,
+      revision: replica.state.workspace.revision,
+      rightStatus: replica.state.locations.find(
+        (location) => location.id === "loc_right",
+      )?.captureStatus,
+    };
+  }).toEqual({
+    activityCount: before.state.activities.length + 1,
+    leftStatus: "in_progress",
+    parentId: "loc_right",
+    revision: before.state.workspace.revision + 1,
+    rightStatus: "in_progress",
+  });
+  const after = await localReplica(page) as typeof before;
+  expect(after.state.activities.at(-1)?.patches).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        after: "loc_right",
+        before: "loc_left",
+        id: "loc_food",
+        path: "parentId",
+        target: "location",
+      }),
+      expect.objectContaining({
+        after: "in_progress",
+        before: "counted",
+        id: "loc_left",
+        path: "captureStatus",
+        target: "location",
+      }),
+      expect.objectContaining({
+        after: "in_progress",
+        before: "counted",
+        id: "loc_right",
+        path: "captureStatus",
+        target: "location",
+      }),
+    ]),
+  );
+  await expect(confirmation).toHaveCount(0);
+  await expect(source.locator(".queue-row")).toBeFocused();
+});
+
+test("keeps Capture rows compact and supports a focused mobile Move fallback", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "mobile-chromium",
+    "The Pixel 7 Pro project covers the Capture mobile fallback",
+  );
+  await page.getByRole("button", {
+    name: "Explore the kitchen demo instead",
+  }).click();
+
+  const foodRow = page.locator(
+    '.capture-location-row[data-location-id="loc_food"]',
+  );
+  await foodRow.locator(".queue-row").click();
+  await expect(foodRow).toBeInViewport();
+
+  const move = foodRow.getByRole("button", {
+    name: "Move Food cabinet",
+    exact: true,
+  });
+  await expect(move).toBeVisible();
+  await expect(foodRow.getByRole("button", {
+    name: "Move Food cabinet up",
+  })).toBeHidden();
+  await expect(foodRow.getByRole("button", {
+    name: "Move Food cabinet down",
+  })).toBeHidden();
+  const moveBounds = await move.boundingBox();
+  if (!moveBounds) throw new Error("The Capture Move action is not visible");
+  expect(moveBounds.height).toBeGreaterThanOrEqual(44);
+  expect(moveBounds.width).toBeGreaterThanOrEqual(44);
+
+  const density = await page.locator(".capture-tree").evaluate((tree) => {
+    const rows = [
+      ...tree.querySelectorAll<HTMLElement>(".capture-location-row"),
+    ];
+    const names = [
+      ...tree.querySelectorAll<HTMLElement>(".queue-name span"),
+    ];
+    const hitTargets = [
+      ...tree.querySelectorAll<HTMLElement>(
+        ".capture-location-row > .drag-handle, .capture-location-row > .capture-collapse",
+      ),
+    ];
+    const visibleActionButtons = [
+      ...tree.querySelectorAll<HTMLElement>(
+        ".capture-location-row > .row-actions button",
+      ),
+    ].filter((button) => {
+      const buttonStyles = getComputedStyle(button);
+      const actionsStyles = getComputedStyle(
+        button.closest<HTMLElement>(".row-actions") as HTMLElement,
+      );
+      return buttonStyles.display !== "none" &&
+        buttonStyles.visibility !== "hidden" &&
+        Number.parseFloat(actionsStyles.opacity) > 0.1;
+    });
+    return {
+      appendedActionGroups: tree.querySelectorAll(
+        ".mobile-capture-actions",
+      ).length,
+      maxNameHeight: Math.max(
+        ...names.map((name) => name.getBoundingClientRect().height),
+      ),
+      maxRowHeight: Math.max(
+        ...rows.map((row) => row.getBoundingClientRect().height),
+      ),
+      minQueueShare: Math.min(...rows.map((row) => {
+        const rowWidth = row.getBoundingClientRect().width;
+        const queueWidth = row.querySelector<HTMLElement>(".queue-row")
+          ?.getBoundingClientRect().width ?? 0;
+        return queueWidth / rowWidth;
+      })),
+      narrowActionTargets: visibleActionButtons
+        .filter((button) => {
+          const bounds = button.getBoundingClientRect();
+          return bounds.width < 44 || bounds.height < 44;
+        })
+        .map((button) => button.getAttribute("aria-label")),
+      narrowRowTargets: hitTargets
+        .filter((target) => {
+          const bounds = target.getBoundingClientRect();
+          return bounds.width < 44 || bounds.height < 44;
+        })
+        .map((target) => target.getAttribute("aria-label")),
+      rowOverflow: rows
+        .filter((row) => row.scrollWidth > row.clientWidth)
+        .map((row) => row.dataset.locationId),
+      visibleActionLabels: visibleActionButtons.map(
+        (button) => button.getAttribute("aria-label"),
+      ),
+    };
+  });
+  expect(density.appendedActionGroups).toBe(0);
+  expect(density.maxNameHeight).toBeLessThanOrEqual(21);
+  expect(density.maxRowHeight).toBeLessThanOrEqual(52);
+  expect(density.minQueueShare).toBeGreaterThanOrEqual(0.7);
+  expect(density.narrowActionTargets).toEqual([]);
+  expect(density.narrowRowTargets).toEqual([]);
+  expect(density.rowOverflow).toEqual([]);
+  expect(density.visibleActionLabels).toEqual(["Move Food cabinet"]);
+
+  const beforeReorder = await localReplica(page) as {
+    state: {
+      activities: unknown[];
+      locations: {
+        captureStatus: string;
+        id: string;
+        order: number;
+        parentId: string | null;
+      }[];
+      workspace: { revision: number };
+    };
+  };
+  await move.click();
+  const moveDialog = page.getByRole("dialog", {
+    name: "Move Food cabinet",
+  });
+  await expect(moveDialog.getByLabel("Parent space")).toBeFocused();
+  await moveDialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(moveDialog).toHaveCount(0);
+  await expect(move).toBeFocused();
+
+  await move.click();
+  await moveDialog.getByLabel("Position").selectOption({
+    label: "After C-02 · Cabinet above oven",
+  });
+  await moveDialog.getByRole("button", { name: "Review move" }).click();
+  await expect(moveDialog).toHaveCount(0);
+  await expect(page.getByRole("dialog", {
+    name: "Reopen completed spaces?",
+  })).toHaveCount(0);
+  await expect.poll(async () => {
+    const replica = await localReplica(page) as typeof beforeReorder;
+    const locations = replica.state.locations;
+    return {
+      activityCount: replica.state.activities.length,
+      drawerOrder: locations.find((location) => location.id === "loc_drawer")
+        ?.order,
+      foodOrder: locations.find((location) => location.id === "loc_food")
+        ?.order,
+      leftStatus: locations.find((location) => location.id === "loc_left")
+        ?.captureStatus,
+      revision: replica.state.workspace.revision,
+      warmOrder: locations.find((location) => location.id === "loc_warm")
+        ?.order,
+    };
+  }).toEqual(expect.objectContaining({
+    activityCount: beforeReorder.state.activities.length + 1,
+    leftStatus: "counted",
+    revision: beforeReorder.state.workspace.revision + 1,
+  }));
+  const afterReorder = await localReplica(page) as typeof beforeReorder;
+  const reorderedLocations = afterReorder.state.locations;
+  const foodOrder = reorderedLocations.find(
+    (location) => location.id === "loc_food",
+  )?.order ?? 0;
+  expect(foodOrder).toBeGreaterThan(
+    reorderedLocations.find((location) => location.id === "loc_warm")
+      ?.order ?? 0,
+  );
+  expect(foodOrder).toBeLessThan(
+    reorderedLocations.find((location) => location.id === "loc_drawer")
+      ?.order ?? Number.POSITIVE_INFINITY,
+  );
+  const before = await localReplica(page) as typeof beforeReorder;
+
+  await move.click();
+  await moveDialog.getByLabel("Parent space").selectOption("loc_right");
+  await moveDialog.getByRole("button", { name: "Review move" }).click();
+  const confirmation = page.getByRole("dialog", {
+    name: "Reopen completed spaces?",
+  });
+  await expect(confirmation).toContainText("KIT-L · Left side");
+  await expect(confirmation).toContainText("KIT-R · Right side");
+  await confirmation.getByRole("button", { name: "Cancel" }).click();
+  await expect(confirmation).toHaveCount(0);
+  await expect(move).toBeFocused();
+
+  await move.click();
+  await moveDialog.getByLabel("Parent space").selectOption("loc_right");
+  await moveDialog.getByRole("button", { name: "Review move" }).click();
+  await confirmation.getByRole("button", {
+    name: "Move and reopen",
+  }).click();
+  await expect.poll(async () => {
+    const replica = await localReplica(page) as typeof before;
+    return {
+      activityCount: replica.state.activities.length,
+      leftStatus: replica.state.locations.find(
+        (location) => location.id === "loc_left",
+      )?.captureStatus,
+      parentId: replica.state.locations.find(
+        (location) => location.id === "loc_food",
+      )?.parentId,
+      revision: replica.state.workspace.revision,
+      rightStatus: replica.state.locations.find(
+        (location) => location.id === "loc_right",
+      )?.captureStatus,
+    };
+  }).toEqual({
+    activityCount: before.state.activities.length + 1,
+    leftStatus: "in_progress",
+    parentId: "loc_right",
+    revision: before.state.workspace.revision + 1,
+    rightStatus: "in_progress",
+  });
+  await expect(foodRow.locator(".queue-row")).toBeFocused();
+});
+
+test("moves a space from visible mobile tree actions and atomically reopens its completed parents", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "mobile-chromium",
+    "The Pixel 7 Pro project covers the mobile hierarchy fallback",
+  );
+  await page.getByRole("button", {
+    name: "Explore the kitchen demo instead",
+  }).click();
+  await page.locator(".nav:visible", { hasText: "Spaces" }).click();
+
+  const row = page.locator('.tree-row[data-location-id="loc_food"]');
+  await row.locator(".tree-select").click();
+  const earlier = page.getByRole("button", {
+    name: "Earlier Food cabinet",
+  });
+  const later = page.getByRole("button", {
+    name: "Later Food cabinet",
+  });
+  const edit = page.getByRole("button", {
+    name: "Edit details for Food cabinet",
+  });
+  const move = page.getByRole("button", {
+    name: "Move Food cabinet",
+    exact: true,
+  });
+  for (const action of [earlier, later, edit, move]) {
+    await expect(action).toBeVisible();
+  }
+  await expect(move).toBeInViewport();
+  const moveBounds = await move.boundingBox();
+  if (!moveBounds) throw new Error("The mobile tree Move action is not visible");
+  expect(moveBounds.width).toBeGreaterThanOrEqual(44);
+  expect(moveBounds.height).toBeGreaterThanOrEqual(44);
+
+  const panelNavigation = page.getByRole("group", {
+    name: "Space panels navigation",
+  });
+  const inspector = page.locator("#space-inspector");
+  const draftName = "Unsaved food cabinet name";
+  await edit.click();
+  await inspector.getByLabel("Friendly name").fill(draftName);
+  await panelNavigation.getByRole("button", {
+    name: "space hierarchy",
+  }).click();
+  await expect(row).toBeInViewport();
+
+  const before = await localReplica(page) as {
+    state: {
+      activities: {
+        patches: {
+          after?: unknown;
+          before?: unknown;
+          id: string;
+          path: string;
+          target: string;
+        }[];
+      }[];
+      locations: {
+        captureStatus: string;
+        id: string;
+        parentId: string | null;
+      }[];
+      workspace: { revision: number };
+    };
+  };
+  await move.click();
+  const moveDialog = page.getByRole("dialog", {
+    name: "Move Food cabinet",
+  });
+  await expect(moveDialog).toBeVisible();
+  await moveDialog.getByLabel("Parent space").selectOption("loc_right");
+  const position = moveDialog.getByLabel("Position");
+  await expect(position).toBeVisible();
+  const lastPosition = position.locator("option:not([disabled])").last();
+  const lastPositionValue = await lastPosition.getAttribute("value");
+  if (!lastPositionValue) {
+    throw new Error("The hierarchy Move dialog has no selectable position");
+  }
+  await position.selectOption(lastPositionValue);
+  await moveDialog.getByRole("button", { name: "Review move" }).click();
+
+  const confirmation = page.getByRole("dialog", {
+    name: "Reopen completed spaces?",
+  });
+  await expect(confirmation).toBeVisible();
+  await expect(confirmation).toContainText("KIT-L");
+  await expect(confirmation).toContainText("Left side");
+  await expect(confirmation).toContainText("KIT-R");
+  await expect(confirmation).toContainText("Right side");
+  const cancel = confirmation.getByRole("button", { name: "Cancel" });
+  await expect(cancel).toBeVisible();
+  await cancel.click();
+  await expect(confirmation).toHaveCount(0);
+  await expect(move).toBeFocused();
+  const afterCancel = await localReplica(page) as typeof before;
+  expect(afterCancel.state.workspace.revision).toBe(
+    before.state.workspace.revision,
+  );
+  expect(afterCancel.state.activities).toHaveLength(
+    before.state.activities.length,
+  );
+  expect(
+    afterCancel.state.locations.find((location) => location.id === "loc_food")
+      ?.parentId,
+  ).toBe("loc_left");
+
+  await move.click();
+  await moveDialog.getByLabel("Parent space").selectOption("loc_right");
+  await moveDialog.getByLabel("Position").selectOption(lastPositionValue);
+  await moveDialog.getByRole("button", { name: "Review move" }).click();
+  const confirmedMove = page.getByRole("dialog", {
+    name: "Reopen completed spaces?",
+  });
+  await confirmedMove.getByRole("button", {
+    name: "Move and reopen",
+  }).click();
+
+  await expect.poll(async () => {
+    const replica = await localReplica(page) as typeof before;
+    const state = replica.state;
+    return {
+      activityCount: state.activities.length,
+      leftStatus: state.locations.find((location) => location.id === "loc_left")
+        ?.captureStatus,
+      parentId: state.locations.find((location) => location.id === "loc_food")
+        ?.parentId,
+      revision: state.workspace.revision,
+      rightStatus: state.locations.find((location) => location.id === "loc_right")
+        ?.captureStatus,
+    };
+  }).toEqual({
+    activityCount: before.state.activities.length + 1,
+    leftStatus: "in_progress",
+    parentId: "loc_right",
+    revision: before.state.workspace.revision + 1,
+    rightStatus: "in_progress",
+  });
+  const after = await localReplica(page) as typeof before;
+  expect(after.state.activities.at(-1)?.patches).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      after: "loc_right",
+      before: "loc_left",
+      id: "loc_food",
+      path: "parentId",
+      target: "location",
+    }),
+    expect.objectContaining({
+      after: "in_progress",
+      before: "counted",
+      id: "loc_left",
+      path: "captureStatus",
+      target: "location",
+    }),
+    expect.objectContaining({
+      after: "in_progress",
+      before: "counted",
+      id: "loc_right",
+      path: "captureStatus",
+      target: "location",
+    }),
+  ]));
+  await panelNavigation.getByRole("button", {
+    name: "space details",
+  }).click();
+  await expect(inspector.getByLabel("Friendly name")).toHaveValue(draftName);
+  await expect(inspector.getByLabel("Parent space")).toHaveValue("loc_right");
 });
 
 test("guides incomplete evidence into a reviewable plan", async ({ page }) => {
@@ -1973,6 +3072,7 @@ test("keeps the Capture hierarchy readable at compact desktop widths", async ({ 
     const card = document.querySelector<HTMLElement>(".capture > .capture-card");
     const codes = [...document.querySelectorAll<HTMLElement>(".capture-location-row .queue-name b")];
     const names = [...document.querySelectorAll<HTMLElement>(".capture-location-row .queue-name span")];
+    const rows = [...document.querySelectorAll<HTMLElement>(".capture-location-row")];
     const visibleActions = [...document.querySelectorAll<HTMLElement>(".capture-location-row > .row-actions")]
       .filter((actions) => Number.parseFloat(getComputedStyle(actions).opacity) > 0.1);
 
@@ -1984,7 +3084,32 @@ test("keeps the Capture hierarchy readable at compact desktop widths", async ({ 
       clippedNames: names.filter((name) => name.scrollWidth > name.clientWidth).map((name) => name.innerText),
       cardWidth: Math.round(cardBounds.width),
       documentOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      inactiveQueueRightGaps: rows
+        .filter((row) => row.dataset.active !== "true")
+        .map((row) => {
+          const rowBounds = row.getBoundingClientRect();
+          const queueBounds = row.querySelector<HTMLElement>(".queue-row")
+            ?.getBoundingClientRect();
+          return queueBounds
+            ? Math.round(rowBounds.right - queueBounds.right)
+            : Number.POSITIVE_INFINITY;
+        }),
+      maxNameHeight: Math.max(
+        ...names.map((name) => name.getBoundingClientRect().height),
+      ),
+      maxRowHeight: Math.max(
+        ...rows.map((row) => row.getBoundingClientRect().height),
+      ),
+      nonOverlayActions: [
+        ...document.querySelectorAll<HTMLElement>(
+          ".capture-location-row > .row-actions",
+        ),
+      ].filter((actions) => getComputedStyle(actions).position !== "absolute")
+        .length,
       queueWidth: Math.round(queueBounds.width),
+      rowOverflow: rows
+        .filter((row) => row.scrollWidth > row.clientWidth)
+        .map((row) => row.dataset.locationId),
       sideBySide: Math.abs(cardBounds.top - queueBounds.top) < 2 && cardBounds.left > queueBounds.right,
       usesFinePointer: matchMedia("(hover: hover) and (pointer: fine)").matches,
       visibleActions: visibleActions.length,
@@ -1994,8 +3119,13 @@ test("keeps the Capture hierarchy readable at compact desktop widths", async ({ 
   expect(metrics.clippedCodes).toEqual([]);
   expect(metrics.clippedNames).toEqual([]);
   expect(metrics.documentOverflow).toBe(false);
+  expect(Math.max(...metrics.inactiveQueueRightGaps)).toBeLessThanOrEqual(1);
+  expect(metrics.maxNameHeight).toBeLessThanOrEqual(21);
+  expect(metrics.maxRowHeight).toBeLessThanOrEqual(52);
+  expect(metrics.nonOverlayActions).toBe(0);
   expect(metrics.sideBySide).toBe(true);
   expect(metrics.queueWidth).toBeGreaterThanOrEqual(260);
+  expect(metrics.rowOverflow).toEqual([]);
   expect(metrics.cardWidth).toBeGreaterThanOrEqual(280);
   if (metrics.usesFinePointer) expect(metrics.visibleActions).toBe(1);
 

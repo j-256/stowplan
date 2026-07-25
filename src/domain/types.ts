@@ -179,8 +179,19 @@ export interface CommandEnvelope<T extends Command = Command> {
 export type Command =
     | { type: "workspace.rename"; name: string }
     | { type: "location.create"; location: Location }
-    | { type: "location.update"; id: string; changes: Partial<Omit<Location, "id" | "createdAt">> }
-    | { type: "location.move"; id: string; parentId: string | null; order?: number }
+    | {
+          type: "location.update";
+          id: string;
+          changes: Partial<Omit<Location, "id" | "createdAt">>;
+          reopenCompletedParents?: boolean;
+      }
+    | {
+          type: "location.move";
+          id: string;
+          parentId: string | null;
+          order?: number;
+          reopenCompletedParents?: boolean;
+      }
     | { type: "location.reorder"; id: string; order: number }
     | { type: "location.archive"; id: string; archived: boolean }
     | {

@@ -260,14 +260,32 @@ test("keeps hierarchy and touch drag affordances in the shipped organizer", () =
   const application = readFileSync(new URL("../src/client/stowplan-app.tsx", import.meta.url), "utf8");
   const styles = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
   assert.match(application, /aria-label="Space hierarchy"/);
-  assert.match(application, /reorder within/);
-  assert.match(application, /onPointerDown=/);
+  assert.match(application, /to move or nest it/);
+  assert.match(application, /const handlePointerDown/);
+  assert.match(application, /onPointerDown: handlePointerDown/);
+  assert.match(application, /activePointerId\.current = event\.pointerId/);
   assert.match(application, /"before" \| "inside" \| "after"/);
+  assert.match(application, /function locationPlacementForDrop/);
+  assert.match(application, /function useHierarchyChanges/);
+  assert.match(application, /data-collapsible="true"/);
+  assert.match(application, /<span \{\.\.\.sharedProps\} aria-hidden="true">/);
+  assert.match(application, /className="capture-root-drop"/);
   assert.match(
     application,
     /const canReorder = Boolean\(locationFilter\) &&\s+!query\.trim\(\) &&\s+!filteredCaptureComplete/,
   );
-  assert.match(application, /scrollContainer\.current = event\.currentTarget\.closest<HTMLElement>\("\.capture-tree"\)/);
+  assert.match(
+    application,
+    /event\.currentTarget\.closest<HTMLElement>\("\.capture-tree"\)/,
+  );
+  assert.match(
+    application,
+    /event\.currentTarget\.closest<HTMLElement>\("\.app-shell > main"\)/,
+  );
+  assert.match(
+    application,
+    /candidate\.scrollHeight <= candidate\.clientHeight/,
+  );
   assert.match(application, /activeSubmitControl\.focus\(\)/);
   assert.match(application, /Select \$\{actionIdentity\} in/);
   assert.match(application, /"Undo" : "Reapply"\} \$\{entry\.label\}/);
@@ -281,7 +299,9 @@ test("keeps hierarchy and touch drag affordances in the shipped organizer", () =
   assert.match(styles, /\.capture\{grid-template-columns:minmax\(0,1fr\)\}\.finish\{bottom:12px\}\.info-tip>button\{scroll-margin-bottom:8px\}/);
   assert.match(styles, /@media\(max-width:1100px\) and \(min-width:761px\)\{\.capture\{grid-template-columns:minmax\(0,1fr\)\}/);
   assert.match(styles, /\.capture-location-row \.queue-name b\{[^}]*white-space:nowrap/);
-  assert.match(styles, /\.capture-location-row \.queue-name span\{[^}]*overflow:visible[^}]*white-space:normal/);
+  assert.match(styles, /\.capture-location-row \.queue-name span\{[^}]*overflow:hidden[^}]*white-space:nowrap/);
+  assert.match(styles, /\.capture-location-row>\.row-actions\{position:absolute/);
+  assert.match(styles, /\.capture-location-row>\.drag-handle\[data-collapsible="true"\]/);
 });
 
 test("ships task-oriented item, plan, and workspace controls", () => {

@@ -37,6 +37,7 @@ export function ResizablePanels({
   primary,
   primaryLabel,
   secondary,
+  secondaryLabel,
   storageId,
 }: {
   className: string;
@@ -46,6 +47,7 @@ export function ResizablePanels({
   primary: ReactNode;
   primaryLabel: string;
   secondary: ReactNode;
+  secondaryLabel: string;
   storageId: string;
 }) {
   const [canShowSideBySide, setCanShowSideBySide] = useState(true);
@@ -133,6 +135,16 @@ export function ResizablePanels({
   const changePanelPercent = (value: number) => {
     setPanelPercent(clampPanelPercent(value));
   };
+  const scrollToPanel = (index: number) => {
+    const panel = container.current?.querySelectorAll<HTMLElement>(
+      ":scope > section",
+    )[index];
+    if (!panel) return;
+    const behavior = matchMedia("(prefers-reduced-motion: reduce)").matches
+      ? "auto"
+      : "smooth";
+    panel.scrollIntoView({ behavior, block: "start" });
+  };
   const style = {
     "--primary-pane": String(panelPercent / 100),
   } as CSSProperties;
@@ -168,6 +180,18 @@ export function ResizablePanels({
           <span>Stacked</span>
         </button>
       </div>
+    </div>
+    <div
+      className="panel-jump-toolbar"
+      role="group"
+      aria-label={`${label} navigation`}
+    >
+      <button type="button" onClick={() => scrollToPanel(0)}>
+        {primaryLabel}
+      </button>
+      <button type="button" onClick={() => scrollToPanel(1)}>
+        {secondaryLabel}
+      </button>
     </div>
     {primary}
     <div

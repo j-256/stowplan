@@ -42,6 +42,22 @@ function planExpectation(plan: MovePlan, path: keyof MovePlan | ""): FieldExpect
     };
 }
 
+function hierarchyParentExpectations(
+    state: WorkspaceState,
+    location: Location,
+    parentId: string | null | undefined,
+): FieldExpectation[] {
+    if (parentId === undefined || parentId === location.parentId) return [];
+    const parentIds = new Set(
+        [location.parentId, parentId].filter(
+            (candidate): candidate is string => candidate !== null,
+        ),
+    );
+    return state.locations
+        .filter((candidate) => parentIds.has(candidate.id))
+        .map((candidate) => locationExpectation(candidate, "captureStatus"));
+}
+
 export function expectationsForCommand(
     state: WorkspaceState,
     command: Command,
@@ -62,17 +78,34 @@ export function expectationsForCommand(
         const location = state.locations.find((candidate) => candidate.id === command.id);
         if (!location) return [];
         if (command.type === "location.update") {
-            return Object.keys(command.changes).map((path) =>
-                locationExpectation(location, path as keyof Location),
-            );
+            return [
+                ...Object.keys(command.changes).map((path) =>
+                    locationExpectation(location, path as keyof Location)
+                ),
+                ...hierarchyParentExpectations(
+                    state,
+                    location,
+                    command.changes.parentId,
+                ),
+            ];
         }
         if (command.type === "location.move") {
             return [
                 locationExpectation(location, "parentId"),
                 locationExpectation(location, "order"),
+                ...hierarchyParentExpectations(
+                    state,
+                    location,
+                    command.parentId,
+                ),
             ];
         }
-        if (command.type === "location.reorder") return [locationExpectation(location, "order")];
+        if (command.type === "location.reorder") {
+            return [
+                locationExpectation(location, "parentId"),
+                locationExpectation(location, "order"),
+            ];
+        }
         if (command.type === "location.archive") return [locationExpectation(location, "archivedAt")];
         if (command.type === "capture.empty") {
             return [

@@ -521,7 +521,7 @@ describe("organizer command engine", () => {
         expect(state).toEqual(before);
     });
 
-    it("requires reopening completed parents before nested-space content changes", () => {
+    it("requires confirmation before completed-parent content changes", () => {
         const state = createDemoState();
         const before = structuredClone(state);
         const nested = createLocation({
@@ -559,12 +559,6 @@ describe("organizer command engine", () => {
         );
         expectDomainRefusal(
             state,
-            { type: "location.reorder", id: "loc_food", order: -1 },
-            "CAPTURE_COMPLETE",
-            /Reopen Left side before reordering its nested spaces/,
-        );
-        expectDomainRefusal(
-            state,
             { type: "location.archive", id: "loc_counter", archived: true },
             "CAPTURE_COMPLETE",
             /Reopen Right side before archiving a nested space/,
@@ -592,6 +586,215 @@ describe("organizer command engine", () => {
         expect(metadataEdit.locations.find((location) => location.id === "loc_bin")?.description)
             .toBe("Keep sealed");
         expect(state).toEqual(before);
+    });
+
+    it("reorders siblings without reopening their completed parent", () => {
+        const state = createDemoState();
+        const result = applyCommand(
+            state,
+            createEnvelope(state, {
+                type: "location.reorder",
+                id: "loc_food",
+                order: 3,
+            }),
+        );
+
+        expect(
+            result.state.locations.find((location) => location.id === "loc_food")?.order,
+        ).toBe(3);
+        expect(
+            result.state.locations.find((location) => location.id === "loc_food")?.parentId,
+        ).toBe("loc_left");
+        expect(
+            result.state.locations.find((location) => location.id === "loc_left")?.captureStatus,
+        ).toBe("counted");
+        expect(
+            result.activity?.patches.some((candidate) => candidate.path === "captureStatus"),
+        ).toBe(false);
+    });
+
+    it("normalizes same-parent location moves to reorder metadata", () => {
+        const state = createDemoState();
+        const plan = generatePlan(state, { name: "Preserved ordering plan" });
+        state.plans.push(plan);
+
+        const result = applyCommand(
+            state,
+            createEnvelope(state, {
+                type: "location.move",
+                id: "loc_food",
+                parentId: "loc_left",
+                order: 3,
+            }),
+        );
+
+        expect(result.activity?.label).toBe("Reordered Food cabinet");
+        expect(
+            result.activity?.patches.some((candidate) =>
+                candidate.path === "parentId" || candidate.target === "plan"
+            ),
+        ).toBe(false);
+        expect(
+            result.state.locations.find((location) => location.id === "loc_food")?.order,
+        ).toBe(3);
+        expect(
+            result.state.locations.find((location) => location.id === "loc_left")?.captureStatus,
+        ).toBe("counted");
+        expect(
+            result.state.plans.find((candidate) => candidate.id === plan.id)?.status,
+        ).toBe("active");
+    });
+
+    it("rejects a stale sibling reorder after a concurrent reparent", () => {
+        const state = createDemoState();
+        const reorder = createEnvelope(
+            state,
+            {
+                type: "location.reorder",
+                id: "loc_food",
+                order: 3,
+            },
+            { id: "cmd_stale_capture_reorder" },
+        );
+        const moved = applyCommand(
+            state,
+            createEnvelope(
+                state,
+                {
+                    type: "location.move",
+                    id: "loc_food",
+                    parentId: "loc_right",
+                    reopenCompletedParents: true,
+                },
+                { id: "cmd_concurrent_reparent" },
+            ),
+        ).state;
+
+        expect(reorder.expectations.map((candidate) => candidate.path)).toEqual([
+            "parentId",
+            "order",
+        ]);
+        try {
+            applyCommand(moved, reorder);
+            throw new Error("Expected the stale reorder to conflict");
+        } catch (error) {
+            expect(error).toBeInstanceOf(ConflictError);
+            expect((error as ConflictError).conflicts).toEqual(
+                expect.arrayContaining([
+                    expect.objectContaining({
+                        field: "parentId",
+                        id: "loc_food",
+                        target: "location",
+                    }),
+                ]),
+            );
+        }
+    });
+
+    it("atomically reopens completed parents for a confirmed hierarchy move", () => {
+        const state = createDemoState();
+        const command = {
+            type: "location.move",
+            id: "loc_food",
+            parentId: "loc_right",
+            order: 4,
+            reopenCompletedParents: true,
+        } as const;
+        const envelope = createEnvelope(state, command, { id: "cmd_confirmed_move" });
+        const result = applyCommand(state, envelope);
+
+        expect(
+            envelope.expectations
+                .filter((candidate) => candidate.path === "captureStatus")
+                .map((candidate) => candidate.id)
+                .sort(),
+        ).toEqual(["loc_left", "loc_right"]);
+        expect(
+            result.state.locations.find((location) => location.id === "loc_food")?.parentId,
+        ).toBe("loc_right");
+        expect(
+            result.state.locations
+                .filter((location) => ["loc_left", "loc_right"].includes(location.id))
+                .map((location) => [location.id, location.captureStatus])
+                .sort(),
+        ).toEqual([
+            ["loc_left", "in_progress"],
+            ["loc_right", "in_progress"],
+        ]);
+        expect(
+            result.activity?.patches
+                .filter((candidate) => candidate.path === "captureStatus")
+                .map((candidate) => candidate.id)
+                .sort(),
+        ).toEqual(["loc_left", "loc_right"]);
+
+        const undone = applyCommand(
+            result.state,
+            createEnvelope(result.state, {
+                type: "history.undo",
+                activityId: result.activity?.id as string,
+            }),
+        ).state;
+        expect(
+            undone.locations.find((location) => location.id === "loc_food")?.parentId,
+        ).toBe("loc_left");
+        expect(
+            undone.locations
+                .filter((location) => ["loc_left", "loc_right"].includes(location.id))
+                .map((location) => [location.id, location.captureStatus])
+                .sort(),
+        ).toEqual([
+            ["loc_left", "counted"],
+            ["loc_right", "counted"],
+        ]);
+    });
+
+    it("reopens only the completed old parent for confirmed top-level placement", () => {
+        const state = createDemoState();
+        const topLevelOrder = 7;
+        const result = applyCommand(
+            state,
+            createEnvelope(state, {
+                type: "location.move",
+                id: "loc_bin",
+                parentId: null,
+                order: topLevelOrder,
+                reopenCompletedParents: true,
+            }),
+        );
+        const moved = result.state.locations.find(
+            (location) => location.id === "loc_bin",
+        );
+
+        expect(moved?.parentId).toBeNull();
+        expect(moved?.order).toBe(topLevelOrder);
+        expect(
+            result.state.locations.find((location) => location.id === "loc_lower")
+                ?.captureStatus,
+        ).toBe("in_progress");
+        expect(
+            result.activity?.patches
+                .filter((candidate) => candidate.path === "captureStatus")
+                .map((candidate) => candidate.id),
+        ).toEqual(["loc_lower"]);
+
+        const undone = applyCommand(
+            result.state,
+            createEnvelope(result.state, {
+                type: "history.undo",
+                activityId: result.activity?.id as string,
+            }),
+        ).state;
+        const restored = undone.locations.find(
+            (location) => location.id === "loc_bin",
+        );
+
+        expect(restored?.parentId).toBe("loc_lower");
+        expect(restored?.order).toBe(0);
+        expect(
+            undone.locations.find((location) => location.id === "loc_lower")
+                ?.captureStatus,
+        ).toBe("counted");
     });
 
     it("refuses unchanged reorder and placement commands without changing state", () => {

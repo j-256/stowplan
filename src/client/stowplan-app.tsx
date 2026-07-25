@@ -44,6 +44,7 @@ import {
   X,
 } from "lucide-react";
 import { createDemoState } from "../domain/demo";
+import { expectationsForCommand } from "../domain/expectations";
 import { createEmptyState, createItem, createLocation, newId } from "../domain/factories";
 import { suggestLocationCode } from "../domain/location-code";
 import { DEFAULT_PLAN_WEIGHTS, generatePlan as buildMovePlan } from "../domain/planner";
@@ -55,6 +56,7 @@ import type {
   CaptureStatus,
   Command,
   Dimensions,
+  FieldExpectation,
   Frequency,
   ItemRecord,
   Location,
@@ -63,7 +65,7 @@ import type {
   ThemePreference,
   WorkspaceState,
 } from "../domain/types";
-import { captureReorderOrder, nextCaptureLocation } from "./capture-order";
+import { nextCaptureLocation } from "./capture-order";
 import {
   parseAppUrl,
   WORKSPACE_LIST_PATH,
@@ -84,6 +86,17 @@ import { DEVICE_ONLY_BACKUP_ERROR, StowplanProvider, useStowplan, WorkspaceOpenE
 
 type View = WorkspaceView;
 type Commit = (command: Command) => Promise<void>;
+type LocationHierarchyCommand = Extract<
+  Command,
+  { type: "location.move" | "location.update" }
+>;
+type LocationPlacementCommand = Extract<
+  Command,
+  { type: "location.move" | "location.reorder" }
+>;
+type LocationChangeCommand =
+  | LocationHierarchyCommand
+  | LocationPlacementCommand;
 type DragPayload = { id: string; type: "item" | "location" };
 type DropIntent = "before" | "inside" | "after";
 type DropTarget = { id: string | null; intent: DropIntent; kind: "item" | "location" | "root" };
@@ -109,6 +122,14 @@ type BackupPresentation = {
   offline?: boolean;
   state: "blocked" | "local" | "pending" | "synced";
 };
+type PendingHierarchyChange = {
+  command: LocationHierarchyCommand;
+  completedParentIds: string[];
+  expectations: FieldExpectation[];
+};
+type LocationPlacementResult =
+  | { command: LocationPlacementCommand; destinationParentId: string | null }
+  | { error: string };
 const CONTAINER_REVIEW_KIND = Object.freeze({
   EMPTY: "empty",
   KNOWN_EMPTY: "known-empty",
@@ -163,6 +184,8 @@ const COMPLETE_CAPTURE_STATUSES = new Set<CaptureStatus>([
   "counted",
   "known_empty",
 ]);
+const STACKED_TOUCH_LAYOUT_QUERY =
+  "(max-width: 760px), (max-height: 520px) and (pointer: coarse) and (min-width: 761px)";
 const BROWSER_HISTORY_STATE = Object.freeze({ stowplan: true });
 const ITEM_MODAL_HISTORY_STATE = Object.freeze({
   ...BROWSER_HISTORY_STATE,
@@ -172,6 +195,11 @@ const DISMISS_FEEDBACK_EVENT = "stowplan:feedback-dismiss";
 const FEEDBACK_EVENT = "stowplan:feedback";
 const SEARCH_BLOCKED_EVENT = "stowplan:search-blocked";
 const REORDER_DROP_MIDPOINT = 0.5;
+const TOUCH_TAP_DISTANCE_PX = 8;
+const LOCATION_POSITION = Object.freeze({
+  AFTER_PREFIX: "after:",
+  FIRST: "first",
+});
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "stowplan-sidebar-collapsed";
 const THEME_STORAGE_KEY = "stowplan-theme";
 const THEME_PREFERENCES = new Set<ThemePreference>([
@@ -239,6 +267,15 @@ function orderAfter<T extends { id: string; order: number }>(records: T[], sourc
   const target = sorted[index];
   const after = sorted[index + 1];
   return after ? (target.order + after.order) / 2 : target.order + 1;
+}
+function expectationFingerprint(
+  expectations: FieldExpectation[],
+): string {
+  return JSON.stringify([...expectations].sort((left, right) =>
+    `${left.target}:${left.id}:${left.path}`.localeCompare(
+      `${right.target}:${right.id}:${right.path}`,
+    )
+  ));
 }
 function flattenLocationTree(locations: Location[]): TreeEntry[] {
   const entries: TreeEntry[] = [];
@@ -311,40 +348,219 @@ function reorderTargetAt(
     ? reorderDropTarget(target, clientY, kind, id)
     : null;
 }
-function TouchDragHandle({ label, onActiveChange, onDrop, onInvalidDrop, targetAt = dropTargetAt }: { label: string; onActiveChange?: (active: boolean) => void; onDrop: (target: DropTarget) => void; onInvalidDrop?: () => void; targetAt?: (clientX: number, clientY: number) => DropTarget | null }) {
+function TouchDragHandle({
+  expanded,
+  label,
+  onActiveChange,
+  onDrop,
+  onInvalidDrop,
+  onTap,
+  targetAt = dropTargetAt,
+}: {
+  expanded?: boolean;
+  label: string;
+  onActiveChange?: (active: boolean) => void;
+  onDrop: (target: DropTarget) => void;
+  onInvalidDrop?: () => void;
+  onTap?: () => void;
+  targetAt?: (clientX: number, clientY: number) => DropTarget | null;
+}) {
   const active = useRef(false);
+  const activeChange = useRef(onActiveChange);
+  const activePointerId = useRef<number | null>(null);
+  const autoScrollFrame = useRef<number | null>(null);
+  const displayedTarget = useRef<DropTarget | null>(null);
   const highlighted = useRef<HTMLElement | null>(null);
+  const pointer = useRef<{ clientX: number; clientY: number } | null>(null);
   const scrollContainer = useRef<HTMLElement | null>(null);
+  const suppressTapClick = useRef(false);
+  const touchStart = useRef<{ clientX: number; clientY: number } | null>(null);
+  useEffect(() => {
+    activeChange.current = onActiveChange;
+  }, [onActiveChange]);
+  useEffect(() => () => {
+    active.current = false;
+    if (autoScrollFrame.current !== null) {
+      cancelAnimationFrame(autoScrollFrame.current);
+    }
+    activeChange.current?.(false);
+    highlighted.current?.removeAttribute("data-touch-drop-active");
+    highlighted.current?.removeAttribute("data-touch-drop-intent");
+    document.documentElement.removeAttribute("data-touch-dragging");
+  }, []);
   const clear = () => {
     active.current = false;
+    if (autoScrollFrame.current !== null) {
+      cancelAnimationFrame(autoScrollFrame.current);
+      autoScrollFrame.current = null;
+    }
     onActiveChange?.(false);
     highlighted.current?.removeAttribute("data-touch-drop-active");
     highlighted.current?.removeAttribute("data-touch-drop-intent");
     highlighted.current = null;
+    displayedTarget.current = null;
+    activePointerId.current = null;
+    pointer.current = null;
+    scrollContainer.current = null;
+    touchStart.current = null;
     document.documentElement.removeAttribute("data-touch-dragging");
   };
-  const track = (clientX: number, clientY: number) => {
-    const scrollable = scrollContainer.current;
-    if (scrollable) {
-      const bounds = scrollable.getBoundingClientRect();
-      if (clientY < bounds.top + 48) scrollable.scrollBy({ top: -18, behavior: "auto" });
-      else if (clientY > bounds.bottom - 48) scrollable.scrollBy({ top: 18, behavior: "auto" });
-    } else if (clientY < 72) window.scrollBy({ top: -18, behavior: "auto" });
-    else if (clientY > window.innerHeight - 92) window.scrollBy({ top: 18, behavior: "auto" });
+  const highlight = (clientX: number, clientY: number) => {
     const dropTarget = targetAt(clientX, clientY);
     const candidate = document.elementFromPoint(clientX, clientY)?.closest<HTMLElement>("[data-drop-target]") ?? null;
     const target = dropTarget ? candidate : null;
+    displayedTarget.current = target ? dropTarget : null;
     highlighted.current?.removeAttribute("data-touch-drop-active");
     highlighted.current?.removeAttribute("data-touch-drop-intent");
     highlighted.current = target;
     target?.setAttribute("data-touch-drop-active", "true");
     if (dropTarget) target?.setAttribute("data-touch-drop-intent", dropTarget.intent);
   };
-  return <span className="drag-handle" aria-hidden="true" title={label} draggable
-    onPointerDown={(event) => { if (event.pointerType === "mouse") return; event.preventDefault(); active.current = true; scrollContainer.current = event.currentTarget.closest<HTMLElement>(".capture-tree"); onActiveChange?.(true); event.currentTarget.setPointerCapture(event.pointerId); document.documentElement.dataset.touchDragging = "true"; track(event.clientX, event.clientY); }}
-    onPointerMove={(event) => { if (active.current) track(event.clientX, event.clientY); }}
-    onPointerUp={(event) => { if (!active.current) return; const target = targetAt(event.clientX, event.clientY); clear(); if (target) onDrop(target); else onInvalidDrop?.(); }}
-    onPointerCancel={clear}><GripVertical aria-hidden /></span>;
+  const scrollAtEdge = (clientY: number): boolean => {
+    const scrollable = scrollContainer.current;
+    if (scrollable) {
+      const bounds = scrollable.getBoundingClientRect();
+      if (clientY < bounds.top + 48) {
+        scrollable.scrollBy({ top: -18, behavior: "auto" });
+        return true;
+      }
+      if (clientY > bounds.bottom - 48) {
+        scrollable.scrollBy({ top: 18, behavior: "auto" });
+        return true;
+      }
+      return false;
+    }
+    if (clientY < 72) {
+      window.scrollBy({ top: -18, behavior: "auto" });
+      return true;
+    }
+    if (clientY > window.innerHeight - 92) {
+      window.scrollBy({ top: 18, behavior: "auto" });
+      return true;
+    }
+    return false;
+  };
+  const autoScroll = () => {
+    const current = pointer.current;
+    if (!active.current || !current) {
+      autoScrollFrame.current = null;
+      return;
+    }
+    if (scrollAtEdge(current.clientY)) {
+      highlight(current.clientX, current.clientY);
+    }
+    autoScrollFrame.current = requestAnimationFrame(autoScroll);
+  };
+  const track = (clientX: number, clientY: number) => {
+    pointer.current = { clientX, clientY };
+    highlight(clientX, clientY);
+  };
+  const handleClick = (event: React.MouseEvent<HTMLElement>) => {
+    if (!onTap) return;
+    event.stopPropagation();
+    if (suppressTapClick.current) {
+      suppressTapClick.current = false;
+      return;
+    }
+    onTap();
+  };
+  const handleDragStart = (event: React.DragEvent<HTMLElement>) => {
+    if (!active.current) return;
+    event.preventDefault();
+    event.stopPropagation();
+  };
+  const handlePointerDown = (event: React.PointerEvent<HTMLElement>) => {
+    if (event.pointerType === "mouse" || active.current) return;
+    event.preventDefault();
+    active.current = true;
+    activePointerId.current = event.pointerId;
+    touchStart.current = {
+      clientX: event.clientX,
+      clientY: event.clientY,
+    };
+    const scrollCandidates = [
+      event.currentTarget.closest<HTMLElement>(".capture-tree"),
+      event.currentTarget.closest<HTMLElement>(".app-shell > main"),
+    ];
+    scrollContainer.current = scrollCandidates.find((candidate) => {
+      if (!candidate || candidate.scrollHeight <= candidate.clientHeight) {
+        return false;
+      }
+      const overflowY = getComputedStyle(candidate).overflowY;
+      return overflowY === "auto" || overflowY === "scroll";
+    }) ?? null;
+    onActiveChange?.(true);
+    event.currentTarget.setPointerCapture(event.pointerId);
+    document.documentElement.dataset.touchDragging = "true";
+    track(event.clientX, event.clientY);
+    autoScrollFrame.current = requestAnimationFrame(autoScroll);
+  };
+  const handlePointerMove = (event: React.PointerEvent<HTMLElement>) => {
+    if (
+      active.current &&
+      event.pointerId === activePointerId.current
+    ) {
+      track(event.clientX, event.clientY);
+    }
+  };
+  const handlePointerUp = (event: React.PointerEvent<HTMLElement>) => {
+      if (
+        !active.current ||
+        event.pointerId !== activePointerId.current
+      ) return;
+      const start = touchStart.current;
+      const tapped = Boolean(
+        onTap &&
+        start &&
+        Math.hypot(
+          event.clientX - start.clientX,
+          event.clientY - start.clientY,
+        ) <= TOUCH_TAP_DISTANCE_PX,
+      );
+      const target = displayedTarget.current ??
+        targetAt(event.clientX, event.clientY);
+      clear();
+      if (tapped) {
+        suppressTapClick.current = true;
+        onTap?.();
+        setTimeout(() => {
+          suppressTapClick.current = false;
+        }, 0);
+      }
+      else if (target) onDrop(target);
+      else onInvalidDrop?.();
+  };
+  const handlePointerCancel = (event: React.PointerEvent<HTMLElement>) => {
+    if (event.pointerId === activePointerId.current) clear();
+  };
+  const sharedProps = {
+    className: "drag-handle",
+    draggable: true,
+    onDragStart: handleDragStart,
+    onPointerCancel: handlePointerCancel,
+    onPointerDown: handlePointerDown,
+    onPointerMove: handlePointerMove,
+    onPointerUp: handlePointerUp,
+    title: label,
+  };
+  const content = <>
+    <GripVertical aria-hidden />
+    {onTap && (expanded
+      ? <ChevronDown aria-hidden />
+      : <ChevronRight aria-hidden />)}
+  </>;
+  return onTap
+    ? <button
+        {...sharedProps}
+        type="button"
+        aria-expanded={expanded}
+        aria-label={label}
+        data-collapsible="true"
+        onClick={handleClick}
+      >
+        {content}
+      </button>
+    : <span {...sharedProps} aria-hidden="true">{content}</span>;
 }
 function writeDrag(event: React.DragEvent, payload: DragPayload): void {
   const value = JSON.stringify(payload);
@@ -572,6 +788,321 @@ function descendantIds(state: WorkspaceState, locationId: string): string[] {
     }
   }
   return found;
+}
+
+function displayedLocationParentId(
+  locations: Location[],
+  location: Location,
+): string | null {
+  return location.parentId &&
+      locations.some((candidate) => candidate.id === location.parentId)
+    ? location.parentId
+    : null;
+}
+
+function locationPlacementForDrop(
+  state: WorkspaceState,
+  sourceId: string,
+  target: DropTarget,
+): LocationPlacementResult {
+  const live = state.locations.filter((location) => !location.archivedAt);
+  const source = live.find((location) => location.id === sourceId);
+  if (!source) return { error: "That space is no longer available" };
+  const forbiddenParentIds = new Set([
+    source.id,
+    ...descendantIds(state, source.id),
+  ]);
+  if (target.kind === "root") {
+    if (source.parentId === null) {
+      return { error: `${source.name} is already at the top level` };
+    }
+    const siblings = live.filter((candidate) =>
+      displayedLocationParentId(live, candidate) === null &&
+      candidate.id !== source.id
+    );
+    return {
+      command: {
+        type: "location.move",
+        id: source.id,
+        parentId: null,
+        order: nextOrder(siblings),
+      },
+      destinationParentId: null,
+    };
+  }
+  if (target.kind !== "location" || !target.id) {
+    return {
+      error: "Spaces can only be dropped onto another space or the top-level target",
+    };
+  }
+  if (source.id === target.id) {
+    return { error: `Choose a different destination for ${source.name}` };
+  }
+  const destination = live.find((location) => location.id === target.id);
+  if (!destination) return { error: "That destination is no longer available" };
+  const destinationParentId = target.intent === "inside"
+    ? destination.id
+    : displayedLocationParentId(live, destination);
+  if (
+    destinationParentId !== null &&
+    forbiddenParentIds.has(destinationParentId)
+  ) {
+    return { error: `${source.name} cannot be moved inside itself` };
+  }
+  const siblings = live.filter((candidate) =>
+    displayedLocationParentId(live, candidate) === destinationParentId &&
+    candidate.id !== source.id
+  );
+  const order = target.intent === "inside"
+    ? nextOrder(siblings)
+    : target.intent === "before"
+      ? orderBefore(siblings, source.id, destination.id)
+      : orderAfter(siblings, source.id, destination.id);
+  if (order === null) {
+    return { error: `Choose a different destination for ${source.name}` };
+  }
+  return {
+    command: source.parentId === destinationParentId
+      ? { type: "location.reorder", id: source.id, order }
+      : {
+          type: "location.move",
+          id: source.id,
+          parentId: destinationParentId,
+          order,
+        },
+    destinationParentId,
+  };
+}
+
+function useHierarchyChanges({
+  commit,
+  findSourceTrigger,
+  onApplied,
+  state,
+}: {
+  commit: Commit;
+  findSourceTrigger: (id: string) => HTMLElement | null;
+  onApplied: (command: LocationChangeCommand) => void;
+  state: WorkspaceState;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [movingLocationId, setMovingLocationId] = useState<string | null>(null);
+  const [pending, setPending] = useState<PendingHierarchyChange | null>(null);
+  const busyRef = useRef(false);
+  const moveDialog = useRef<HTMLElement | null>(null);
+  const reviewDialog = useRef<HTMLElement | null>(null);
+  const trigger = useRef<HTMLElement | null>(null);
+  const live = state.locations.filter((location) => !location.archivedAt);
+  const movingLocation = movingLocationId
+    ? live.find((location) => location.id === movingLocationId) ?? null
+    : null;
+  const pendingLocation = pending
+    ? live.find((location) => location.id === pending.command.id) ?? null
+    : null;
+  const pendingCompletedParents = pending
+    ? pending.completedParentIds
+        .map((id) => live.find((location) => location.id === id))
+        .filter((location): location is Location => Boolean(location))
+    : [];
+  const activeDialog = pending && pendingLocation
+    ? "review"
+    : movingLocation
+      ? "move"
+      : null;
+  const completedParentIds = (
+    command: LocationHierarchyCommand,
+  ): string[] => {
+    const location = live.find((candidate) => candidate.id === command.id);
+    if (!location) return [];
+    const parentId = command.type === "location.move"
+      ? command.parentId
+      : command.changes.parentId !== undefined
+        ? command.changes.parentId
+        : location.parentId;
+    if (parentId === location.parentId) return [];
+    return [...new Set([location.parentId, parentId])]
+      .filter((id): id is string => Boolean(id))
+      .filter((id) => {
+        const parent = live.find((candidate) => candidate.id === id);
+        return Boolean(
+          parent &&
+          COMPLETE_CAPTURE_STATUSES.has(parent.captureStatus),
+        );
+      });
+  };
+  const applyHierarchyChange = async (
+    command: LocationHierarchyCommand,
+    reopenCompletedParents = false,
+  ): Promise<boolean> => {
+    if (busyRef.current) {
+      showFeedback("The hierarchy change is still in progress", "info");
+      return false;
+    }
+    if (reopenCompletedParents && pending) {
+      const currentExpectations = expectationsForCommand(state, command);
+      if (
+        expectationFingerprint(currentExpectations) !==
+        expectationFingerprint(pending.expectations)
+      ) {
+        setPending(null);
+        showFeedback(
+          "This space changed while the move was open. Review its latest position before moving it.",
+          "info",
+        );
+        return false;
+      }
+      const currentCompletedParentIds = completedParentIds(command);
+      if (
+        currentCompletedParentIds.length !== pending.completedParentIds.length ||
+        currentCompletedParentIds.some(
+          (id) => !pending.completedParentIds.includes(id),
+        )
+      ) {
+        if (currentCompletedParentIds.length === 0) {
+          setPending(null);
+          return applyHierarchyChange(command);
+        }
+        setPending({
+          command,
+          completedParentIds: currentCompletedParentIds,
+          expectations: currentExpectations,
+        });
+        showFeedback(
+          "The affected completed spaces changed. Review the updated list before moving.",
+          "info",
+        );
+        return false;
+      }
+    }
+    busyRef.current = true;
+    setBusy(true);
+    const prepared: LocationHierarchyCommand = {
+      ...command,
+      reopenCompletedParents,
+    };
+    const applied = await perform(commit, prepared);
+    busyRef.current = false;
+    setBusy(false);
+    if (applied) {
+      setPending(null);
+      setMovingLocationId(null);
+      onApplied(command);
+      const location = live.find((candidate) => candidate.id === command.id);
+      showFeedback(
+        `${location?.code ?? "Space"} · ${location?.name ?? "Space"} moved`,
+        "success",
+      );
+    }
+    return applied;
+  };
+  const requestHierarchyChange = async (
+    command: LocationHierarchyCommand,
+    sourceTrigger?: HTMLElement | null,
+  ): Promise<boolean> => {
+    const completed = completedParentIds(command);
+    if (completed.length > 0) {
+      trigger.current = sourceTrigger?.isConnected
+        ? sourceTrigger
+        : findSourceTrigger(command.id);
+      dismissFeedback();
+      setPending({
+        command,
+        completedParentIds: completed,
+        expectations: expectationsForCommand(state, command),
+      });
+      return false;
+    }
+    return applyHierarchyChange(command);
+  };
+  const openMoveDialog = (
+    location: Location,
+    sourceTrigger: HTMLElement,
+  ) => {
+    trigger.current = sourceTrigger;
+    setPending(null);
+    setMovingLocationId(location.id);
+  };
+  const reviewPlacement = async (
+    command: LocationPlacementCommand,
+  ): Promise<void> => {
+    setMovingLocationId(null);
+    if (command.type === "location.move") {
+      await requestHierarchyChange(command, trigger.current);
+      return;
+    }
+    const applied = await perform(commit, command);
+    if (!applied) return;
+    onApplied(command);
+    const location = live.find((candidate) => candidate.id === command.id);
+    showFeedback(
+      `${location?.code ?? "Space"} · ${location?.name ?? "Space"} reordered`,
+      "success",
+    );
+  };
+  useEffect(() => {
+    if (!activeDialog) return;
+    const dialog = activeDialog === "review"
+      ? reviewDialog.current
+      : moveDialog.current;
+    const sourceTrigger = trigger.current;
+    const frame = requestAnimationFrame(() =>
+      dialog
+        ?.querySelector<HTMLElement>("[data-dialog-initial-focus]")
+        ?.focus()
+    );
+    const previousBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        if (busyRef.current) {
+          showFeedback("The hierarchy change is still in progress", "info");
+          return;
+        }
+        if (activeDialog === "review") setPending(null);
+        else setMovingLocationId(null);
+        return;
+      }
+      if (event.key !== "Tab" || !dialog) return;
+      const focusable = Array.from(
+        dialog.querySelectorAll<HTMLElement>(
+          "button:not(:disabled), select:not(:disabled), input:not(:disabled), textarea:not(:disabled), [href], [tabindex]:not([tabindex='-1'])",
+        ),
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    addEventListener("keydown", handleKeyDown);
+    return () => {
+      cancelAnimationFrame(frame);
+      removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = previousBodyOverflow;
+      if (sourceTrigger?.isConnected) sourceTrigger.focus();
+    };
+  }, [activeDialog]);
+  return {
+    applyHierarchyChange,
+    busy,
+    closeMoveDialog: () => setMovingLocationId(null),
+    closeReviewDialog: () => setPending(null),
+    moveDialog,
+    movingLocation,
+    openMoveDialog,
+    pending,
+    pendingCompletedParents,
+    pendingLocation,
+    requestHierarchyChange,
+    reviewDialog,
+    reviewPlacement,
+  };
 }
 
 function updateSuggestedLocationCode(
@@ -1281,6 +1812,10 @@ function updateBrowserHistory(
 
 function scrollAppToTop(): void {
   window.scrollTo({ left: 0, top: 0 });
+  document.querySelector<HTMLElement>(".app-shell > main")?.scrollTo({
+    left: 0,
+    top: 0,
+  });
 }
 
 function Brand() {
@@ -1478,11 +2013,13 @@ function Onboarding({ backupConfigured, currentId, currentName, isDemo = false, 
 }
 
 function Capture({ state, current, select, commit, focusEditorKey }: { state: WorkspaceState; current: Location | null; select: (id: string) => void; commit: Commit; focusEditorKey: number | null }) {
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const [editing, setEditing] = useState<string | null>(null);
   const [emptying, setEmptying] = useState(false);
   const [containerReview, setContainerReview] = useState<ContainerReview | null>(null);
   const [containerReviewNotice, setContainerReviewNotice] = useState("");
   const [editorNavigationKey, setEditorNavigationKey] = useState(0);
+  const [hierarchyDragging, setHierarchyDragging] = useState(false);
   const [nativeReorderCue, setNativeReorderCue] = useState<DropTarget | null>(null);
   const [nativeReorderSource, setNativeReorderSource] = useState<DragPayload | null>(null);
   const [queueQuery, setQueueQuery] = useState("");
@@ -1500,7 +2037,15 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
       for (const ancestor of locationPath(live, entry.location.id)) visibleIds.add(ancestor.id);
     }
   }
-  const queueShown = tree.filter((entry) => visibleIds.has(entry.location.id));
+  const queueShown = tree.filter((entry) =>
+    visibleIds.has(entry.location.id) &&
+    (
+      normalizedQuery ||
+      !locationPath(live, entry.location.id)
+        .slice(0, -1)
+        .some((ancestor) => collapsed.has(ancestor.id))
+    )
+  );
   const done = live.filter((location) =>
     COMPLETE_CAPTURE_STATUSES.has(location.captureStatus)
   ).length;
@@ -1513,6 +2058,54 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
   const nextUncounted = current
     ? nextCaptureLocation(tree, current.id)
     : undefined;
+  const revealCaptureHierarchyChange = (
+    command: LocationChangeCommand,
+  ) => {
+    const location = live.find((candidate) => candidate.id === command.id);
+    if (!location) return;
+    const parentId = command.type === "location.move"
+      ? command.parentId
+      : command.type === "location.update" &&
+          command.changes.parentId !== undefined
+        ? command.changes.parentId
+        : location.parentId;
+    const ancestorIds = parentId
+      ? locationPath(live, parentId).map((ancestor) => ancestor.id)
+      : [];
+    setCollapsed((currentCollapsed) => {
+      const next = new Set(currentCollapsed);
+      for (const ancestorId of ancestorIds) next.delete(ancestorId);
+      return next;
+    });
+    select(location.id);
+    requestAnimationFrame(() => {
+      const row = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          ".capture-location-row[data-location-id]",
+        ),
+      ).find((candidate) => candidate.dataset.locationId === location.id);
+      const behavior = matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "auto"
+        : "smooth";
+      row?.scrollIntoView({ behavior, block: "center" });
+      row?.querySelector<HTMLButtonElement>(".queue-row")?.focus({
+        preventScroll: true,
+      });
+    });
+  };
+  const hierarchy = useHierarchyChanges({
+    commit,
+    findSourceTrigger: (id) => {
+      const row = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          ".capture-location-row[data-location-id]",
+        ),
+      ).find((candidate) => candidate.dataset.locationId === id);
+      return row?.querySelector<HTMLButtonElement>(".queue-row") ?? null;
+    },
+    onApplied: revealCaptureHierarchyChange,
+    state,
+  });
   useEffect(() => {
     if (focusEditorKey === null && editorNavigationKey === 0) return;
     const frame = requestAnimationFrame(() => {
@@ -1557,6 +2150,26 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
       if (restoreContainerReviewFocus.current && trigger?.isConnected) trigger.focus();
     };
   }, [containerReview]);
+  const selectCaptureLocation = (
+    id: string,
+    focusEditorOnTouch = true,
+  ) => {
+    const ancestorIds = locationPath(live, id)
+      .slice(0, -1)
+      .map((ancestor) => ancestor.id);
+    setCollapsed((currentCollapsed) => {
+      const next = new Set(currentCollapsed);
+      for (const ancestorId of ancestorIds) next.delete(ancestorId);
+      return next;
+    });
+    select(id);
+    if (
+      focusEditorOnTouch &&
+      matchMedia(STACKED_TOUCH_LAYOUT_QUERY).matches
+    ) {
+      setEditorNavigationKey((value) => value + 1);
+    }
+  };
   const addContainer = async (data: FormData) => {
     const topLevel = data.get("topLevel") === "on";
     if (captureComplete && !topLevel) {
@@ -1586,7 +2199,7 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
           : `${current.name} is marked counted`,
         "success",
       );
-      if (next) select(next.id);
+      if (next) selectCaptureLocation(next.id);
     });
   };
   const openContainerReview = (
@@ -1679,7 +2292,7 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
         `${containerReview.locationName} was emptied and is now known empty. Undo is available in Activity.`,
         "success",
       );
-      if (next) select(next.id);
+      if (next) selectCaptureLocation(next.id);
     });
     emptyingRef.current = false;
     setEmptying(false);
@@ -1717,12 +2330,8 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
     writeDrag(event, payload);
   };
   const endNativeReorder = () => clearNativeReorder();
-  const canDropLocation = (sourceId: string, targetId: string) => {
-    if (sourceId === targetId) return false;
-    const source = live.find((location) => location.id === sourceId);
-    const target = live.find((location) => location.id === targetId);
-    return Boolean(source && target && source.parentId === target.parentId);
-  };
+  const canDropLocation = (sourceId: string, target: DropTarget) =>
+    !("error" in locationPlacementForDrop(state, sourceId, target));
   const canDropItem = (sourceId: string, targetId: string) => {
     if (sourceId === targetId) return false;
     const source = state.items.find((item) => item.id === sourceId);
@@ -1744,45 +2353,48 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
       setNativeReorderCue(null);
     }
   };
-  const reorderLocationByDrop = (payload: DragPayload | null, target: DropTarget) => {
-    if (payload?.type !== "location" || target.kind !== "location" || !target.id || payload.id === target.id) return;
-    const order = captureReorderOrder(live, payload.id, target.id, target.intent);
-    if (order !== null) void perform(commit, { type: "location.reorder", id: payload.id, order });
+  const placeLocationByDrop = (
+    payload: DragPayload | null,
+    target: DropTarget,
+  ) => {
+    if (payload?.type !== "location") {
+      showFeedback("That dragged space could not be read");
+      return;
+    }
+    const placement = locationPlacementForDrop(state, payload.id, target);
+    if ("error" in placement) {
+      showFeedback(placement.error);
+      return;
+    }
+    void hierarchy.reviewPlacement(placement.command);
   };
-  const dragOverLocation = (event: React.DragEvent<HTMLElement>, targetId: string) => {
+  const dragOverLocation = (
+    event: React.DragEvent<HTMLElement>,
+    fallback: DropTarget,
+  ) => {
+    const payload = readDrag(event) ?? nativeReorderSource;
+    const target = dropTargetAt(event.clientX, event.clientY) ?? fallback;
+    event.preventDefault();
     if (
-      nativeReorderSource?.type !== "location" ||
-      !canDropLocation(nativeReorderSource.id, targetId)
+      payload?.type !== "location" ||
+      !canDropLocation(payload.id, target)
     ) {
-      event.preventDefault();
       event.dataTransfer.dropEffect = "none";
       setNativeReorderCue(null);
       return;
     }
-    event.preventDefault();
     event.dataTransfer.dropEffect = "move";
-    setNativeReorderCue(
-      reorderDropTarget(event.currentTarget, event.clientY, "location", targetId),
-    );
+    setNativeReorderCue(target);
   };
-  const dropOnLocation = (event: React.DragEvent<HTMLElement>, targetId: string) => {
+  const dropOnLocation = (
+    event: React.DragEvent<HTMLElement>,
+    fallback: DropTarget,
+  ) => {
     const payload = readDrag(event) ?? nativeReorderSource;
-    if (
-      payload?.type !== "location" ||
-      !canDropLocation(payload.id, targetId)
-    ) {
-      event.preventDefault();
-      showFeedback(
-        "Capture only reorders sibling spaces. Use Spaces to change nesting.",
-      );
-      clearNativeReorder();
-      return;
-    }
     event.preventDefault();
-    reorderLocationByDrop(
-      payload,
-      reorderDropTarget(event.currentTarget, event.clientY, "location", targetId),
-    );
+    event.stopPropagation();
+    const target = dropTargetAt(event.clientX, event.clientY) ?? fallback;
+    placeLocationByDrop(payload, target);
     clearNativeReorder();
   };
   const reorder = (id: string, direction: -1 | 1) => {
@@ -1844,47 +2456,130 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
     : current?.captureStatus === "counted"
       ? CheckCircle2
       : CircleDashed;
-  const queuePanel = <section className="panel queue"><div className="title"><div><p className="eyebrow">First-pass coverage</p><h2>{done} of {live.length} checked</h2></div><b>{live.length - done} left</b></div><div className="progress"><i style={{ width: `${live.length ? done / live.length * 100 : 0}%` }} /></div>{live.length > 5 && <label className="queue-search"><Search /><input aria-label="Find container" value={queueQuery} onChange={(event) => setQueueQuery(event.target.value)} placeholder="Jump by code or name" /></label>}<p className="capture-order-help">Reorder siblings here by dragging or using Move up and Move down. Change nesting in Spaces.</p><div className="capture-tree" role="list" aria-label="Container hierarchy" data-dragging={nativeReorderSource?.type === "location" ? "true" : undefined}>{queueShown.map(({ childCount, depth, location }) => {
+  const queuePanel = <section className="panel queue"><div className="title"><div><p className="eyebrow">First-pass coverage</p><h2>{done} of {live.length} checked</h2></div><b>{live.length - done} left</b></div><div className="progress"><i style={{ width: `${live.length ? done / live.length * 100 : 0}%` }} /></div>{live.length > 5 && <label className="queue-search"><Search /><input aria-label="Find container" value={queueQuery} onChange={(event) => setQueueQuery(event.target.value)} placeholder="Jump by code or name" /></label>}<p className="capture-order-help">Drag onto the top, middle, or bottom of a row to place before, move inside, or place after. Select a row for a precise Move control.</p><div className="capture-tree" role="list" aria-label="Container hierarchy" data-dragging={hierarchyDragging || nativeReorderSource?.type === "location" ? "true" : undefined}>
+    <div
+      className="capture-root-drop"
+      data-drop-target="root"
+      data-drop-intent={nativeReorderCue?.kind === "root" ? "inside" : undefined}
+      onDragOver={(event) => dragOverLocation(event, {
+        id: null,
+        intent: "inside",
+        kind: "root",
+      })}
+      onDrop={(event) => dropOnLocation(event, {
+        id: null,
+        intent: "inside",
+        kind: "root",
+      })}
+    >
+      Make top level
+    </div>
+    {queueShown.map(({ childCount, depth, location }) => {
       const siblings = sortLocations(live.filter((candidate) => candidate.parentId === location.parentId));
       const index = siblings.findIndex((candidate) => candidate.id === location.id);
-      const parent = location.parentId ? live.find((candidate) => candidate.id === location.parentId)?.name ?? "its parent" : "top level";
       const validDrop = nativeReorderSource?.type === "location"
-        ? canDropLocation(nativeReorderSource.id, location.id)
+        ? canDropLocation(nativeReorderSource.id, {
+            id: location.id,
+            intent: "inside",
+            kind: "location",
+          })
         : null;
       const cue = nativeReorderCue?.kind === "location" &&
         nativeReorderCue.id === location.id
         ? nativeReorderCue.intent
         : undefined;
-      return <div
-        className="capture-location-row"
-        role="listitem"
-        key={location.id}
-        data-active={current?.id === location.id}
-        data-depth={depth}
-        data-dragging={nativeReorderSource?.type === "location" && nativeReorderSource.id === location.id ? "true" : undefined}
-        data-drop-id={location.id}
-        data-drop-intent={cue}
-        data-drop-target="location"
-        data-drop-valid={validDrop === null ? undefined : String(validDrop)}
-        data-location-id={location.id}
-        draggable
-        onDragEnd={endNativeReorder}
-        onDragLeave={(event) => leaveNativeReorderTarget(event, "location", location.id)}
-        onDragOver={(event) => dragOverLocation(event, location.id)}
-        onDragStart={(event) => startNativeReorder(event, { type: "location", id: location.id })}
-        onDrop={(event) => dropOnLocation(event, location.id)}
-      >
-        <TouchDragHandle label={`Drag ${location.name} to reorder within ${parent}`} targetAt={(clientX, clientY) => {
-          const target = reorderTargetAt(clientX, clientY, "location");
-          return target?.id && canDropLocation(location.id, target.id) ? target : null;
-        }} onDrop={(target) => reorderLocationByDrop({ type: "location", id: location.id }, target)} onInvalidDrop={() => showFeedback("Capture only reorders sibling spaces. Use Spaces to change nesting.")} />
-        <button type="button" className="queue-row" aria-current={current?.id === location.id} data-active={current?.id === location.id} data-depth={depth} style={{ paddingLeft: 8 + depth * 12 }} onClick={() => select(location.id)}><span className="hierarchy-marker" aria-hidden>{depth ? "↳" : "●"}</span><span className="queue-name"><b>{location.code}</b><span>{location.name}</span></span><small>{childCount ? `${childCount} inside · ` : ""}{location.captureStatus.replace("_", " ")}</small></button>
-        <span className="reorder-drop-copy" aria-hidden>{cue === "before" ? "Place before" : cue === "after" ? "Place after" : ""}</span>
-        <div className="row-actions"><button type="button" className="icon small" aria-label={`Move ${location.name} up`} disabled={index === 0} onClick={() => reorderLocation(location, -1)}><ArrowUp /></button><button type="button" className="icon small" aria-label={`Move ${location.name} down`} disabled={index === siblings.length - 1} onClick={() => reorderLocation(location, 1)}><ArrowDown /></button></div>
+      const isCollapsed = collapsed.has(location.id);
+      const canCollapse = childCount > 0 && !normalizedQuery;
+      return <div className="capture-location-node" role="listitem" key={location.id}>
+        <div
+          className="capture-location-row"
+          data-active={current?.id === location.id}
+          data-depth={depth}
+          data-dragging={nativeReorderSource?.type === "location" && nativeReorderSource.id === location.id ? "true" : undefined}
+          data-drop-id={location.id}
+          data-drop-intent={cue}
+          data-drop-target="location"
+          data-drop-valid={validDrop === null ? undefined : String(validDrop)}
+          data-has-children={childCount > 0 ? "true" : undefined}
+          data-location-id={location.id}
+          draggable
+          onDragEnd={endNativeReorder}
+          onDragLeave={(event) => leaveNativeReorderTarget(event, "location", location.id)}
+          onDragOver={(event) => dragOverLocation(event, {
+            id: location.id,
+            intent: "inside",
+            kind: "location",
+          })}
+          onDragStart={(event) => startNativeReorder(event, {
+            type: "location",
+            id: location.id,
+          })}
+          onDrop={(event) => dropOnLocation(event, {
+            id: location.id,
+            intent: "inside",
+            kind: "location",
+          })}
+        >
+          <TouchDragHandle
+            expanded={canCollapse ? !isCollapsed : undefined}
+            label={canCollapse
+              ? `${isCollapsed ? "Expand" : "Collapse"} ${location.name}; drag to move or nest it`
+              : `Drag ${location.name} to move or nest it`}
+            onActiveChange={setHierarchyDragging}
+            targetAt={(clientX, clientY) => {
+              const target = dropTargetAt(clientX, clientY);
+              return target && canDropLocation(location.id, target)
+                ? target
+                : null;
+            }}
+            onDrop={(target) => placeLocationByDrop({
+              type: "location",
+              id: location.id,
+            }, target)}
+            onInvalidDrop={() => showFeedback(
+              `Choose a valid destination for ${location.name}`,
+            )}
+            onTap={canCollapse
+              ? () => setCollapsed((currentCollapsed) => {
+                  const next = new Set(currentCollapsed);
+                  if (next.has(location.id)) next.delete(location.id);
+                  else next.add(location.id);
+                  return next;
+                })
+              : undefined}
+          />
+          <button
+            type="button"
+            className="queue-row"
+            aria-current={current?.id === location.id}
+            data-active={current?.id === location.id}
+            data-depth={depth}
+            style={{ paddingLeft: 6 + depth * 8 }}
+            onClick={() => selectCaptureLocation(location.id, false)}
+          >
+            <span className="hierarchy-marker" aria-hidden>{depth ? "↳" : "●"}</span>
+            <span className="queue-name"><b>{location.code}</b><span>{location.name}</span></span>
+            <small>{childCount ? `${childCount} inside · ` : ""}{location.captureStatus.replace("_", " ")}</small>
+          </button>
+          <span className="reorder-drop-copy" aria-hidden>
+            {cue === "before"
+              ? "Place before"
+              : cue === "after"
+                ? "Place after"
+                : cue === "inside"
+                  ? "Move inside"
+                  : ""}
+          </span>
+          <div className="row-actions">
+            <button type="button" className="icon small" aria-label={`Move ${location.name} up`} disabled={index === 0} onClick={() => reorderLocation(location, -1)}><ArrowUp /></button>
+            <button type="button" className="icon small" aria-label={`Move ${location.name} down`} disabled={index === siblings.length - 1} onClick={() => reorderLocation(location, 1)}><ArrowDown /></button>
+            <button type="button" className="icon small capture-move-action" aria-label={`Move ${location.name}`} onClick={(event) => hierarchy.openMoveDialog(location, event.currentTarget)}><GripVertical /><span>Move</span></button>
+          </div>
+        </div>
       </div>;
     })}</div>{queueShown.length === 0 && <p className="muted queue-empty">No matching container.</p>}{captureComplete ? <form key={`${current?.id ?? "root"}-top-level`} onSubmit={(event) => submitForm(event, addContainer)} className="nested"><h3>Add an unrelated top-level space</h3><LocationCreateFields defaultKind="room" existingCodes={live.map((location) => location.code)} kindLabel="Space type" namePlaceholder="Friendly name (e.g. garage)" /><input type="hidden" name="topLevel" value="on" /><button>Add top-level space</button></form> : <form key={current?.id ?? "root"} onSubmit={(event) => submitForm(event, addContainer)} className="nested"><LocationCreateFields defaultKind={current ? "box" : "room"} existingCodes={live.map((location) => location.code)} kindLabel="Container type" namePlaceholder={current ? "Friendly name (e.g. winter gear bin)" : "Friendly name (e.g. apartment)"} />{current && <label className="top-level"><input type="checkbox" name="topLevel" /> Add as another top-level space</label>}<button>{current ? `Add inside ${current.name}` : "Add first space"}</button></form>}</section>;
-  const capturePanel = <section className="panel capture-card" ref={editor} tabIndex={-1} aria-label={current ? `Capture inside ${current.name}` : "Capture editor"}>{current ? <><nav className="breadcrumbs" aria-label="Current container path">{breadcrumbs.map((location, index) => <span key={location.id}>{index > 0 && <i aria-hidden>›</i>}<button onClick={() => select(location.id)}>{location.code}</button></span>)}</nav><div className="title"><div><p className="eyebrow">Inside this container</p><h2>{current.code} · {current.name}</h2></div><span className="tag capture-status" data-status={current.captureStatus}><CaptureStatusIcon /><span>{current.captureStatus.replace("_", " ")}</span></span></div>{nextUncounted && <button className="capture-next-location" type="button" aria-label={`Open next unfinished location without changing ${current.name}: ${nextUncounted.code}, ${nextUncounted.name}`} onClick={() => { select(nextUncounted.id); setEditorNavigationKey((value) => value + 1); }}><span>Next unfinished</span><strong>{nextUncounted.code} · {nextUncounted.name}</strong></button>}{captureComplete ? <div className="capture-locked" role="status"><CheckCircle2 /><span><strong>Capture is complete</strong><small>Reopen this space before adding, editing, or reordering its contents.</small></span></div> : <form key={current.id} className="quick" onSubmit={(event) => submitForm(event, addItem)}><label>Qty<input required type="number" min="0.01" step="any" name="quantity" defaultValue="1" /></label><label>Unit<input required name="unit" defaultValue="each" list="capture-units" /><datalist id="capture-units"><option value="each" /><option value="boxes" /><option value="bags" /><option value="cans" /><option value="pairs" /></datalist></label><label className="grow">What is it?<input required name="name" placeholder="e.g. winter gloves" /></label><button className="primary">Save & add next</button></form>}
-      {nested.length > 0 && <div className="nested-list"><small>Nested containers</small>{nested.map((location) => <button key={location.id} onClick={() => select(location.id)}><b>{location.code}</b><span>{location.name}</span><small>{location.captureStatus.replace("_", " ")}</small></button>)}</div>}
+  const capturePanel = <section className="panel capture-card" ref={editor} tabIndex={-1} aria-label={current ? `Capture inside ${current.name}` : "Capture editor"}>{current ? <><nav className="breadcrumbs" aria-label="Current container path">{breadcrumbs.map((location, index) => <span key={location.id}>{index > 0 && <i aria-hidden>›</i>}<button onClick={() => selectCaptureLocation(location.id)}>{location.code}</button></span>)}</nav><div className="title"><div><p className="eyebrow">Inside this container</p><h2>{current.code} · {current.name}</h2></div><span className="tag capture-status" data-status={current.captureStatus}><CaptureStatusIcon /><span>{current.captureStatus.replace("_", " ")}</span></span></div>{nextUncounted && <button className="capture-next-location" type="button" aria-label={`Open next unfinished location without changing ${current.name}: ${nextUncounted.code}, ${nextUncounted.name}`} onClick={() => selectCaptureLocation(nextUncounted.id)}><span>Next unfinished</span><strong>{nextUncounted.code} · {nextUncounted.name}</strong></button>}{captureComplete ? <div className="capture-locked" role="status"><CheckCircle2 /><span><strong>Capture is complete</strong><small>Reopen this space before adding, editing, or reordering its contents.</small></span></div> : <form key={current.id} className="quick" onSubmit={(event) => submitForm(event, addItem)}><label>Qty<input required type="number" min="0.01" step="any" name="quantity" defaultValue="1" /></label><label>Unit<input required name="unit" defaultValue="each" list="capture-units" /><datalist id="capture-units"><option value="each" /><option value="boxes" /><option value="bags" /><option value="cans" /><option value="pairs" /></datalist></label><label className="grow">What is it?<input required name="name" placeholder="e.g. winter gloves" /></label><button className="primary">Save & add next</button></form>}
+      {nested.length > 0 && <div className="nested-list"><small>Nested containers</small>{nested.map((location) => <button key={location.id} onClick={() => selectCaptureLocation(location.id)}><b>{location.code}</b><span>{location.name}</span><small>{location.captureStatus.replace("_", " ")}</small></button>)}</div>}
       <div className="captured">{items.map((item, index) => {
         const validDrop = nativeReorderSource?.type === "item"
           ? canDropItem(nativeReorderSource.id, item.id)
@@ -1927,8 +2622,10 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
       primary={queuePanel}
       primaryLabel="capture queue"
       secondary={capturePanel}
+      secondaryLabel="current container"
       storageId="capture"
     />
+    <HierarchyChangeDialogs controller={hierarchy} state={state} />
     {containerReview && <div
       className="modal-backdrop"
       onMouseDown={(event) => {
@@ -2043,6 +2740,7 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
 
 function Spaces({ state, current, select, commit, focusEditorKey, focusEditorSection }: { state: WorkspaceState; current: Location | null; select: (id: string) => void; commit: Commit; focusEditorKey: number | null; focusEditorSection?: GuidanceFocus }) {
   const [editingItem, setEditingItem] = useState<string | null>(null);
+  const [dragPayload, setDragPayload] = useState<DragPayload | null>(null);
   const [dragging, setDragging] = useState(false);
   const [dropCue, setDropCue] = useState<DropTarget | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
@@ -2072,10 +2770,74 @@ function Spaces({ state, current, select, commit, focusEditorKey, focusEditorSec
   const chooseLocation = (id: string) => {
     select(id);
   };
+  const focusTreeLocation = (id: string) => {
+    const frame = requestAnimationFrame(() => {
+      const row = Array.from(
+        document.querySelectorAll<HTMLElement>(".tree-row[data-location-id]"),
+      ).find((candidate) => candidate.dataset.locationId === id);
+      const behavior = matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "auto"
+        : "smooth";
+      row?.scrollIntoView({ behavior, block: "center" });
+      row?.querySelector<HTMLButtonElement>(".tree-select")?.focus({
+        preventScroll: true,
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  };
+  const revealHierarchyChange = (
+    command: LocationChangeCommand,
+  ) => {
+    const location = live.find((candidate) => candidate.id === command.id);
+    if (!location) return;
+    const parentId = command.type === "location.move"
+      ? command.parentId
+      : command.type === "location.update" &&
+          command.changes.parentId !== undefined
+        ? command.changes.parentId
+        : location.parentId;
+    if (parentId) {
+      const ancestorIds = locationPath(live, parentId).map(
+        (ancestor) => ancestor.id,
+      );
+      setCollapsed((current) => {
+        const next = new Set(current);
+        for (const ancestorId of ancestorIds) next.delete(ancestorId);
+        return next;
+      });
+    }
+    chooseLocation(location.id);
+    focusTreeLocation(location.id);
+  };
+  const hierarchy = useHierarchyChanges({
+    commit,
+    findSourceTrigger: (id) => {
+      const row = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          ".tree-row[data-location-id]",
+        ),
+      ).find((candidate) => candidate.dataset.locationId === id);
+      return row?.querySelector<HTMLButtonElement>(".tree-select") ?? null;
+    },
+    onApplied: revealHierarchyChange,
+    state,
+  });
+  const { openMoveDialog, requestHierarchyChange } = hierarchy;
+  const showInspector = (location: Location) => {
+    chooseLocation(location.id);
+    const frame = requestAnimationFrame(() => {
+      const behavior = matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "auto"
+        : "smooth";
+      inspector.current?.scrollIntoView({ behavior, block: "start" });
+      inspector.current?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  };
   const refuseDrop = (message = "That record cannot be dropped there") => {
     showFeedback(message);
   };
-  const refuseCompletedContents = (
+  const refuseCompletedItemMove = (
     locationIds: (string | null)[],
   ): boolean => {
     const completed = locationIds
@@ -2112,71 +2874,45 @@ function Spaces({ state, current, select, commit, focusEditorKey, focusEditorSec
         refuseDrop(`${item.name} is already in that space`);
         return;
       }
-      if (refuseCompletedContents([item.locationId, target.id])) return;
+      if (refuseCompletedItemMove([item.locationId, target.id])) return;
       void perform(commit, { type: "item.move", id: item.id, destinationId: target.id, quantity: item.quantity });
       return;
     }
     if (payload.type === "location") {
-      const location = state.locations.find((candidate) => candidate.id === payload.id);
-      if (!location) {
-        refuseDrop("That space is no longer available");
+      const placement = locationPlacementForDrop(state, payload.id, target);
+      if ("error" in placement) {
+        refuseDrop(placement.error);
         return;
       }
-      if (target.kind === "root") {
-        if (refuseCompletedContents([location.parentId])) return;
-        const siblings = live.filter((candidate) => candidate.parentId === null && candidate.id !== location.id);
-        void perform(commit, { type: "location.move", id: location.id, parentId: null, order: nextOrder(siblings) });
-        return;
-      }
-      if (target.kind !== "location" || !target.id) {
-        refuseDrop("Spaces can only be dropped onto another space or the top-level target");
-        return;
-      }
-      if (location.id === target.id) {
-        refuseDrop(`Choose a different destination for ${location.name}`);
-        return;
-      }
-      const destination = state.locations.find((candidate) => candidate.id === target.id);
-      if (!destination) {
-        refuseDrop("That destination is no longer available");
-        return;
-      }
-      if (target.intent === "inside") {
-        if (refuseCompletedContents([location.parentId, destination.id])) return;
-        const siblings = live.filter((candidate) => candidate.parentId === destination.id && candidate.id !== location.id);
-        setCollapsed((current) => { const next = new Set(current); next.delete(destination.id); return next; });
-        void perform(commit, { type: "location.move", id: location.id, parentId: destination.id, order: nextOrder(siblings) });
-        return;
-      }
-      if (
-        refuseCompletedContents([
-          location.parentId,
-          destination.parentId,
-        ])
-      ) return;
-      const siblings = live.filter((candidate) => candidate.parentId === destination.parentId);
-      const order = target.intent === "before" ? orderBefore(siblings, location.id, destination.id) : orderAfter(siblings, location.id, destination.id);
-      if (order === null) {
-        refuseDrop(`Choose a different destination for ${location.name}`);
-        return;
-      }
-      void perform(commit, { type: "location.move", id: location.id, parentId: destination.parentId, order });
+      void hierarchy.reviewPlacement(placement.command);
     }
   };
   const dragOver = (event: React.DragEvent, fallback: DropTarget) => {
+    const payload = readDrag(event) ?? dragPayload;
+    const target = dropTargetAt(event.clientX, event.clientY) ?? fallback;
     event.preventDefault();
+    if (
+      payload?.type === "location" &&
+      "error" in locationPlacementForDrop(state, payload.id, target)
+    ) {
+      event.dataTransfer.dropEffect = "none";
+      setDropCue(null);
+      return;
+    }
     event.dataTransfer.dropEffect = "move";
-    setDropCue(dropTargetAt(event.clientX, event.clientY) ?? fallback);
+    setDropCue(target);
   };
   const startNativeDrag = (
     event: React.DragEvent,
     payload: DragPayload,
   ) => {
     event.stopPropagation();
+    setDragPayload(payload);
     setDragging(true);
     writeDrag(event, payload);
   };
   const endNativeDrag = () => {
+    setDragPayload(null);
     setDragging(false);
     setDropCue(null);
   };
@@ -2184,7 +2920,8 @@ function Spaces({ state, current, select, commit, focusEditorKey, focusEditorSec
     event.preventDefault();
     event.stopPropagation();
     const target = dropTargetAt(event.clientX, event.clientY) ?? fallback;
-    moveByDrop(readDrag(event), target);
+    moveByDrop(readDrag(event) ?? dragPayload, target);
+    setDragPayload(null);
     setDragging(false);
     setDropCue(null);
   };
@@ -2194,7 +2931,6 @@ function Spaces({ state, current, select, commit, focusEditorKey, focusEditorSec
     setDropCue(null);
   };
   const reorderLocation = (location: Location, direction: -1 | 1) => {
-    if (refuseCompletedContents([location.parentId])) return;
     const siblings = live.filter((candidate) => candidate.parentId === location.parentId);
     const order = movedOrder(siblings, location.id, direction);
     if (order !== null) void perform(commit, { type: "location.reorder", id: location.id, order });
@@ -2252,6 +2988,17 @@ function Spaces({ state, current, select, commit, focusEditorKey, focusEditorSec
           <TouchDragHandle
             label={`Drag ${location.name} to move or nest it`}
             onActiveChange={setDragging}
+            targetAt={(clientX, clientY) => {
+              const target = dropTargetAt(clientX, clientY);
+              return target &&
+                  !("error" in locationPlacementForDrop(
+                    state,
+                    location.id,
+                    target,
+                  ))
+                ? target
+                : null;
+            }}
             onDrop={(target) => finishTouchDrop({
               type: "location",
               id: location.id,
@@ -2315,6 +3062,49 @@ function Spaces({ state, current, select, commit, focusEditorKey, focusEditorSec
             </button>
           </div>}
         </div>
+        {current?.id === location.id && <div
+          className="mobile-tree-actions"
+          aria-label={`${location.name} actions`}
+          role="group"
+        >
+          <button
+            type="button"
+            aria-label={`Earlier ${location.name}`}
+            disabled={index === 0}
+            onClick={() => reorderLocation(location, -1)}
+          >
+            <ArrowUp />
+            Earlier
+          </button>
+          <button
+            type="button"
+            aria-label={`Later ${location.name}`}
+            disabled={index === siblings.length - 1}
+            onClick={() => reorderLocation(location, 1)}
+          >
+            <ArrowDown />
+            Later
+          </button>
+          <button
+            type="button"
+            aria-label={`Edit details for ${location.name}`}
+            onClick={() => showInspector(location)}
+          >
+            <Edit3 />
+            Edit details
+          </button>
+          <button
+            type="button"
+            aria-label={`Move ${location.name}`}
+            onClick={(event) => openMoveDialog(
+              location,
+              event.currentTarget,
+            )}
+          >
+            <GripVertical />
+            Move
+          </button>
+        </div>}
         {children.length > 0 && !isCollapsed &&
           <div className="tree-children" role="list">
             {branch(location.id, depth + 1)}
@@ -2331,8 +3121,8 @@ function Spaces({ state, current, select, commit, focusEditorKey, focusEditorSec
     }
   };
 
-  const treePanel = <section className="panel tree-panel" data-dragging={dragging}><div className="title"><div><p className="eyebrow">Your physical hierarchy</p><h2>Rooms → cabinets → boxes</h2></div></div><div className="tree-tools"><details className="tree-add"><summary><Plus /><span>Add top-level space</span></summary><form onSubmit={(event) => submitForm(event, addRoot)}><LocationCreateFields defaultKind="room" existingCodes={live.map((location) => location.code)} kindLabel="Space type" namePlaceholder="Friendly name" /><button>Add top-level space</button></form></details><details className="tree-help"><summary><Info /><span>Move spaces</span></summary><p>Drag a handle onto the top, middle, or bottom of another row to place before, move inside, or place after. On touch, press the handle, slide, and release.</p></details></div><div className="root-drop" data-drop-target="root" data-drop-intent={dropCue?.kind === "root" ? "inside" : undefined} onDragOver={(event) => dragOver(event, { id: null, intent: "inside", kind: "root" })} onDrop={(event) => drop(event, { id: null, intent: "inside", kind: "root" })}>Drop here to make a top-level room or area</div><div className="location-tree" role="list" aria-label="Space hierarchy">{branch(null)}</div>{current && <button className="mobile-edit-space primary" onClick={() => { const behavior = matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"; inspector.current?.scrollIntoView({ behavior, block: "start" }); inspector.current?.focus({ preventScroll: true }); }}>Edit {current.name}</button>}{archived.length > 0 && <details className="archived"><summary>{archived.length} archived</summary>{archived.map((location) => <div key={location.id}><span>{location.code} · {location.name}</span><button onClick={() => void perform(commit, { type: "location.archive", id: location.id, archived: false })}>Restore</button></div>)}</details>}</section>;
-  const inspectorPanel = <section className="panel inspector" id="space-inspector" ref={inspector} tabIndex={-1} aria-label={current ? `Edit ${current.name}` : "Space editor"}>{current ? <LocationEditor key={current.id} state={state} location={current} commit={commit} select={select} reorder={reorderLocation} remove={() => removeLocation(current)} editItem={setEditingItem} moveByDrop={finishTouchDrop} setDragging={setDragging} startNativeDrag={startNativeDrag} endNativeDrag={endNativeDrag} /> : <Empty title="Select a space" text="Edit it, move it, or drop an item or container onto it." />}</section>;
+  const treePanel = <section className="panel tree-panel" data-dragging={dragging}><div className="title"><div><p className="eyebrow">Your physical hierarchy</p><h2>Rooms → cabinets → boxes</h2></div></div><div className="tree-tools"><details className="tree-add"><summary><Plus /><span>Add top-level space</span></summary><form onSubmit={(event) => submitForm(event, addRoot)}><LocationCreateFields defaultKind="room" existingCodes={live.map((location) => location.code)} kindLabel="Space type" namePlaceholder="Friendly name" /><button>Add top-level space</button></form></details><details className="tree-help"><summary><Info /><span>Move spaces</span></summary><p>Drag a handle onto the top, middle, or bottom of another row to place before, move inside, or place after. On touch, press the handle, slide, and release.</p></details></div><div className="root-drop" data-drop-target="root" data-drop-intent={dropCue?.kind === "root" ? "inside" : undefined} onDragOver={(event) => dragOver(event, { id: null, intent: "inside", kind: "root" })} onDrop={(event) => drop(event, { id: null, intent: "inside", kind: "root" })}>Drop here to make a top-level room or area</div><p className="mobile-tree-hint">Tap a space for move and edit actions.</p><div className="location-tree" role="list" aria-label="Space hierarchy">{branch(null)}</div>{archived.length > 0 && <details className="archived"><summary>{archived.length} archived</summary>{archived.map((location) => <div key={location.id}><span>{location.code} · {location.name}</span><button onClick={() => void perform(commit, { type: "location.archive", id: location.id, archived: false })}>Restore</button></div>)}</details>}</section>;
+  const inspectorPanel = <section className="panel inspector" id="space-inspector" ref={inspector} tabIndex={-1} aria-label={current ? `Edit ${current.name}` : "Space editor"}>{current && <button type="button" className="mobile-back-to-hierarchy" onClick={() => focusTreeLocation(current.id)}>Back to hierarchy</button>}{current ? <LocationEditor key={current.id} state={state} location={current} commit={commit} select={select} reorder={reorderLocation} remove={() => removeLocation(current)} editItem={setEditingItem} moveByDrop={finishTouchDrop} requestHierarchyChange={requestHierarchyChange} setDragging={setDragging} startNativeDrag={startNativeDrag} endNativeDrag={endNativeDrag} /> : <Empty title="Select a space" text="Edit it, move it, or drop an item or container onto it." />}</section>;
   return <>
     <ResizablePanels
       className="content split"
@@ -2342,13 +3132,283 @@ function Spaces({ state, current, select, commit, focusEditorKey, focusEditorSec
       primary={treePanel}
       primaryLabel="space hierarchy"
       secondary={inspectorPanel}
+      secondaryLabel="space details"
       storageId="spaces"
     />
+    <HierarchyChangeDialogs controller={hierarchy} state={state} />
     {editingItem && state.items.find((item) => item.id === editingItem) && <ItemEditor item={state.items.find((item) => item.id === editingItem) as ItemRecord} state={state} commit={commit} close={() => setEditingItem(null)} />}
   </>;
 }
 
-function LocationEditor({ state, location, commit, select, reorder, remove, editItem, moveByDrop, setDragging, startNativeDrag, endNativeDrag }: { state: WorkspaceState; location: Location; commit: Commit; select: (id: string) => void; reorder: (location: Location, direction: -1 | 1) => void; remove: () => void; editItem: (id: string) => void; moveByDrop: (payload: DragPayload, target: DropTarget) => void; setDragging: (dragging: boolean) => void; startNativeDrag: (event: React.DragEvent, payload: DragPayload) => void; endNativeDrag: () => void }) {
+function HierarchyChangeDialogs({
+  controller,
+  state,
+}: {
+  controller: ReturnType<typeof useHierarchyChanges>;
+  state: WorkspaceState;
+}) {
+  const {
+    applyHierarchyChange,
+    busy,
+    closeMoveDialog,
+    closeReviewDialog,
+    moveDialog,
+    movingLocation,
+    pending,
+    pendingCompletedParents,
+    pendingLocation,
+    reviewDialog,
+    reviewPlacement,
+  } = controller;
+  return <>
+    {movingLocation && <div
+      className="modal-backdrop hierarchy-modal-backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !busy) {
+          closeMoveDialog();
+        }
+      }}
+    >
+      <LocationMoveDialog
+        dialogRef={moveDialog}
+        location={movingLocation}
+        onCancel={closeMoveDialog}
+        onReview={reviewPlacement}
+        state={state}
+      />
+    </div>}
+    {pending && pendingLocation && <div
+      className="modal-backdrop hierarchy-modal-backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !busy) {
+          closeReviewDialog();
+        }
+      }}
+    >
+      <section
+        aria-describedby="hierarchy-review-description"
+        aria-labelledby="hierarchy-review-title"
+        aria-modal="true"
+        className="modal hierarchy-review-dialog"
+        ref={reviewDialog}
+        role="dialog"
+      >
+        <header>
+          <div>
+            <p className="eyebrow">Capture safeguard</p>
+            <h2 id="hierarchy-review-title">Reopen completed spaces?</h2>
+          </div>
+        </header>
+        <p id="hierarchy-review-description">{`Moving ${pendingLocation.code} · ${pendingLocation.name} changes what was recorded inside these completed spaces. The move and reopen will be one undoable Activity entry.`}</p>
+        <ul className="hierarchy-review-list">
+          {pendingCompletedParents.map((location) => <li key={location.id}>
+            <strong>{location.code} · {location.name}</strong>
+            <span>Reopen as in progress</span>
+          </li>)}
+        </ul>
+        <footer className="hierarchy-dialog-actions">
+          <button
+            type="button"
+            data-dialog-initial-focus
+            disabled={busy}
+            onClick={closeReviewDialog}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="primary"
+            disabled={busy}
+            onClick={() => void applyHierarchyChange(pending.command, true)}
+          >
+            {busy ? "Moving..." : "Move and reopen"}
+          </button>
+        </footer>
+      </section>
+    </div>}
+  </>;
+}
+
+function LocationMoveDialog({
+  dialogRef,
+  location,
+  onCancel,
+  onReview,
+  state,
+}: {
+  dialogRef: React.RefObject<HTMLElement | null>;
+  location: Location;
+  onCancel: () => void;
+  onReview: (command: LocationPlacementCommand) => Promise<void>;
+  state: WorkspaceState;
+}) {
+  const [message, setMessage] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const invalidParentIds = new Set([
+    location.id,
+    ...descendantIds(state, location.id),
+  ]);
+  const live = state.locations.filter((candidate) => !candidate.archivedAt);
+  const parentOptions = flattenLocationTree(
+    live.filter((candidate) => !invalidParentIds.has(candidate.id)),
+  );
+  const [selectedParentId, setSelectedParentId] = useState(
+    location.parentId ?? "",
+  );
+  const openedParentId = useRef(location.parentId);
+  useEffect(() => {
+    if (openedParentId.current === location.parentId) return;
+    openedParentId.current = location.parentId;
+    setSelectedParentId(location.parentId ?? "");
+    setMessage(
+      "This space moved while the dialog was open. Choose its position again.",
+    );
+  }, [location.parentId]);
+  const positionSiblings = sortLocations(live.filter((candidate) =>
+    candidate.parentId === (selectedParentId || null) &&
+    candidate.id !== location.id
+  ));
+  const defaultPosition = positionSiblings.length
+    ? `${LOCATION_POSITION.AFTER_PREFIX}${positionSiblings[positionSiblings.length - 1].id}`
+    : LOCATION_POSITION.FIRST;
+  const review = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (submitting) return;
+    const data = new FormData(event.currentTarget);
+    const parentId = String(data.get("parentId")) || null;
+    const position = String(data.get("position"));
+    const currentSiblings = sortLocations(
+      live.filter((candidate) =>
+        candidate.parentId === location.parentId
+      ),
+    );
+    const currentIndex = currentSiblings.findIndex(
+      (candidate) => candidate.id === location.id,
+    );
+    const siblings = sortLocations(live.filter((candidate) =>
+      candidate.parentId === parentId &&
+      candidate.id !== location.id
+    ));
+    const afterId = position.startsWith(LOCATION_POSITION.AFTER_PREFIX)
+      ? position.slice(LOCATION_POSITION.AFTER_PREFIX.length)
+      : null;
+    const afterIndex = afterId
+      ? siblings.findIndex((candidate) => candidate.id === afterId)
+      : -1;
+    if (
+      position !== LOCATION_POSITION.FIRST &&
+      (!afterId || afterIndex < 0)
+    ) {
+      setMessage("Choose an available position");
+      return;
+    }
+    const desiredIndex = position === LOCATION_POSITION.FIRST
+      ? 0
+      : afterIndex + 1;
+    const alreadyPlaced =
+      parentId === location.parentId &&
+      desiredIndex === currentIndex;
+    if (alreadyPlaced) {
+      setMessage(`${location.name} is already in that position`);
+      return;
+    }
+    const order = position === LOCATION_POSITION.FIRST
+      ? (siblings[0]?.order ?? 1) - 1
+      : orderAfter(siblings, location.id, afterId as string);
+    if (order === null) {
+      setMessage("Choose an available position");
+      return;
+    }
+    setSubmitting(true);
+    await onReview(
+      parentId === location.parentId
+        ? { type: "location.reorder", id: location.id, order }
+        : {
+            type: "location.move",
+            id: location.id,
+            parentId,
+            order,
+          },
+    );
+    setSubmitting(false);
+  };
+  return <section
+    aria-describedby="location-move-description"
+    aria-labelledby="location-move-title"
+    aria-modal="true"
+    className="modal hierarchy-move-dialog"
+    ref={dialogRef}
+    role="dialog"
+  >
+    <header>
+      <div>
+        <p className="eyebrow">Hierarchy</p>
+        <h2 id="location-move-title">Move {location.name}</h2>
+      </div>
+      <button
+        type="button"
+        className="icon"
+        aria-label={`Close Move ${location.name}`}
+        disabled={submitting}
+        onClick={onCancel}
+      >
+        <X />
+      </button>
+    </header>
+    <p id="location-move-description">Choose a parent and the exact position for this space.</p>
+    <form className="hierarchy-move-form" onSubmit={review}>
+      <label>
+        Parent space
+        <select
+          data-dialog-initial-focus
+          name="parentId"
+          value={selectedParentId}
+          onChange={(event) => {
+            setMessage("");
+            setSelectedParentId(event.currentTarget.value);
+          }}
+        >
+          <option value="">Top level</option>
+          {parentOptions.map(({ depth, location: candidate }) =>
+            <option key={candidate.id} value={candidate.id}>
+              {`${"  ".repeat(depth)}${depth ? "↳ " : ""}${candidate.code} · ${locationPath(live, candidate.id).map((part) => part.name).join(" › ")}`}
+            </option>
+          )}
+        </select>
+      </label>
+      <label>
+        Position
+        <select
+          key={selectedParentId || "root"}
+          name="position"
+          defaultValue={defaultPosition}
+        >
+          <option value={LOCATION_POSITION.FIRST}>First in parent</option>
+          {positionSiblings.map((candidate) =>
+            <option
+              key={candidate.id}
+              value={`${LOCATION_POSITION.AFTER_PREFIX}${candidate.id}`}
+            >
+              After {candidate.code} · {candidate.name}
+            </option>
+          )}
+        </select>
+      </label>
+      {message && <output className="form-message">{message}</output>}
+      <footer className="hierarchy-dialog-actions">
+        <button type="button" disabled={submitting} onClick={onCancel}>
+          Cancel
+        </button>
+        <button className="primary" disabled={submitting}>
+          {submitting ? "Reviewing..." : "Review move"}
+        </button>
+      </footer>
+    </form>
+  </section>;
+}
+
+function LocationEditor({ state, location, commit, select, reorder, remove, editItem, moveByDrop, requestHierarchyChange, setDragging, startNativeDrag, endNativeDrag }: { state: WorkspaceState; location: Location; commit: Commit; select: (id: string) => void; reorder: (location: Location, direction: -1 | 1) => void; remove: () => void; editItem: (id: string) => void; moveByDrop: (payload: DragPayload, target: DropTarget) => void; requestHierarchyChange: (command: LocationHierarchyCommand, trigger?: HTMLElement | null) => Promise<boolean>; setDragging: (dragging: boolean) => void; startNativeDrag: (event: React.DragEvent, payload: DragPayload) => void; endNativeDrag: () => void }) {
+  const hierarchyChangeTrigger = useRef<HTMLElement | null>(null);
   const invalidParents = new Set([location.id, ...descendantIds(state, location.id)]);
   const contents = sortItems(state.items.filter((item) => item.locationId === location.id && !item.archivedAt));
   const liveDescendantCount = descendantIds(state, location.id).filter(
@@ -2368,20 +3428,6 @@ function LocationEditor({ state, location, commit, select, reorder, remove, edit
   const save = async (data: FormData) => {
     const dimensions = optionalDimensions(data);
     const parentId = String(data.get("parentId")) || null;
-    if (parentId !== location.parentId) {
-      const completedParent = [location.parentId, parentId]
-        .filter((id): id is string => Boolean(id))
-        .map((id) => state.locations.find((candidate) => candidate.id === id))
-        .find((candidate) =>
-          candidate && COMPLETE_CAPTURE_STATUSES.has(candidate.captureStatus)
-        );
-      if (completedParent) {
-        showFeedback(
-          `Reopen ${completedParent.name} before changing its contents`,
-        );
-        return false;
-      }
-    }
     const changes: Partial<Omit<Location, "id" | "createdAt">> = {
       name: String(data.get("name")), code: String(data.get("code")), kind: String(data.get("kind")) as LocationKind,
       description: String(data.get("description")), tags: splitList(data.get("tags")), dimensions, parentId,
@@ -2390,7 +3436,14 @@ function LocationEditor({ state, location, commit, select, reorder, remove, edit
     if (parentId !== location.parentId) {
       changes.order = nextOrder(state.locations.filter((candidate) => !candidate.archivedAt && candidate.parentId === parentId && candidate.id !== location.id));
     }
-    return perform(commit, { type: "location.update", id: location.id, changes });
+    const command = {
+      type: "location.update",
+      id: location.id,
+      changes,
+    } satisfies LocationHierarchyCommand;
+    return parentId === location.parentId
+      ? perform(commit, command)
+      : requestHierarchyChange(command, hierarchyChangeTrigger.current);
   };
   const addChild = async (data: FormData) => {
     const children = state.locations.filter((candidate) => candidate.parentId === location.id && !candidate.archivedAt);
@@ -2404,7 +3457,16 @@ function LocationEditor({ state, location, commit, select, reorder, remove, edit
     status: contents.length || liveDescendantCount ? "in_progress" : "uncounted",
   });
   return <>
-    <form onSubmit={(event) => submitForm(event, save, false)} className="editor-form">
+    <form
+      onSubmit={(event) => {
+        hierarchyChangeTrigger.current =
+          event.currentTarget.querySelector<HTMLButtonElement>(
+            "button.primary",
+          );
+        submitForm(event, save, false);
+      }}
+      className="editor-form"
+    >
       <div className="title">
         <div><p className="eyebrow">{location.kind}</p><h2>Edit space</h2></div>
         <span className="tag">{location.captureStatus.replace("_", " ")}</span>
@@ -2414,7 +3476,7 @@ function LocationEditor({ state, location, commit, select, reorder, remove, edit
         <label className="space-name-field">Friendly name<input required name="name" defaultValue={location.name} /></label>
         <label className="space-code-field">Short ID<input required name="code" defaultValue={location.code} autoCapitalize="characters" /></label>
         <label className="space-kind-field">Type<select name="kind" defaultValue={location.kind}>{kinds.map((kind) => <option key={kind}>{kind}</option>)}</select></label>
-        <label className="space-parent-field">Parent space<select name="parentId" defaultValue={parentIsAvailable ? location.parentId ?? "" : ""}><option value="">Top level</option>{parentOptions.map(({ depth, location: candidate }) => <option key={candidate.id} value={candidate.id}>{`${"  ".repeat(depth)}${depth ? "↳ " : ""}${candidate.code} · ${candidate.name}`}</option>)}</select></label>
+        <label className="space-parent-field">Parent space<select key={location.parentId ?? "root"} name="parentId" defaultValue={parentIsAvailable ? location.parentId ?? "" : ""}><option value="">Top level</option>{parentOptions.map(({ depth, location: candidate }) => <option key={candidate.id} value={candidate.id}>{`${"  ".repeat(depth)}${depth ? "↳ " : ""}${candidate.code} · ${candidate.name}`}</option>)}</select></label>
         <label className="space-tags-field">Tags, comma-separated<input name="tags" defaultValue={location.tags.join(", ")} /></label>
         <label className="space-description-field">Description<textarea name="description" defaultValue={location.description} /></label>
       </div>

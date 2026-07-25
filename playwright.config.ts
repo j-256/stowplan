@@ -19,8 +19,8 @@ export default defineConfig({
     env: { ...process.env, AUTH_BASE_URL:"http://127.0.0.1:3100", AUTH_DEV_ENABLED:"true", HOST:"127.0.0.1", PORT:"3100", STOWPLAN_SQLITE_PATH:E2E_DATABASE_PATH },
   },
   projects: [
-    { name:"mobile-chromium", use:{ ...devices["Pixel 7"] } },
-    { name:"mobile-landscape", use:{ ...devices["Pixel 7"], contextOptions:{ screen:{ width:915, height:412 } }, viewport:{ width:915, height:412 } } },
+    { name:"mobile-chromium", use:{ ...devices["Pixel 7 Pro"] } },
+    { name:"mobile-landscape", use:{ ...devices["Pixel 7 Pro landscape"] } },
     { name:"tablet-portrait", use:{ ...devices["iPad Mini"], browserName:"chromium" } },
     { name:"tablet-landscape", use:{ ...devices["iPad Mini landscape"], browserName:"chromium" } },
     { name:"desktop-compact", use:{ ...devices["Desktop Chrome"], viewport:{ width:1024, height:700 } } },

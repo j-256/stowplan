@@ -14,7 +14,7 @@ Read in this order: `README.md`, `AGENTS.md`, this architecture guide, `src/doma
 - Add a numbered migration; do not edit an already-released migration.
 - Treat uncounted and known-empty as distinct planner inputs.
 - Preserve physical-container semantics when changing the planner.
-- Keep Capture sibling-only: its drag/arrows change `order`, never `parentId`, and its "next" actions must follow the same flattened hierarchy order shown in the queue.
+- Keep Capture and Spaces hierarchy changes on the same guarded path: sibling reorders change only `order`, while reparenting changes `parentId` and atomically reopens affected completed parents only after explicit confirmation. Capture's "next" actions must follow the full flattened hierarchy order, independent of collapsed branches or search filters.
 
 ## Change workflow
 

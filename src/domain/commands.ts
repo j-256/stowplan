@@ -508,13 +508,15 @@ function captureProgressPatches(
     ];
 }
 
-function planCaptureProgressPatches(
+function moveCaptureProgressPatches(
     state: WorkspaceState,
-    sourceId: string,
-    destinationId: string,
+    sourceId: string | null,
+    destinationId: string | null,
     timestamp: string,
 ): FieldPatch[] {
-    return [...new Set([sourceId, destinationId])].flatMap((locationId) => {
+    return [...new Set([sourceId, destinationId].filter(
+        (locationId): locationId is string => locationId !== null,
+    ))].flatMap((locationId) => {
         const location = requireActiveLocation(state, locationId);
         const shouldProgress =
             completeCaptureStatuses.has(location.captureStatus) ||
@@ -771,6 +773,15 @@ function normalPatches(
     if (command.type === "location.update") {
         const location = requireActiveLocation(state, command.id);
         assertAllowedChanges(command.changes, locationChangeKeys, "location");
+        if (
+            command.reopenCompletedParents !== undefined &&
+            typeof command.reopenCompletedParents !== "boolean"
+        ) {
+            throw new DomainError(
+                "INVALID_REOPEN_CONFIRMATION",
+                "Completed-parent confirmation must be true or false",
+            );
+        }
         const changesParent =
             "parentId" in command.changes &&
             command.changes.parentId !== location.parentId;
@@ -809,7 +820,26 @@ function normalPatches(
                 `No changes to save for ${location.name}`,
             );
         }
-        if (next.parentId !== location.parentId) {
+        const parentProgressPatches = next.parentId !== location.parentId
+            ? command.reopenCompletedParents
+                ? moveCaptureProgressPatches(
+                      state,
+                      location.parentId,
+                      next.parentId,
+                      envelope.timestamp,
+                  )
+                : next.parentId
+                    ? captureProgressPatches(
+                          state,
+                          next.parentId,
+                          envelope.timestamp,
+                      )
+                    : []
+            : [];
+        if (
+            next.parentId !== location.parentId &&
+            !command.reopenCompletedParents
+        ) {
             assertCaptureContentsEditable(state, [
                 {
                     action: captureContentActions.moveLocationOut,
@@ -841,15 +871,31 @@ function normalPatches(
             );
         }
         if (next.parentId !== location.parentId) {
-            if (next.parentId) {
-                patches.push(...captureProgressPatches(state, next.parentId, envelope.timestamp));
-            }
+            patches.push(...parentProgressPatches);
         }
-        return { label: `Updated ${location.name}`, patches, subjectIds: [location.id] };
+        return {
+            label: command.reopenCompletedParents && parentProgressPatches.length
+                ? `Updated ${location.name} and reopened affected spaces`
+                : `Updated ${location.name}`,
+            patches,
+            subjectIds: [
+                location.id,
+                ...new Set(parentProgressPatches.map((candidate) => candidate.id)),
+            ],
+        };
     }
 
     if (command.type === "location.move") {
         const location = requireActiveLocation(state, command.id);
+        if (
+            command.reopenCompletedParents !== undefined &&
+            typeof command.reopenCompletedParents !== "boolean"
+        ) {
+            throw new DomainError(
+                "INVALID_REOPEN_CONFIRMATION",
+                "Completed-parent confirmation must be true or false",
+            );
+        }
         if (
             command.parentId !== null &&
             (typeof command.parentId !== "string" || !command.parentId.trim())
@@ -880,42 +926,71 @@ function normalPatches(
                 `${location.name} is already in that position`,
             );
         }
-        assertCaptureContentsEditable(
-            state,
-            changesParent
-                ? [
-                      {
-                          action: captureContentActions.moveLocationOut,
-                          locationId: location.parentId,
-                      },
-                      {
-                          action: captureContentActions.moveLocationIn,
-                          locationId: command.parentId,
-                      },
-                  ]
-                : [{
-                      action: captureContentActions.reorderLocations,
-                      locationId: location.parentId,
-                  }],
-        );
+        if (changesParent && !command.reopenCompletedParents) {
+            assertCaptureContentsEditable(state, [
+                {
+                    action: captureContentActions.moveLocationOut,
+                    locationId: location.parentId,
+                },
+                {
+                    action: captureContentActions.moveLocationIn,
+                    locationId: command.parentId,
+                },
+            ]);
+        }
+        const parentProgressPatches = changesParent
+            ? command.reopenCompletedParents
+                ? moveCaptureProgressPatches(
+                      state,
+                      location.parentId,
+                      command.parentId,
+                      envelope.timestamp,
+                  )
+                : command.parentId
+                    ? captureProgressPatches(
+                          state,
+                          command.parentId,
+                          envelope.timestamp,
+                      )
+                    : []
+            : [];
         const patches = [
-            patch("location", location.id, "parentId", location.parentId, command.parentId),
+            ...(changesParent
+                ? [
+                      patch(
+                          "location",
+                          location.id,
+                          "parentId",
+                          location.parentId,
+                          command.parentId,
+                      ),
+                      ...planInvalidationPatches(
+                          state,
+                          [],
+                          [location.id, command.parentId].filter(
+                              (id): id is string => id !== null,
+                          ),
+                      ),
+                  ]
+                : []),
             patch("location", location.id, "updatedAt", location.updatedAt, envelope.timestamp),
-            ...planInvalidationPatches(
-                state,
-                [],
-                [location.id, command.parentId].filter(
-                    (id): id is string => id !== null,
-                ),
-            ),
         ];
         if (command.order !== undefined) {
             patches.push(patch("location", location.id, "order", location.order, command.order));
         }
-        if (command.parentId) {
-            patches.push(...captureProgressPatches(state, command.parentId, envelope.timestamp));
-        }
-        return { label: `Moved ${location.name}`, patches, subjectIds: [location.id] };
+        patches.push(...parentProgressPatches);
+        return {
+            label: changesParent
+                ? command.reopenCompletedParents && parentProgressPatches.length
+                    ? `Moved ${location.name} and reopened affected spaces`
+                    : `Moved ${location.name}`
+                : `Reordered ${location.name}`,
+            patches,
+            subjectIds: [
+                location.id,
+                ...new Set(parentProgressPatches.map((candidate) => candidate.id)),
+            ],
+        };
     }
 
     if (command.type === "location.reorder") {
@@ -929,10 +1004,6 @@ function normalPatches(
                 `${location.name} is already in that position`,
             );
         }
-        assertCaptureContentsEditable(state, [{
-            action: captureContentActions.reorderLocations,
-            locationId: location.parentId,
-        }]);
         return {
             label: `Reordered ${location.name}`,
             patches: [
@@ -1602,7 +1673,7 @@ function normalPatches(
                     step.quantity ?? item.quantity,
                     envelope,
                 ),
-                ...planCaptureProgressPatches(
+                ...moveCaptureProgressPatches(
                     state,
                     step.sourceId,
                     step.destinationId,
@@ -1629,7 +1700,7 @@ function normalPatches(
             physicalPatches.push(
                 patch("location", location.id, "parentId", location.parentId, step.destinationId),
                 patch("location", location.id, "updatedAt", location.updatedAt, envelope.timestamp),
-                ...planCaptureProgressPatches(
+                ...moveCaptureProgressPatches(
                     state,
                     step.sourceId,
                     step.destinationId,
