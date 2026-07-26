@@ -4,7 +4,7 @@ import {
 } from "../../src/client/guest-invitation";
 
 export const metadata: Metadata = {
-  title: "Accept workspace invitation · Stowplan",
+  title: "Accept workspace invitation",
   robots: { index: false, follow: false },
 };
 

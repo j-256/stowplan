@@ -716,7 +716,7 @@ test(
       })).toBeFocused();
       await page.keyboard.press("Enter");
       await expect(page.getByRole("status").filter({
-        hasText: `${target.displayName} is now`,
+        hasText: `${target.displayName}'s role is now editor`,
       })).toBeVisible();
       await expect(targetRole).toHaveValue("editor");
       await expect(targetRole).toBeFocused();
@@ -990,6 +990,9 @@ test(
       )).toBe(true);
       await expect(page.getByText("Viewer access", { exact: true }))
         .toBeVisible();
+      await expect(page.getByText(
+        "Shared workspace opened. Your previous local workspace is still available from the main menu.",
+      )).toHaveCount(0);
       expect((await readActiveReplica(page))?.state.workspace.id).toBe(
         workspace.summary.id,
       );

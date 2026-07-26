@@ -1017,6 +1017,7 @@ export function WorkspaceAccessController({
     data={visibleData}
     guestLinkResult={guestLinkResult}
     initialError={error}
+    listsLoading={loading}
     memberResult={memberResult}
     onRetryTerminalPersistence={retryTerminalPersistence}
     returnTo={returnTo}

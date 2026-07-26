@@ -266,6 +266,7 @@ export interface WorkspaceAccessProps {
   data: WorkspaceAccessData;
   guestLinkResult: WorkspaceGuestLinksResult | null;
   initialError?: string | null;
+  listsLoading?: boolean;
   memberResult: WorkspaceMembersResult | null;
   onRetryTerminalPersistence?: () => Promise<void>;
   returnTo?: string;
@@ -469,6 +470,7 @@ function WorkspaceAccessContent({
   data,
   guestLinkResult,
   initialError = null,
+  listsLoading = false,
   memberResult,
   onRetryTerminalPersistence,
   returnTo,
@@ -686,7 +688,7 @@ function WorkspaceAccessContent({
     updateAccessRevision(result.accessRevision);
     setPendingRoleChange(null);
     setFeedback({
-      message: `${memberName(result.member)} is now a ${result.member.role}`,
+      message: `${memberName(result.member)}'s role is now ${result.member.role}`,
       tone: "success",
     });
   };
@@ -1237,7 +1239,9 @@ function WorkspaceAccessContent({
                 </li>;
               })}
             </ul>
-            {visibleMembers.length === 0 &&
+            {listsLoading && memberResult === null
+              ? <p className={styles.empty} role="status">Loading members...</p>
+              : visibleMembers.length === 0 &&
               <p className={styles.empty}>No members match this search.</p>}
             {memberResult?.page.hasMore && memberResult.page.nextCursor &&
               <button
@@ -1376,7 +1380,9 @@ function WorkspaceAccessContent({
                     </button>}
                 </li>)}
             </ul>
-            {visibleGuestLinks.length === 0 &&
+            {listsLoading && guestLinkResult === null
+              ? <p className={styles.empty} role="status">Loading invite links...</p>
+              : visibleGuestLinks.length === 0 &&
               <p className={styles.empty}>No invite links match this filter.</p>}
             {guestLinkResult?.page.hasMore &&
               guestLinkResult.page.nextCursor &&

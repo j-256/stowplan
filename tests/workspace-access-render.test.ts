@@ -319,6 +319,24 @@ describe("workspace access surface", () => {
     );
   });
 
+  it("distinguishes initial access loading from empty search results", () => {
+    const markup = renderToStaticMarkup(
+      createElement(WorkspaceAccess, {
+        actions,
+        currentUserId: owner.userId,
+        data: accessData("owner"),
+        guestLinkResult: null,
+        listsLoading: true,
+        memberResult: null,
+      }),
+    );
+
+    expect(markup).toContain("Loading members...");
+    expect(markup).toContain("Loading invite links...");
+    expect(markup).not.toContain("No members match this search.");
+    expect(markup).not.toContain("No invite links match this filter.");
+  });
+
   it.each(["editor", "viewer"] as const)(
     "renders honest %s access without owner controls",
     (role) => {

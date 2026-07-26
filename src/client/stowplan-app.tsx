@@ -609,6 +609,13 @@ function formatTimestamp(value: string | null): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "Unknown" : date.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
 }
+function countLabel(
+  count: number,
+  singular: string,
+  plural = `${singular}s`,
+): string {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
 function backupPresentation({
   backupConfigured,
   blocked,
@@ -743,6 +750,7 @@ function submitForm(
   event: React.FormEvent<HTMLFormElement>,
   action: (data: FormData) => Promise<boolean>,
   resetOnSuccess = true,
+  focusAfterSuccess?: string,
 ): void {
   event.preventDefault();
   const form = event.currentTarget;
@@ -761,7 +769,12 @@ function submitForm(
   form.setAttribute("aria-busy", "true");
   submitControls.forEach((control) => { control.disabled = true; });
   void Promise.resolve().then(() => action(data)).then((saved) => {
-    if (saved && resetOnSuccess && form.isConnected) form.reset();
+    if (saved && resetOnSuccess && form.isConnected) {
+      form.reset();
+      if (focusAfterSuccess) {
+        form.querySelector<HTMLElement>(focusAfterSuccess)?.focus();
+      }
+    }
   }).catch((error) => {
     showFeedback(
       error instanceof Error ? error.message : "That change could not be applied",
@@ -1380,7 +1393,10 @@ function Application() {
     const openController = beginWorkspaceOpen();
     setRouteStatus("loading");
     try {
-      const existing = await readWorkspaceReplica(route.workspaceId);
+      const [existing, localWorkspacesBeforeOpen] = await Promise.all([
+        readWorkspaceReplica(route.workspaceId),
+        listWorkspaceReplicas(),
+      ]);
       if (!existing && !authenticationReady) return;
       await openWorkspace(
         route.workspaceId,
@@ -1432,7 +1448,12 @@ function Application() {
         const message =
           "This space link is stale. The space is missing or archived, so Stowplan did not open it.";
         setWorkspaceNotice(message);
-      } else if (!existing) {
+      } else if (
+        !existing &&
+        localWorkspacesBeforeOpen.some(
+          (workspace) => workspace.id !== route.workspaceId,
+        )
+      ) {
         setWorkspaceNotice("Shared workspace opened. Your previous local workspace is still available from the main menu.");
       }
       setRouteStatus(staleItem || staleLocation ? "blocked" : "ready");
@@ -2476,7 +2497,18 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
     : current?.captureStatus === "counted"
       ? CheckCircle2
       : CircleDashed;
-  const queuePanel = <section className="panel queue"><div className="title"><div><p className="eyebrow">First-pass coverage</p><h2>{done} of {live.length} checked</h2></div><b>{live.length - done} left</b></div><div className="progress"><i style={{ width: `${live.length ? done / live.length * 100 : 0}%` }} /></div>{live.length > 5 && <label className="queue-search"><Search /><input aria-label="Find container" value={queueQuery} onChange={(event) => setQueueQuery(event.target.value)} placeholder="Jump by code or name" /></label>}<p className="capture-order-help">Drag onto the top, middle, or bottom of a row to place before, move inside, or place after. Select a row for a precise Move control.</p><div className="capture-tree" role="list" aria-label="Container hierarchy" data-dragging={hierarchyDragging || nativeReorderSource?.type === "location" ? "true" : undefined}>
+  const hasNestedSpaces = nested.length > 0;
+  const emptyItemsTitle = hasNestedSpaces
+    ? "No direct items recorded"
+    : captureComplete
+      ? "No items recorded"
+      : "Nothing recorded yet";
+  const emptyItemsText = captureComplete
+    ? `Reopen capture before adding ${hasNestedSpaces ? "a direct item" : "an item"}.`
+    : hasNestedSpaces
+      ? `${countLabel(nested.length, "nested space")} ${nested.length === 1 ? "is" : "are"} already recorded here. Add a direct item, or mark this space counted.`
+      : "Add an item, or mark this space known empty.";
+  const queuePanel = <section className="panel queue"><div className="title"><div><p className="eyebrow">First-pass coverage</p><h2>{done} of {live.length} checked</h2></div><b>{live.length - done} left</b></div><div className="progress"><i style={{ width: `${live.length ? done / live.length * 100 : 0}%` }} /></div>{live.length > 5 && <label className="queue-search"><Search /><input aria-label="Find container" value={queueQuery} onChange={(event) => setQueueQuery(event.target.value)} placeholder="Jump by code or name" /></label>}{live.length > 0 && <p className="capture-order-help">Drag onto the top, middle, or bottom of a row to place before, move inside, or place after. Select a row for a precise Move control.</p>}<div className="capture-tree" role="list" aria-label="Container hierarchy" data-dragging={hierarchyDragging || nativeReorderSource?.type === "location" ? "true" : undefined}>
     <div
       className="capture-root-drop"
       data-drop-target="root"
@@ -2597,8 +2629,8 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
           </div>
         </div>
       </div>;
-    })}</div>{queueShown.length === 0 && <p className="muted queue-empty">No matching container.</p>}{captureComplete ? <form key={`${current?.id ?? "root"}-top-level`} onSubmit={(event) => submitForm(event, addContainer)} className="nested"><h3>Add an unrelated top-level space</h3><LocationCreateFields defaultKind="room" existingCodes={live.map((location) => location.code)} kindLabel="Space type" namePlaceholder="Friendly name (e.g. garage)" /><input type="hidden" name="topLevel" value="on" /><button>Add top-level space</button></form> : <form key={current?.id ?? "root"} onSubmit={(event) => submitForm(event, addContainer)} className="nested"><LocationCreateFields defaultKind={current ? "box" : "room"} existingCodes={live.map((location) => location.code)} kindLabel="Container type" namePlaceholder={current ? "Friendly name (e.g. winter gear bin)" : "Friendly name (e.g. apartment)"} />{current && <label className="top-level"><input type="checkbox" name="topLevel" /> Add as another top-level space</label>}<button>{current ? `Add inside ${current.name}` : "Add first space"}</button></form>}</section>;
-  const capturePanel = <section className="panel capture-card" ref={editor} tabIndex={-1} aria-label={current ? `Capture inside ${current.name}` : "Capture editor"}>{current ? <><nav className="breadcrumbs" aria-label="Current container path">{breadcrumbs.map((location, index) => <span key={location.id}>{index > 0 && <i aria-hidden>›</i>}<button onClick={() => selectCaptureLocation(location.id)}>{location.code}</button></span>)}</nav><div className="title"><div><p className="eyebrow">Inside this container</p><h2>{current.code} · {current.name}</h2></div><span className="tag capture-status" data-status={current.captureStatus}><CaptureStatusIcon /><span>{current.captureStatus.replace("_", " ")}</span></span></div>{nextUncounted && <button className="capture-next-location" type="button" aria-label={`Open next unfinished location without changing ${current.name}: ${nextUncounted.code}, ${nextUncounted.name}`} onClick={() => selectCaptureLocation(nextUncounted.id)}><span>Next unfinished</span><strong>{nextUncounted.code} · {nextUncounted.name}</strong></button>}{captureComplete ? <div className="capture-locked" role="status"><CheckCircle2 /><span><strong>Capture is complete</strong><small>Reopen this space before adding, editing, or reordering its contents.</small></span></div> : <form key={current.id} className="quick" onSubmit={(event) => submitForm(event, addItem)}><label>Qty<input required type="number" min="0.01" step="any" name="quantity" defaultValue="1" /></label><label>Unit<input required name="unit" defaultValue="each" list="capture-units" /><datalist id="capture-units"><option value="each" /><option value="boxes" /><option value="bags" /><option value="cans" /><option value="pairs" /></datalist></label><label className="grow">What is it?<input required name="name" placeholder="e.g. winter gloves" /></label><button className="primary">Save & add next</button></form>}
+    })}</div>{queueShown.length === 0 && <p className="muted queue-empty">{live.length === 0 ? "No containers yet. Add your first space below." : "No containers match this search."}</p>}{captureComplete ? <form key={`${current?.id ?? "root"}-top-level`} onSubmit={(event) => submitForm(event, addContainer)} className="nested"><h3>Add an unrelated top-level space</h3><LocationCreateFields defaultKind="room" existingCodes={live.map((location) => location.code)} kindLabel="Space type" namePlaceholder="Friendly name (e.g. garage)" /><input type="hidden" name="topLevel" value="on" /><button>Add top-level space</button></form> : <form key={current?.id ?? "root"} onSubmit={(event) => submitForm(event, addContainer)} className="nested"><LocationCreateFields defaultKind={current ? "box" : "room"} existingCodes={live.map((location) => location.code)} kindLabel="Container type" namePlaceholder={current ? "Friendly name (e.g. winter gear bin)" : "Friendly name (e.g. apartment)"} />{current && <label className="top-level"><input type="checkbox" name="topLevel" /> Add as another top-level space</label>}<button>{current ? `Add inside ${current.name}` : "Add first space"}</button></form>}</section>;
+  const capturePanel = <section className="panel capture-card" ref={editor} tabIndex={-1} aria-label={current ? `Capture inside ${current.name}` : "Capture editor"}>{current ? <><nav className="breadcrumbs" aria-label="Current container path">{breadcrumbs.map((location, index) => <span key={location.id}>{index > 0 && <i aria-hidden>›</i>}<button onClick={() => selectCaptureLocation(location.id)}>{location.code}</button></span>)}</nav><div className="title"><div><p className="eyebrow">Inside this container</p><h2>{current.code} · {current.name}</h2></div><span className="tag capture-status" data-status={current.captureStatus}><CaptureStatusIcon /><span>{current.captureStatus.replace("_", " ")}</span></span></div>{nextUncounted && <button className="capture-next-location" type="button" aria-label={`Open next unfinished location without changing ${current.name}: ${nextUncounted.code}, ${nextUncounted.name}`} onClick={() => selectCaptureLocation(nextUncounted.id)}><span>Next unfinished</span><strong>{nextUncounted.code} · {nextUncounted.name}</strong></button>}{captureComplete ? <div className="capture-locked" role="status"><CheckCircle2 /><span><strong>Capture is complete</strong><small>Reopen this space before adding, editing, or reordering its contents.</small></span></div> : <form key={current.id} className="quick" onSubmit={(event) => submitForm(event, addItem, true, '[name="name"]')}><label>Qty<input required type="number" min="0.01" step="any" name="quantity" defaultValue="1" /></label><label>Unit<input required name="unit" defaultValue="each" list="capture-units" /><datalist id="capture-units"><option value="each" /><option value="boxes" /><option value="bags" /><option value="cans" /><option value="pairs" /></datalist></label><label className="grow">What is it?<input required name="name" placeholder="e.g. winter gloves" /></label><button className="primary">Save & add next</button></form>}
       {nested.length > 0 && <div className="nested-list"><small>Nested containers</small>{nested.map((location) => <button key={location.id} onClick={() => selectCaptureLocation(location.id)}><b>{location.code}</b><span>{location.name}</span><small>{location.captureStatus.replace("_", " ")}</small></button>)}</div>}
       <div className="captured">{items.map((item, index) => {
         const validDrop = nativeReorderSource?.type === "item"
@@ -2633,7 +2665,7 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
           <span className="reorder-drop-copy" aria-hidden>{cue === "before" ? "Place before" : cue === "after" ? "Place after" : ""}</span>
           {!captureComplete && <div className="row-actions"><button className="icon small" aria-label={`Move ${item.name} up`} disabled={index === 0} onClick={() => reorder(item.id, -1)}><ArrowUp /></button><button className="icon small" aria-label={`Move ${item.name} down`} disabled={index === items.length - 1} onClick={() => reorder(item.id, 1)}><ArrowDown /></button><button className="icon small" aria-label={`Edit ${item.name}`} onClick={() => setEditing(item.id)}><Edit3 /></button></div>}
         </div>;
-      })}{!items.length && <Empty title={captureComplete ? "No items recorded" : "Nothing recorded yet"} text={captureComplete ? "Reopen capture before adding an item." : "Add an item, or mark this space as known empty."} />}</div><div className="finish">{captureComplete ? <button className="reopen-capture" onClick={() => void reopenCapture()}><RotateCcw /><span>Reopen capture</span></button> : <>{items.length > 0 && <button className="danger" onClick={(event) => reviewEmptyContainer(event.currentTarget)}><Trash2 /><span>Empty container</span></button>}<button className="known-empty-action" onClick={(event) => void markKnownEmpty(event.currentTarget)}><PackageX /><span>Known empty & next</span></button><button className="primary" onClick={() => void finish("counted")}><CheckCircle2 /><span>Counted & next</span></button></>}</div></> : <Empty title="Add your first space" text="Give a room, cabinet, box, or drawer the same code as its physical label." />}</section>;
+      })}{!items.length && <Empty title={emptyItemsTitle} text={emptyItemsText} />}</div><div className="finish">{captureComplete ? <button className="reopen-capture" onClick={() => void reopenCapture()}><RotateCcw /><span>Reopen capture</span></button> : <>{items.length > 0 && <button className="danger" onClick={(event) => reviewEmptyContainer(event.currentTarget)}><Trash2 /><span>Empty container</span></button>}{!hasNestedSpaces && <button className="known-empty-action" onClick={(event) => void markKnownEmpty(event.currentTarget)}><PackageX /><span>Known empty & next</span></button>}<button className="primary" onClick={() => void finish("counted")}><CheckCircle2 /><span>Counted & next</span></button></>}</div></> : <Empty title="Add your first space" text="Give a room, cabinet, box, or drawer the same code as its physical label." />}</section>;
   return <>
     <ResizablePanels
       className="content capture"
@@ -3136,7 +3168,7 @@ function Spaces({ state, current, select, commit, focusEditorKey, focusEditorSec
     const descendants = descendantIds(state, location.id);
     const locationIds = [location.id, ...descendants];
     const itemIds = state.items.filter((item) => locationIds.includes(item.locationId)).map((item) => item.id);
-    if (confirm(`Delete ${location.name}, ${descendants.length} nested space(s), and ${itemIds.length} item record(s)? The deletion is recorded in Activity and can be undone until a later conflicting edit.`)) {
+    if (confirm(`Delete ${location.name}, ${countLabel(descendants.length, "nested space")}, and ${countLabel(itemIds.length, "item record")}? The deletion is recorded in Activity and can be undone until a later conflicting edit.`)) {
       void perform(commit, { type: "location.delete", id: location.id, descendantIds: descendants, itemIds }, () => select(live.find((candidate) => !locationIds.includes(candidate.id))?.id ?? ""));
     }
   };
@@ -4060,7 +4092,7 @@ function PlanningReadinessPanel({
       actionLabel: "Review a space",
       detail: "Review food safety, temperature, humidity, and tags only where they matter.",
       priority: "review",
-      title: `${readiness.destinationsUsingDefaultsIds.length} counted destination${readiness.destinationsUsingDefaultsIds.length === 1 ? "" : "s"} use basic suitability defaults`,
+      title: `${countLabel(readiness.destinationsUsingDefaultsIds.length, "counted destination")} ${readiness.destinationsUsingDefaultsIds.length === 1 ? "uses" : "use"} basic suitability defaults`,
     });
   }
   if (
@@ -4106,7 +4138,7 @@ function PlanningReadinessPanel({
         <h3 id="plan-readiness-title">{headline}</h3>
       </div>
       <span data-level={readiness.level}>
-        {readiness.countedDestinationIds.length} counted destinations
+        {countLabel(readiness.countedDestinationIds.length, "counted destination")}
       </span>
     </header>
     <p>{readiness.canGenerateUsefulPlan
@@ -4131,7 +4163,7 @@ function Planner({ state, commit, openGuidanceTarget }: { state: WorkspaceState;
   const generate = async () => {
     const plan = buildMovePlan(state, { name, weights });
     if (!plan.steps.length) {
-      setMessage(`No beneficial moves were found. ${emptyPlanGuidance(readiness)}`);
+      setMessage("No beneficial moves were found.");
       return;
     }
     try {
@@ -4174,7 +4206,7 @@ function Planner({ state, commit, openGuidanceTarget }: { state: WorkspaceState;
       <PlanningReadinessPanel readiness={readiness} state={state} openGuidanceTarget={openGuidanceTarget} />
       <div className="plan-actions">
         <button className="primary" onClick={() => void generate()}>{active ? "Replace with fresh plan" : "Generate move plan"}</button>
-        {active && !hasConflictingPlans && <button onClick={() => void perform(commit, { type: "plan.status", planId: active.id, status: "discarded" })}>Discard current plan</button>}
+        {active && !hasConflictingPlans && <button onClick={() => void perform(commit, { type: "plan.status", planId: active.id, status: "discarded" }, () => setMessage(""))}>Discard current plan</button>}
       </div>
       {message && <output className="form-message">{message}</output>}
     </section>
@@ -4206,7 +4238,9 @@ function Planner({ state, commit, openGuidanceTarget }: { state: WorkspaceState;
             reason.includes("capacity is unmeasured") ||
             reason.includes("capacity cannot be verified"),
         );
-        return <div key={step.id} data-done={!!step.completedAt}><i>{index + 1}</i><span><strong>Move {subject}</strong><small className="plan-route">{placeLabel(step.sourceId)} → {placeLabel(step.destinationId)}</small>{capacityUnverified && <em className="plan-confidence">Capacity unverified</em>}<small>{step.explanation.join(" · ")}</small></span><b>{state.locations.find((location) => location.id === step.sourceId)?.code} → {state.locations.find((location) => location.id === step.destinationId)?.code}</b><div className="plan-step-actions">{item && <button onClick={() => openGuidanceTarget("inventory", item.id)}>Review item</button>}{container && <button onClick={() => openGuidanceTarget("spaces", container.id)}>Review container</button>}<button onClick={() => openGuidanceTarget("spaces", step.destinationId)}>Review destination</button><button className="primary" data-step-state={moveActionState} disabled={moveActionState !== "ready"} title={blockedByEarlier ? `Complete step ${blockingStepIndex + 1} first.` : undefined} onClick={() => void perform(commit, { type: "plan.step.complete", planId: active.id, stepId: step.id })}>{moveActionLabel}</button></div></div>;
+        const completesPlan = !step.completedAt &&
+          active.steps.filter((candidate) => !candidate.completedAt).length === 1;
+        return <div key={step.id} data-done={!!step.completedAt}><i>{index + 1}</i><span><strong>Move {subject}</strong><small className="plan-route">{placeLabel(step.sourceId)} → {placeLabel(step.destinationId)}</small>{capacityUnverified && <em className="plan-confidence">Capacity unverified</em>}<small>{step.explanation.join(" · ")}</small></span><b>{state.locations.find((location) => location.id === step.sourceId)?.code} → {state.locations.find((location) => location.id === step.destinationId)?.code}</b><div className="plan-step-actions">{item && <button onClick={() => openGuidanceTarget("inventory", item.id)}>Review item</button>}{container && <button onClick={() => openGuidanceTarget("spaces", container.id)}>Review container</button>}<button onClick={() => openGuidanceTarget("spaces", step.destinationId)}>Review destination</button><button className="primary" data-step-state={moveActionState} disabled={moveActionState !== "ready"} title={blockedByEarlier ? `Complete step ${blockingStepIndex + 1} first.` : undefined} onClick={() => void perform(commit, { type: "plan.step.complete", planId: active.id, stepId: step.id }, completesPlan ? () => setMessage("") : undefined)}>{moveActionLabel}</button></div></div>;
       })}</section>
     </> : <Empty title="No active plan" text={readiness.canGenerateUsefulPlan ? "There is enough evidence to try a plan. Review the readiness guidance, then generate when you are comfortable with the gaps." : emptyPlanGuidance(readiness)} />}
   </div>;
@@ -4215,7 +4249,7 @@ function History({ state, commit }: { state: WorkspaceState; commit: Commit }) {
   const [count, setCount] = useState(5);
   const applied = state.activities.filter((entry) => entry.status === "applied").length;
   const undone = state.activities.filter((entry) => entry.status === "undone").length;
-  return <div className="content"><div className="toolbar"><span>{state.activities.length} recorded changes</span><div className="history-batch"><label>Changes<input aria-label="Batch history count" type="number" min="1" max="100" value={count} onChange={(event) => setCount(Math.max(1, Math.min(100, Number(event.target.value) || 1)))} /></label><button disabled={!applied} onClick={() => void perform(commit, { type: "history.batchUndo", count: Math.min(count, applied) })}>Undo {Math.min(count, applied)}</button><button disabled={!undone} onClick={() => void perform(commit, { type: "history.batchRedo", count: Math.min(count, undone) })}>Redo {Math.min(count, undone)}</button></div></div><section className="panel history">{[...state.activities].reverse().map((entry) => <div key={entry.id}><Undo2 /><span><strong>{entry.label}</strong><small>{new Date(entry.timestamp).toLocaleString()} · {entry.patches.length} fields</small></span><b>{entry.status}</b><button aria-label={`${entry.status === "applied" ? "Undo" : "Reapply"} ${entry.label}`} onClick={() => void perform(commit, entry.status === "applied" ? { type: "history.undo", activityId: entry.id } : { type: "history.reapply", activityId: entry.id })}>{entry.status === "applied" ? "Undo this" : "Reapply"}</button></div>)}{!state.activities.length && <Empty title="No changes yet" text="Every meaningful change will be inspectable and reversible here." />}</section></div>;
+  return <div className="content"><div className="toolbar"><span>{state.activities.length} recorded changes</span><div className="history-batch"><label>Changes<input aria-label="Batch history count" type="number" min="1" max="100" value={count} onChange={(event) => setCount(Math.max(1, Math.min(100, Number(event.target.value) || 1)))} /></label><button disabled={!applied} onClick={() => void perform(commit, { type: "history.batchUndo", count: Math.min(count, applied) })}>Undo {Math.min(count, applied)}</button><button disabled={!undone} onClick={() => void perform(commit, { type: "history.batchRedo", count: Math.min(count, undone) })}>Redo {Math.min(count, undone)}</button></div></div><section className="panel history">{[...state.activities].reverse().map((entry) => <div key={entry.id}><Undo2 /><span><strong>{entry.label}</strong><small>{new Date(entry.timestamp).toLocaleString()} · {countLabel(entry.patches.length, "field")}</small></span><b>{entry.status}</b><button aria-label={`${entry.status === "applied" ? "Undo" : "Reapply"} ${entry.label}`} onClick={() => void perform(commit, entry.status === "applied" ? { type: "history.undo", activityId: entry.id } : { type: "history.reapply", activityId: entry.id })}>{entry.status === "applied" ? "Undo this" : "Reapply"}</button></div>)}{!state.activities.length && <Empty title="No changes yet" text="Every meaningful change will be inspectable and reversible here." />}</section></div>;
 }
 function Preferences({ state, commit, theme, setTheme, openMenu, returnTo, serverBacked }: { state: WorkspaceState; commit: Commit; theme: ThemePreference; setTheme: (theme: ThemePreference) => void; openMenu: () => void; returnTo: string; serverBacked: boolean }) {
   const download = () => {

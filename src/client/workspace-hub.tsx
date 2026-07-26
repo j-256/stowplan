@@ -180,7 +180,8 @@ export function WorkspaceHub({
       This deployment is device-only. Local workspaces remain available.
     </p>}
     {backupConfigured && !signedIn && <p className={styles.notice}>
-      Sign in from Account to discover server workspaces on this device.
+      Sign in to discover server workspaces on this device.{" "}
+      <a href="/account?returnTo=%2Fworkspaces">Open Account</a>
     </p>}
 
     <section className={styles.toolbar} aria-label="Workspace tools">

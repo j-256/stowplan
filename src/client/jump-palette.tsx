@@ -111,7 +111,7 @@ export function JumpPalette({
   const results = useMemo(() => {
     const viewResults: JumpResult[] = jumpViews.map((entry) => ({
       action: () => openView(entry.id),
-      detail: "View",
+      detail: "Workspace page",
       icon: entry.icon,
       id: `view-${entry.id}`,
       kind: "view",
@@ -326,7 +326,7 @@ export function JumpPalette({
           >
             <span className="jump-result-icon"><Icon /></span>
             <span><strong>{result.label}</strong><small>{result.detail}</small></span>
-            <b>{result.kind}</b>
+            {result.kind !== "view" && <b>{result.kind}</b>}
           </button>;
         })}
         {!results.length && <p>No matching view, space, or item</p>}

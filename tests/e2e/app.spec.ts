@@ -268,6 +268,10 @@ test.beforeEach(async ({ page }) => {
 });
 
 test("names a new workspace during first run", async ({ page }) => {
+  await expect(page.getByRole("link", { name: "Open Account" })).toHaveAttribute(
+    "href",
+    "/account?returnTo=%2Fworkspaces",
+  );
   await page.getByRole("textbox", {
     name: "New device workspace",
   }).fill("Jamie's apartment");
@@ -275,8 +279,49 @@ test("names a new workspace during first run", async ({ page }) => {
 
   await expect(page.getByRole("heading", { name: "Capture" })).toBeVisible();
   await expect(page.getByText("Jamie's apartment", { exact: true })).toBeVisible();
+  await expect(page.getByText(
+    "No containers yet. Add your first space below.",
+  )).toBeVisible();
+  await expect(page.locator(".capture-order-help")).toHaveCount(0);
   const replica = await localReplica(page) as { state: { workspace: { name: string } } };
   expect(replica.state.workspace.name).toBe("Jamie's apartment");
+});
+
+test("uses one application name in invitation titles", async ({ page }) => {
+  await page.goto("/guest");
+  await expect(page).toHaveTitle(
+    "Accept workspace invitation · Stowplan",
+  );
+});
+
+test("names label choices and toggles the complete selection", async ({ page }) => {
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
+  await expect(page.getByRole("heading", {
+    exact: true,
+    name: "Capture",
+  })).toBeVisible();
+  await expect.poll(async () => {
+    const replica = await localReplica(page) as {
+      state?: { locations?: unknown[] };
+    };
+    return replica.state?.locations?.length ?? 0;
+  }).toBeGreaterThan(0);
+  await page.goto("/labels");
+
+  const kitchen = page.getByRole("checkbox", {
+    name: "Include KIT, Kitchen",
+  });
+  await expect(kitchen).toBeChecked();
+  await page.getByRole("button", { name: "Clear all" }).click();
+  await expect.poll(() => page.getByRole("checkbox").evaluateAll(
+    (checkboxes) => checkboxes.every(
+      (checkbox) => !(checkbox as HTMLInputElement).checked,
+    ),
+  )).toBe(true);
+  await expect(page.getByRole("button", { name: "Select all" })).toBeVisible();
+  await page.getByRole("button", { name: "Select all" }).click();
+  await expect(kitchen).toBeChecked();
+  await expect(page.getByRole("button", { name: "Clear all" })).toBeVisible();
 });
 
 test("starts workspaces and primary views at the top", async ({ page }) => {
@@ -1041,6 +1086,9 @@ test("searches and jumps with Control or Command K", async ({ page }, testInfo) 
   await page.keyboard.press(primaryShortcut);
   const palette = page.getByRole("dialog", { name: "Search and jump" });
   await expect(palette).toBeVisible();
+  const firstView = palette.locator('[role="option"][data-kind="view"]').first();
+  await expect(firstView).toContainText("Workspace page");
+  await expect(firstView.locator("b")).toHaveCount(0);
   const search = page.getByRole("combobox", { name: "Search views, spaces, and items" });
   await search.press("Shift+Tab");
   await expect(palette.getByRole("option").last()).toBeFocused();
@@ -1344,15 +1392,20 @@ test("visibly refuses unchanged item and space saves", async ({ page }) => {
     .toBe(before.state.items.find((item) => item.id === "item_pasta")?.version);
 });
 
-test("visibly refuses known-empty capture while nested spaces remain", async ({ page }) => {
+test("does not offer known-empty capture while nested spaces remain", async ({ page }) => {
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await page.locator(
     '.capture-location-row[data-location-id="loc_corner"] .queue-row',
   ).click();
-  await page.getByRole("button", { name: "Known empty & next" }).click();
-  await expect(page.locator(".feedback-toast[role='alert']")).toContainText(
-    "still contains 1 nested space",
-  );
+  await expect(page.getByRole("heading", {
+    name: "No direct items recorded",
+  })).toBeVisible();
+  await expect(page.getByText(
+    "1 nested space is already recorded here. Add a direct item, or mark this space counted.",
+  )).toBeVisible();
+  await expect(page.getByRole("button", {
+    name: "Known empty & next",
+  })).toHaveCount(0);
   const replica = await localReplica(page) as {
     state: { locations: { captureStatus: string; id: string }[] };
   };
@@ -1383,6 +1436,8 @@ test("onboards, captures, edits, searches, plans, rolls back, and persists local
   await page.getByLabel("What is it?").fill("Test tea towels");
   await page.getByRole("button", { name: "Save & add next" }).click();
   await expect(page.getByText("Test tea towels", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("What is it?")).toBeFocused();
+  await expect(page.getByLabel("What is it?")).toHaveValue("");
 
   await page.getByLabel("Workspaces and backup status").click();
   await expect(page.getByRole("heading", {

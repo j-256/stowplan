@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { applyCommand } from "../../src/domain/commands";
 import { createEnvelope } from "../../src/domain/factories";
 import { previewImport } from "../../src/domain/import";
+import { workspacePath } from "../../src/domain/app-url";
 import type {
   CommandAuthorizationBasis,
   ImportPreview,
@@ -56,6 +57,13 @@ function download(name: string, value: unknown) {
 }
 function wasApplied(state: WorkspaceState, commandId: string) {
   return state.activities.some((activity) => activity.commandId === commandId) || state.audit.some((event) => event.id === `audit_${commandId}`);
+}
+function countLabel(
+  count: number,
+  singular: string,
+  plural = `${singular}s`,
+): string {
+  return `${count} ${count === 1 ? singular : plural}`;
 }
 function replicaVersion(replica: LocalReplica): string {
   return [
@@ -428,7 +436,18 @@ export default function Recovery() {
       const next = { state, outbox: [], updatedAt: new Date().toISOString() };
       await writeReplica(next);
       setReplica(next);
-      setMessage("Backup opened as a separate local workspace. It can initialize its own server copy after you sign in; the previous workspace was preserved.");
+      const firstLocation = state.locations.find(
+        (candidate) => !candidate.archivedAt,
+      );
+      location.assign(workspacePath({
+        locationId: firstLocation?.id,
+        locationLabel: firstLocation
+          ? `${firstLocation.code} ${firstLocation.name}`
+          : undefined,
+        view: "capture",
+        workspaceId: state.workspace.id,
+        workspaceLabel: state.workspace.name,
+      }));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not open the restored copy");
     } finally {
@@ -607,7 +626,7 @@ export default function Recovery() {
       setConfirmation("");
       setExportedVersion(null);
       setExportAcknowledged(false);
-      setMessage(`${outbox.length} unresolved change(s) rebased as fresh commands. Return to Stowplan to review and back them up.`);
+      setMessage(`${countLabel(outbox.length, "unresolved change")} rebased as fresh commands. Return to Stowplan to review and back them up.`);
     } catch (error) {
       setConfirmation("");
       setExportedVersion(null);
@@ -719,7 +738,7 @@ export default function Recovery() {
     </section>
     <section>
       <h2>Compare with the server</h2>
-      <p className="muted">Sign in first. Loading is read-only. Reset and reapply remain disabled until you export the current bundle, confirm that you saved it, and type the exact confirmation. Stowplan rechecks server access and revision before either action.</p>
+      <p className="muted">Loading a server copy is read-only. Reset and reapply remain disabled until you export the current bundle, confirm that you saved it, and type the exact confirmation. Stowplan rechecks server access and revision before either action.</p>
       {!accountReady && <p role="status">Confirming the signed-in account. Server recovery actions remain disabled.</p>}
       {accountReady && !accountId && <p className="warning" role="status">Sign in to compare with or change the server copy. Device inspection and export remain available.</p>}
       <button disabled={!replica || !accountReady || !accountId || busy} onClick={() => void fetchServer()}>Load authorized server copy</button>
@@ -735,14 +754,14 @@ export default function Recovery() {
           <input disabled={busy || !serverWriteAllowed} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} />
         </label>
         <div className="recovery-actions">
-          <button disabled={!serverWriteAllowed || busy || exportedVersion !== replicaVersion(replica) || !exportAcknowledged || confirmation !== "REAPPLY"} onClick={() => void reapply()}>Reapply queued work on server copy</button>
+          <button disabled={!serverWriteAllowed || replica.outbox.length === 0 || busy || exportedVersion !== replicaVersion(replica) || !exportAcknowledged || confirmation !== "REAPPLY"} onClick={() => void reapply()}>Reapply queued work on server copy</button>
           <button className="danger" disabled={!serverWriteAllowed || busy || exportedVersion !== replicaVersion(replica) || !exportAcknowledged || confirmation !== "RESET"} onClick={() => void resetToServer()}>Reset this device to server copy</button>
         </div>
       </>}
     </section>
     <section>
       <h2>Restore a portable JSON backup</h2>
-      <p className="muted">Owner restore replaces the matching server workspace with compare-and-swap protection. A restored copy receives a new workspace id, works offline, and never erases the current local workspace.</p>
+      <p className="muted">Restoring the matching server workspace is owner-only and uses compare-and-swap protection. Opening a separate local copy creates a new workspace ID, works offline, and never erases another device workspace.</p>
       <label className="file">Choose JSON backup
         <input disabled={busy} type="file" accept="application/json" onChange={(event) => {
           const file = event.target.files?.[0];
@@ -781,8 +800,8 @@ export default function Recovery() {
           <span><b>{preview.incoming.plans}</b>incoming plans</span>
         </div>
       </>}
-      {incomingBundle && <p className="muted">Full recovery bundle recognized with {incomingBundle.outbox.length} queued change(s). Their already-applied device state is included in the snapshot; restoring commits that reviewed state without replaying commands.</p>}
-      {restoreTarget && <p className="warning">Matching device workspace to be replaced: {restoreTarget.state.locations.length} locations, {restoreTarget.state.items.length} items, {restoreTarget.state.plans.length} plans, and {restoreTarget.outbox.length} queued change(s). Export this exact matching-device bundle before replacing it.</p>}
+      {incomingBundle && <p className="muted">Full recovery bundle recognized with {countLabel(incomingBundle.outbox.length, "queued change")}. Their already-applied device state is included in the snapshot; restoring commits that reviewed state without replaying commands.</p>}
+      {restoreTarget && <p className="warning">Matching device workspace to be replaced: {countLabel(restoreTarget.state.locations.length, "location")}, {countLabel(restoreTarget.state.items.length, "item")}, {countLabel(restoreTarget.state.plans.length, "plan")}, and {countLabel(restoreTarget.outbox.length, "queued change")}. Export this exact matching-device bundle before replacing it.</p>}
       {restoreTarget && targetNeedsExport && <>
         <button disabled={busy} onClick={() => {
           saveExport(
