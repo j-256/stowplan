@@ -17,6 +17,7 @@ import {
 import type { RuntimeEnv } from "../src/server/runtime";
 import { WORKSPACE_ACCESS_REQUEST_MAX_BYTES } from "../src/server/request-body";
 import { ACCOUNT_CONTEXT_HEADER } from "../src/shared/account-context";
+import { TEST_AUTH_ENV } from "./helpers/auth";
 import { numberedMigrationDatabase } from "./helpers/sqlite-d1";
 
 const runtimeGlobal = globalThis as typeof globalThis & {
@@ -29,14 +30,15 @@ afterEach(() => {
 
 async function routeFixture() {
   const { database, sqlite } = numberedMigrationDatabase();
-  runtimeGlobal.__STOWPLAN_ENV = {
-    AUTH_ADMIN_EMAILS: "route-admin@example.test",
+  const env: RuntimeEnv = {
+    ...TEST_AUTH_ENV,
     AUTH_BASE_URL: "https://stowplan.test",
     DB: database,
   };
+  runtimeGlobal.__STOWPLAN_ENV = env;
   const admin = await createOrLinkUser(
     database,
-    runtimeGlobal.__STOWPLAN_ENV,
+    env,
     {
       displayName: "Route administrator",
       email: "route-admin@example.test",
@@ -44,13 +46,18 @@ async function routeFixture() {
       subject: "route-admin",
     },
   );
-  const owner = await createOrLinkUser(database, {}, {
+  await database.prepare(
+    `UPDATE users
+     SET global_role='admin'
+     WHERE user_id=?`,
+  ).bind(admin.userId).run();
+  const owner = await createOrLinkUser(database, env, {
     displayName: "Route workspace owner",
     email: "route-workspace-owner@example.test",
     provider: "test",
     subject: "route-workspace-owner",
   });
-  const regular = await createOrLinkUser(database, {}, {
+  const regular = await createOrLinkUser(database, env, {
     displayName: "Route regular user",
     email: "route-regular@example.test",
     provider: "test",
@@ -75,23 +82,23 @@ async function routeFixture() {
   await claimWorkspace(database, owner.userId, state.workspace.id);
   const adminSession = await issueSession(
     database,
-    runtimeGlobal.__STOWPLAN_ENV,
+    env,
     admin,
     new Request("https://stowplan.test/sign-in"),
   );
   const regularSession = await issueSession(
     database,
-    runtimeGlobal.__STOWPLAN_ENV,
+    env,
     regular,
     new Request("https://stowplan.test/sign-in"),
   );
   return {
     admin,
-    adminCookie: `stowplan_session=${adminSession.raw}`,
+    adminCookie: `__Host-stowplan_session=${adminSession.raw}`,
     database,
     item,
     regular,
-    regularCookie: `stowplan_session=${regularSession.raw}`,
+    regularCookie: `__Host-stowplan_session=${regularSession.raw}`,
     sqlite,
     state,
   };

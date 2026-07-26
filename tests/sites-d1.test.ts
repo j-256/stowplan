@@ -11,6 +11,7 @@ import {
 } from "../src/server/auth";
 import { probeDatabaseSchema } from "../src/server/database-health";
 import { getWorkspaceAccess } from "../src/server/workspace-access";
+import { TEST_AUTH_ENV } from "./helpers/auth";
 import {
   applySqlDirectory,
   numberedMigrationDatabase,
@@ -30,6 +31,43 @@ function sitesDatabase() {
 
 function quoteIdentifier(value: string): string {
   return `"${value.replaceAll("\"", "\"\"")}"`;
+}
+
+function normalizedSqlDefinition(value: string): string {
+  let normalized = "";
+  let stringLiteral = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index]!;
+    if (character === "'") {
+      normalized += character;
+      if (stringLiteral && value[index + 1] === "'") {
+        normalized += "'";
+        index += 1;
+      } else {
+        stringLiteral = !stringLiteral;
+      }
+      continue;
+    }
+    if (!stringLiteral && (character === "`" || /\s/u.test(character))) {
+      continue;
+    }
+    normalized += character;
+  }
+  return normalized;
+}
+
+function triggerDefinitions(sqlite: DatabaseSync) {
+  return (
+    sqlite.prepare(
+      `SELECT name, sql
+       FROM sqlite_schema
+       WHERE type = 'trigger'
+       ORDER BY name`,
+    ).all() as { name: string; sql: string }[]
+  ).map(trigger => ({
+    name: trigger.name,
+    sql: normalizedSqlDefinition(trigger.sql),
+  }));
 }
 
 function runtimeCompatibilitySignature(sqlite: DatabaseSync) {
@@ -103,7 +141,7 @@ describe("Sites D1 packaging", () => {
     expect((await store.load(state.workspace.id))?.workspace.name)
       .toBe("Sites D1");
 
-    const owner = await createOrLinkUser(database, {}, {
+    const owner = await createOrLinkUser(database, TEST_AUTH_ENV, {
       displayName: "Sites owner",
       email: "sites-owner@example.test",
       provider: "test",
@@ -127,13 +165,13 @@ describe("Sites D1 packaging", () => {
       const state = createEmptyState(`Active owner stream ${index}`);
       const store = new D1SnapshotStore(database);
       await store.initialize(state);
-      const owner = await createOrLinkUser(database, {}, {
+      const owner = await createOrLinkUser(database, TEST_AUTH_ENV, {
         displayName: `Active owner ${index}`,
         email: `active-owner-${index}@example.test`,
         provider: "test",
         subject: `active-owner-${index}`,
       });
-      const disabledOwner = await createOrLinkUser(database, {}, {
+      const disabledOwner = await createOrLinkUser(database, TEST_AUTH_ENV, {
         displayName: `Disabled owner ${index}`,
         email: `disabled-owner-${index}@example.test`,
         provider: "test",
@@ -217,15 +255,8 @@ describe("Sites D1 packaging", () => {
     expect(runtimeCompatibilitySignature(numbered.sqlite)).toEqual(
       runtimeCompatibilitySignature(sites.sqlite),
     );
-    const triggerNames = (sqlite: DatabaseSync) =>
-      sqlite.prepare(
-        `SELECT name
-         FROM sqlite_schema
-         WHERE type = 'trigger'
-         ORDER BY name`,
-      ).all();
-    expect(triggerNames(numbered.sqlite)).toEqual(
-      triggerNames(sites.sqlite),
+    expect(triggerDefinitions(numbered.sqlite)).toEqual(
+      triggerDefinitions(sites.sqlite),
     );
   });
 
@@ -239,7 +270,7 @@ describe("Sites D1 packaging", () => {
       const state = createEmptyState(`Revision stream ${index}`);
       const store = new D1SnapshotStore(database);
       expect(await store.initialize(state)).toBe("created");
-      const owner = await createOrLinkUser(database, {}, {
+      const owner = await createOrLinkUser(database, TEST_AUTH_ENV, {
         displayName: `Revision owner ${index}`,
         email: `revision-owner-${index}@example.test`,
         provider: "test",
@@ -272,13 +303,34 @@ describe("Sites D1 packaging", () => {
         membership_revision: 1,
       });
 
+      const coOwner = await createOrLinkUser(
+        database,
+        TEST_AUTH_ENV,
+        {
+          displayName: `Revision co-owner ${index}`,
+          email: `revision-co-owner-${index}@example.test`,
+          provider: "test",
+          subject: `revision-co-owner-${index}`,
+        },
+      );
+      await database.prepare(
+        `INSERT INTO workspace_members(
+           workspace_id,user_id,role,created_at
+         ) VALUES(?,?,?,?)`,
+      ).bind(
+        state.workspace.id,
+        coOwner.userId,
+        "owner",
+        "2026-07-25T00:00:00.000Z",
+      ).run();
+
       await database.prepare(
         `UPDATE workspace_members
          SET role = 'editor'
          WHERE workspace_id = ? AND user_id = ?`,
       ).bind(state.workspace.id, owner.userId).run();
       expect(await revisions()).toEqual({
-        access_revision: 2,
+        access_revision: 3,
         membership_revision: 2,
       });
 
@@ -305,7 +357,7 @@ describe("Sites D1 packaging", () => {
         `guest_revision_${index}`,
       ).run();
       expect(await revisions()).toEqual({
-        access_revision: 4,
+        access_revision: 5,
         membership_revision: 2,
       });
 
@@ -321,7 +373,7 @@ describe("Sites D1 packaging", () => {
          FROM workspace_snapshots
          WHERE workspace_id = ?`,
       ).bind(state.workspace.id).first()).toEqual({
-        access_revision: 6,
+        access_revision: 7,
       });
       expect(await database.prepare(
         `SELECT membership_revision
@@ -361,14 +413,14 @@ describe("Sites D1 packaging", () => {
          FROM workspace_snapshots
          WHERE workspace_id = ?`,
       ).bind(state.workspace.id).first()).toEqual({
-        access_revision: 6,
+        access_revision: 7,
       });
       await database.prepare(
         `UPDATE workspace_snapshots
          SET access_revision = ?
          WHERE workspace_id = ?`,
       ).bind(Number.MAX_SAFE_INTEGER, state.workspace.id).run();
-      const nextMember = await createOrLinkUser(database, {}, {
+      const nextMember = await createOrLinkUser(database, TEST_AUTH_ENV, {
         displayName: `Revision next member ${index}`,
         email: `revision-next-${index}@example.test`,
         provider: "test",
@@ -679,6 +731,228 @@ describe("Sites D1 packaging", () => {
         access_revision: 1,
         membership_revision: 1,
       });
+    }
+  });
+
+  it("preserves populated authorization data through governance upgrades", () => {
+    const streams = [
+      {
+        beforeGovernance: [
+          new URL("../migrations/0001_initial.sql", import.meta.url),
+          new URL(
+            "../migrations/0002_atomic_guest_redemption.sql",
+            import.meta.url,
+          ),
+          new URL(
+            "../migrations/0003_scrub_legacy_ip_metadata.sql",
+            import.meta.url,
+          ),
+          new URL(
+            "../migrations/0004_mark_numbered_stream.sql",
+            import.meta.url,
+          ),
+          new URL(
+            "../migrations/0005_workspace_access_revisions.sql",
+            import.meta.url,
+          ),
+        ],
+        governance: [
+          new URL(
+            "../migrations/0006_public_account_governance.sql",
+            import.meta.url,
+          ),
+        ],
+      },
+      {
+        beforeGovernance: [
+          new URL(
+            "../drizzle/0000_natural_leper_queen.sql",
+            import.meta.url,
+          ),
+          new URL(
+            "../drizzle/0001_wakeful_unus.sql",
+            import.meta.url,
+          ),
+          new URL(
+            "../drizzle/0002_scrub_legacy_ip_metadata.sql",
+            import.meta.url,
+          ),
+          new URL(
+            "../drizzle/0003_light_iron_monger.sql",
+            import.meta.url,
+          ),
+          new URL(
+            "../drizzle/0004_overrated_lila_cheney.sql",
+            import.meta.url,
+          ),
+        ],
+        governance: [
+          new URL(
+            "../drizzle/0005_worried_invaders.sql",
+            import.meta.url,
+          ),
+          new URL(
+            "../drizzle/0006_aberrant_the_fury.sql",
+            import.meta.url,
+          ),
+        ],
+      },
+    ];
+
+    for (const [index, stream] of streams.entries()) {
+      const sqlite = new DatabaseSync(":memory:");
+      sqlite.exec("PRAGMA foreign_keys=ON");
+      for (const migration of stream.beforeGovernance) {
+        sqlite.exec(readFileSync(migration, "utf8")
+          .replaceAll("--> statement-breakpoint", ""));
+      }
+      const suffix = String(index);
+      const state = createEmptyState(`Governance upgrade ${suffix}`);
+      const userId = `usr_governance_upgrade_${suffix}`;
+      const workspaceId = state.workspace.id;
+      const stateJson = JSON.stringify(state);
+      sqlite.prepare(
+        `INSERT INTO users(
+           user_id,email,display_name,global_role,status,created_at,updated_at
+         ) VALUES(?,?,?,?,?,?,?)`,
+      ).run(
+        userId,
+        `governance-upgrade-${suffix}@example.test`,
+        `Governance upgrade ${suffix}`,
+        "admin",
+        "active",
+        "2026-07-01T00:00:00.000Z",
+        "2026-07-01T00:00:00.000Z",
+      );
+      sqlite.prepare(
+        `INSERT INTO workspace_snapshots(
+           workspace_id,revision,state_json,created_at,updated_at
+         ) VALUES(?,?,?,?,?)`,
+      ).run(
+        workspaceId,
+        state.workspace.revision,
+        stateJson,
+        state.workspace.createdAt,
+        state.workspace.updatedAt,
+      );
+      sqlite.prepare(
+        `INSERT INTO workspace_members(
+           workspace_id,user_id,role,created_at
+         ) VALUES(?,?,?,?)`,
+      ).run(
+        workspaceId,
+        userId,
+        "owner",
+        "2026-07-01T00:00:00.000Z",
+      );
+      sqlite.prepare(
+        `INSERT INTO identities(
+           identity_id,user_id,provider,provider_subject,email,created_at,
+           last_used_at
+         ) VALUES(?,?,?,?,?,?,?)`,
+      ).run(
+        `idt_governance_upgrade_${suffix}`,
+        userId,
+        "google",
+        `subject-governance-upgrade-${suffix}`,
+        `governance-upgrade-${suffix}@example.test`,
+        "2026-07-01T00:00:00.000Z",
+        "2026-07-01T00:00:00.000Z",
+      );
+      sqlite.prepare(
+        `INSERT INTO sessions(
+           session_id,user_id,token_hash,created_at,expires_at,last_seen_at
+         ) VALUES(?,?,?,?,?,?)`,
+      ).run(
+        `ses_governance_upgrade_${suffix}`,
+        userId,
+        `session-governance-upgrade-${suffix}`,
+        "2026-07-01T00:00:00.000Z",
+        "2026-08-01T00:00:00.000Z",
+        "2026-07-01T00:00:00.000Z",
+      );
+      sqlite.prepare(
+        `INSERT INTO guest_links(
+           guest_link_id,workspace_id,created_by_user_id,token_hash,role,
+           created_at,expires_at
+         ) VALUES(?,?,?,?,?,?,?)`,
+      ).run(
+        `gst_governance_upgrade_${suffix}`,
+        workspaceId,
+        userId,
+        `guest-governance-upgrade-${suffix}`,
+        "viewer",
+        "2026-07-01T00:00:00.000Z",
+        "2026-08-01T00:00:00.000Z",
+      );
+      sqlite.prepare(
+        `INSERT INTO auth_audit_events(
+           event_id,actor_user_id,action,target_type,target_id,detail_json,
+           created_at
+         ) VALUES(?,?,?,?,?,?,?)`,
+      ).run(
+        `aud_governance_upgrade_${suffix}`,
+        userId,
+        "test.upgrade",
+        "user",
+        userId,
+        "{}",
+        "2026-07-01T00:00:00.000Z",
+      );
+
+      for (const migration of stream.governance) {
+        sqlite.exec(readFileSync(migration, "utf8")
+          .replaceAll("--> statement-breakpoint", ""));
+      }
+
+      expect(sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+      expect(sqlite.prepare(
+        `SELECT
+           (SELECT COUNT(*) FROM users) AS users_count,
+           (SELECT COUNT(*) FROM identities) AS identities_count,
+           (SELECT COUNT(*) FROM sessions) AS sessions_count,
+           (SELECT COUNT(*) FROM workspace_members) AS memberships_count,
+           (SELECT COUNT(*) FROM guest_links) AS guest_links_count,
+           (SELECT COUNT(*) FROM auth_audit_events) AS audit_count,
+           (SELECT COUNT(*) FROM workspace_custody) AS custody_count`,
+      ).get()).toEqual({
+        audit_count: 1,
+        custody_count: 1,
+        guest_links_count: 1,
+        identities_count: 1,
+        memberships_count: 1,
+        sessions_count: 1,
+        users_count: 1,
+      });
+      expect(sqlite.prepare(
+        `SELECT
+           snapshots.state_json,
+           snapshots.stored_bytes,
+           users.global_role,
+           users.status,
+           sessions.replaced_by_session_id,
+           sessions.reauthenticated_at,
+           sessions.authentication_provider
+         FROM workspace_snapshots snapshots
+         JOIN workspace_members members
+           ON members.workspace_id = snapshots.workspace_id
+         JOIN users ON users.user_id = members.user_id
+         JOIN sessions ON sessions.user_id = users.user_id
+         WHERE snapshots.workspace_id = ?`,
+      ).get(workspaceId)).toEqual({
+        authentication_provider: null,
+        global_role: "admin",
+        reauthenticated_at: null,
+        replaced_by_session_id: null,
+        state_json: stateJson,
+        status: "active",
+        stored_bytes: Buffer.byteLength(stateJson),
+      });
+      expect(sqlite.prepare(
+        `SELECT name
+         FROM sqlite_schema
+         WHERE type='table' AND name LIKE '%governance%backup%'`,
+      ).all()).toEqual([]);
     }
   });
 

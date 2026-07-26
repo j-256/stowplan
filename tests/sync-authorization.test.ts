@@ -8,13 +8,14 @@ import {
   initializeOwnedWorkspace,
   restoreOwnedWorkspace,
 } from "../src/server/workspace-initialization";
+import { TEST_AUTH_ENV } from "./helpers/auth";
 import { numberedMigrationDatabase } from "./helpers/sqlite-d1";
 
 async function testUser(
   database: Parameters<typeof createOrLinkUser>[0],
   subject: string,
 ) {
-  return createOrLinkUser(database, {}, {
+  return createOrLinkUser(database, TEST_AUTH_ENV, {
     displayName: subject,
     email: `${subject}@example.test`,
     provider: "test",

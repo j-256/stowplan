@@ -8,6 +8,7 @@ import {
 } from "../src/server/auth";
 import type { RuntimeEnv } from "../src/server/runtime";
 import { ACCOUNT_CONTEXT_HEADER } from "../src/shared/account-context";
+import { TEST_AUTH_ENV } from "./helpers/auth";
 import { numberedMigrationDatabase } from "./helpers/sqlite-d1";
 
 const runtimeGlobal = globalThis as typeof globalThis & {
@@ -21,16 +22,17 @@ afterEach(() => {
 async function routeFixture() {
   const { database, sqlite } = numberedMigrationDatabase();
   runtimeGlobal.__STOWPLAN_ENV = {
+    ...TEST_AUTH_ENV,
     AUTH_BASE_URL: "https://stowplan.test",
     DB: database,
   };
-  const owner = await createOrLinkUser(database, {}, {
+  const owner = await createOrLinkUser(database, TEST_AUTH_ENV, {
     displayName: "Session route owner",
     email: "session-route-owner@example.test",
     provider: "test",
     subject: "session-route-owner",
   });
-  const outsider = await createOrLinkUser(database, {}, {
+  const outsider = await createOrLinkUser(database, TEST_AUTH_ENV, {
     displayName: "Session route outsider",
     email: "session-route-outsider@example.test",
     provider: "test",
@@ -55,7 +57,7 @@ async function routeFixture() {
     new Request("https://stowplan.test/sign-in"),
   );
   return {
-    cookie: `stowplan_session=${current.raw}`,
+    cookie: `__Host-stowplan_session=${current.raw}`,
     current,
     database,
     other,
@@ -221,7 +223,7 @@ describe("account session routes", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("set-cookie")).toContain(
-      "stowplan_session=",
+      "__Host-stowplan_session=",
     );
     expect(response.headers.get("set-cookie")).toContain("Max-Age=0");
     await expect(response.json()).resolves.toMatchObject({

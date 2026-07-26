@@ -3667,6 +3667,56 @@ test("surfaces a background backup failure on mobile", async ({ page }, testInfo
   );
 });
 
+test("keeps redacted post-ban accounts disabled in administration", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "desktop-chromium",
+    "One desktop project covers redacted account controls",
+  );
+  await page.route("**/api/admin/overview*", (route) => route.fulfill({
+    body: JSON.stringify({
+      audit: [],
+      guestLinks: [],
+      identities: [],
+      memberships: [],
+      sessions: [],
+      users: [{
+        account_revision: 4,
+        created_at: "2026-07-25T00:00:00.000Z",
+        deleted_at: null,
+        display_name: "Banned account",
+        email: "ban_lifted@banned.invalid",
+        global_role: "user",
+        membership_revision: 0,
+        retained_identity_ban_count: 1,
+        status: "disabled",
+        updated_at: "2026-07-25T01:00:00.000Z",
+        user_id: "usr_ban_lifted",
+      }],
+      workspaces: [],
+    }),
+    contentType: "application/json",
+    headers: MOCK_ACCOUNT_HEADERS,
+    status: 200,
+  }));
+
+  await page.goto("/admin");
+  const user = page.getByRole("listitem", {
+    name: "User ban_lifted@banned.invalid",
+  });
+  await expect(user).toContainText(
+    "Identity redaction is permanent. This retained account cannot be enabled.",
+  );
+  await expect(user.getByRole("button", {
+    name:
+      "Redacted account ban_lifted@banned.invalid cannot be enabled",
+  })).toBeDisabled();
+  await expect(user.getByRole("button", {
+    name: "Ban ban_lifted@banned.invalid",
+  })).toBeEnabled();
+});
+
 test("surfaces transport failures from admin mutations", async ({
   page,
 }, testInfo) => {

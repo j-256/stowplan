@@ -56,6 +56,12 @@ import {
   inaccessibleWorkspaceAccess,
 } from "./sync-reconciliation";
 import {
+  boundedRetryDelay,
+  parseRetryAfter,
+  retryWakeDelay,
+  runWithConcurrency,
+} from "./sync-scheduling";
+import {
   ACCOUNT_CONTEXT_HEADER,
   accountContextHeaders,
   responseMatchesAccount,
@@ -83,7 +89,18 @@ class WorkspaceCatalogStaleError extends Error {
 const BACKUP_UNAVAILABLE_API_ERROR = "Durable storage is not configured";
 const BACKUP_UNAVAILABLE_SESSION_KEY = "stowplan-backup-unavailable-at";
 const BACKUP_RETRY_INTERVAL_MS = 5 * 60 * 1_000;
+const MAXIMUM_CONCURRENT_RECONCILIATIONS = 2;
 const SIGN_IN_BACKUP_ERROR = "Sign in to back up this workspace.";
+
+class RetryableSyncError extends Error {
+  constructor(
+    message: string,
+    readonly retryAfterMs: number | null,
+  ) {
+    super(message);
+    this.name = "RetryableSyncError";
+  }
+}
 
 type BackupAccess = "available" | "checking" | "idle" | "signed-out" | "unavailable";
 
@@ -339,6 +356,11 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
     useRef(new Map<string, WorkspaceAccessState>());
   const flushPromises = useRef(new Map<string, Promise<void>>());
   const followUpFlushes = useRef(new Map<string, boolean>());
+  const retryStates = useRef(new Map<string, {
+    attempt: number;
+    notBefore: number;
+    timer: ReturnType<typeof setTimeout> | null;
+  }>());
   const flushWorkspaceRef = useRef<(workspaceId: string, allowEmpty?: boolean) => Promise<void>>(
     () => Promise.resolve(),
   );
@@ -476,6 +498,60 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
       syncTimers.current.delete(id);
     }
   }, []);
+
+  const clearRetry = useCallback((workspaceId?: string) => {
+    const entries = workspaceId
+      ? [[workspaceId, retryStates.current.get(workspaceId)] as const]
+      : [...retryStates.current.entries()];
+    for (const [id, entry] of entries) {
+      if (entry?.timer) clearTimeout(entry.timer);
+      retryStates.current.delete(id);
+    }
+  }, []);
+
+  const scheduleRetry = useCallback((
+    workspaceId: string,
+    retryAfterMs: number | null,
+  ) => {
+    const current = retryStates.current.get(workspaceId) ?? {
+      attempt: 0,
+      notBefore: 0,
+      timer: null,
+    };
+    if (current.timer) clearTimeout(current.timer);
+    const delay = boundedRetryDelay(
+      current.attempt,
+      retryAfterMs,
+    );
+    const now = Date.now();
+    const next = {
+      attempt: current.attempt + 1,
+      notBefore: Math.max(
+        current.notBefore,
+        Math.min(Number.MAX_SAFE_INTEGER, now + delay),
+      ),
+      timer: null as ReturnType<typeof setTimeout> | null,
+    };
+    const wake = () => {
+      const scheduled = retryStates.current.get(workspaceId);
+      if (scheduled !== next) return;
+      const remaining = retryWakeDelay(next.notBefore);
+      if (remaining > 0) {
+        next.timer = setTimeout(wake, remaining);
+        return;
+      }
+      next.timer = null;
+      next.notBefore = 0;
+      void flushWorkspaceRef.current(workspaceId, false);
+    };
+    next.timer = setTimeout(
+      wake,
+      retryWakeDelay(next.notBefore, now),
+    );
+    retryStates.current.set(workspaceId, next);
+  }, []);
+
+  useEffect(() => clearRetry(), [accountId, clearRetry]);
 
   const requestAuthenticationRefresh = useCallback(() => {
     setAuthenticationReady(false);
@@ -805,6 +881,8 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
       let attemptedWorkspaceId: string | null = null;
       let countedAsSyncing = false;
       try {
+        const retry = retryStates.current.get(workspaceId);
+        if (retry && retry.notBefore > Date.now()) return;
         if (
           backupAccess === "checking" ||
           backupAccess === "idle" ||
@@ -880,7 +958,16 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
             await recordSyncAttempt(value.state.workspace.id, DEVICE_ONLY_BACKUP_ERROR);
             return;
           }
-          throw new Error(body?.error ?? "Server backup is temporarily unavailable.");
+          throw new RetryableSyncError(
+            body?.error ?? "Server backup is temporarily unavailable.",
+            parseRetryAfter(response.headers.get("retry-after")),
+          );
+        }
+        if (response.status === 429) {
+          throw new RetryableSyncError(
+            body?.error ?? "Server backup is temporarily rate limited.",
+            parseRetryAfter(response.headers.get("retry-after")),
+          );
         }
         forgetBackupUnavailable();
         const authorization = syncAuthorization(
@@ -944,6 +1031,7 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
           if (response.status === 404) {
             void refreshWorkspaces().catch(() => undefined);
           }
+          clearRetry(workspaceId);
           if (definitiveRefusal || response.status === 401) return;
           throw new Error(message);
         }
@@ -972,6 +1060,7 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
           },
         );
         if (next) {
+          clearRetry(workspaceId);
           setWorkspaceStatusRevision((current) => current + 1);
           setReplica((current) => current?.state.workspace.id === value.state.workspace.id ? next : current);
           broadcastWorkspaceChange({
@@ -984,7 +1073,17 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
         }
       } catch (error) {
         // Local state stays authoritative; visibility/manual/online events retry
-        if (attemptedWorkspaceId) await recordSyncAttempt(attemptedWorkspaceId, error instanceof Error ? error.message : "Server backup is temporarily unavailable.");
+        if (error instanceof RetryableSyncError) {
+          scheduleRetry(workspaceId, error.retryAfterMs);
+        }
+        if (attemptedWorkspaceId) {
+          await recordSyncAttempt(
+            attemptedWorkspaceId,
+            error instanceof Error
+              ? error.message
+              : "Server backup is temporarily unavailable.",
+          );
+        }
       } finally {
         if (countedAsSyncing) {
           setSyncingWorkspaceIds((current) => {
@@ -1011,9 +1110,11 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
     backupAccess,
     backupConfigured,
     broadcastWorkspaceChange,
+    clearRetry,
     recordSyncAttempt,
     refreshWorkspaces,
     requestAuthenticationRefresh,
+    scheduleRetry,
   ]);
   useEffect(() => {
     flushWorkspaceRef.current = flushWorkspace;
@@ -1105,10 +1206,11 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
       const workspaces = await listWorkspaceReplicas().catch(() => []);
       const targets = reconciliationTargets(workspaces, activeWorkspaceId);
       for (const target of targets) clearSchedule(target.workspaceId);
-      await Promise.all(
-        targets.map((target) =>
-          flushWorkspace(target.workspaceId, target.allowEmpty)
-        ),
+      await runWithConcurrency(
+        targets,
+        MAXIMUM_CONCURRENT_RECONCILIATIONS,
+        (target) =>
+          flushWorkspace(target.workspaceId, target.allowEmpty),
       );
     };
     const immediate = () => void reconcile();
@@ -1125,7 +1227,10 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
       clearInterval(reconciliation);
     };
   }, [activeWorkspaceId, clearSchedule, flushWorkspace]);
-  useEffect(() => () => clearSchedule(), [clearSchedule]);
+  useEffect(() => () => {
+    clearRetry();
+    clearSchedule();
+  }, [clearRetry, clearSchedule]);
 
   const dispatch = useCallback((command: Command) => {
     const visibleState = replica?.state;
@@ -1406,6 +1511,7 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
         workspaceId,
         expectedUpdatedAt,
       );
+      clearRetry(workspaceId);
       clearSchedule(workspaceId);
       if (deletion.catalogAccountId) {
         if (accountIdRef.current === deletion.catalogAccountId) {
@@ -1428,7 +1534,7 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
     });
     mutationQueue.current = operation.catch(() => undefined);
     return operation;
-  }, [broadcastWorkspaceChange, clearSchedule]);
+  }, [broadcastWorkspaceChange, clearRetry, clearSchedule]);
 
   const setWorkspaceAccess = useCallback((
     workspaceId: string,
@@ -1451,6 +1557,7 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
         return next;
       });
       clearSchedule(workspaceId);
+      clearRetry(workspaceId);
       setReplica((current) =>
         applyConfirmedTerminalAccessInMemory(
           current,
@@ -1503,7 +1610,7 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
     });
     mutationQueue.current = operation.catch(() => undefined);
     return operation;
-  }, [broadcastWorkspaceChange, clearSchedule]);
+  }, [broadcastWorkspaceChange, clearRetry, clearSchedule]);
 
   const hubCards = useMemo(
     () => mergeWorkspaceHub(

@@ -1,4 +1,5 @@
 import {
+  GUEST_INVITATION_TOKEN_MAX_CHARACTERS,
   guestInvitationUrl,
   workspaceReturnTo,
 } from "../../../../../src/domain/app-url";
@@ -9,7 +10,11 @@ import {
   InvitationError,
   isTrustedMutation,
 } from "../../../../../src/server/auth";
-import { privateJson } from "../../../../../src/server/api-problem";
+import {
+  ApiProblem,
+  apiProblemResponse,
+  privateJson,
+} from "../../../../../src/server/api-problem";
 import {
   QuotaExceededError,
   quotaProblem,
@@ -76,6 +81,19 @@ export async function POST(
       );
     }
     const token = (await params).token;
+    if (
+      !token
+      || token.trim() !== token
+      || token.length > GUEST_INVITATION_TOKEN_MAX_CHARACTERS
+    ) {
+      return privateJson(
+        {
+          code: "INVALID_REQUEST",
+          error: "Invitation token is missing or invalid",
+        },
+        { status: 400 },
+      );
+    }
     const base = env.AUTH_BASE_URL ?? request.url;
     const requestUrl = new URL(request.url);
     const requested = requestUrl.searchParams.get("returnTo");
@@ -127,6 +145,9 @@ export async function POST(
       },
     });
   } catch (error) {
+    if (error instanceof ApiProblem) {
+      return apiProblemResponse(error);
+    }
     if (error instanceof AuthorizationError) {
       return privateJson(
         {

@@ -20,18 +20,32 @@ All responses containing workspace or administrative data use `Cache-Control: no
 | `/api/auth/me` | GET | optional | Session and provider configuration state |
 | `/api/auth/sessions` | GET | active session | List every retained session belonging to the caller |
 | `/api/auth/sessions/:sessionId` | DELETE | active session | Revoke one active session belonging to the caller |
-| `/api/auth/:provider/start` | GET | none | Begin Google/GitHub code + PKCE flow |
-| `/api/auth/:provider/callback` | GET | OAuth state | Exchange code and issue app session |
-| `/api/auth/access` | POST | Access assertion | Issue app session after JWT verification |
+| `/api/auth/google/start` | POST | Turnstile; active session for link/reauth intents | Begin a Google code + PKCE flow after same-origin browser verification |
+| `/api/auth/google/callback` | GET | OAuth state + browser binding | Validate Google OIDC and complete sign-in, link, or reauthentication |
+| `/api/auth/access` | POST | Access assertion + existing linked identity | Issue a two-hour, provenance-marked migration session only while the migration flag is enabled |
+| `/api/auth/dev` | POST | isolated development mode | Issue a session for a synthetic `@example.test` persona; unavailable on the production hostname |
 | `/guest#token=…&returnTo=…` | GET | none; fragment remains client-side | Show the fixed confirmation page without transmitting or consuming the enrollment token |
 | `/api/auth/guest` | POST | active session + token in JSON body | Atomically enroll the signed-in account and return to the validated workspace view |
 | `/guest/:token` | GET | legacy token path | Canonicalize a legacy invitation to the fixed fragment form before checking authentication |
 | `/api/auth/guest/:token` | GET, POST | legacy token path | Redirect legacy previews and signed-out confirmations to the fragment form while preserving signed-in POST compatibility |
 | `/api/auth/logout` | POST | session | Revoke current session and clear cookie |
-| `/api/admin/overview` | GET | global admin (+ optional matching Access assertion) | Read bounded operational records and database drill-downs |
-| `/api/admin/mutate` | POST | global admin (+ optional matching Access assertion) | Role, status, access, revocation, and guest-record deletion operations |
-| `/api/admin/workspaces/:workspaceId` | POST, DELETE | global admin (+ optional matching Access assertion) | Audit full-state inspection, take owner custody, or immediately delete a server workspace |
-| `/api/admin/guest-links` | POST | workspace owner | Legacy-compatible entry point that delegates to the owner-only guest-link policy |
+| `/api/account/deletion` | GET, POST | active session; recent Google proof for POST | Review account-deletion blockers, then execute guarded deletion |
+| `/api/admin/overview` | GET | global admin + Access when configured | Read bounded operational records and database drill-downs |
+| `/api/admin/mutate` | POST | global admin + Access when configured | Role, status, access, revocation, and guest-record deletion operations |
+| `/api/admin/recovery` | POST | active session + temporary recovery token (+ Access assertion when required) | Bootstrap or recover database global-admin authority while retaining the exact recovery session |
+| `/api/admin/workspaces/:workspaceId` | POST, DELETE | global admin + Access when configured | Audit full-state inspection, take owner custody, or immediately delete a server workspace |
+
+## Ordinary authentication and public signup
+
+`GET /api/auth/me` returns `configured`, the active `user` or `null`, the ordinary provider IDs advertised to this request, the public Turnstile site key when Google is fully configured, and booleans describing the Access migration exchange and admin Access requirement. Production provider discovery advertises only `google`. The isolated development provider appears only when `AUTH_DEV_ENABLED=true`, identity enforcement is configured, and every request and configured-base hostname passes the development guard.
+
+`POST /api/auth/google/start` requires a trusted same-origin mutation, `Content-Type: application/x-www-form-urlencoded`, and a body no larger than 4 KiB. The body contains `cf-turnstile-response` and an `intent` of `sign-in`, `link`, or `reauthenticate`; `returnTo` remains a bounded query parameter. Every intent requires a fresh Turnstile result whose expected action is `oauth_start` and whose hostname matches `AUTH_BASE_URL`. The server performs Siteverify before allocating OAuth state, then returns a JSON `authorizationUrl` and installs a narrow browser-binding cookie. The client validates the returned Google origin before navigating.
+
+The callback claims the state once, validates its browser binding, exchanges the code with an eight-second provider timeout, and validates Google's OIDC signature, issuer, audience, token time, nonce, stable subject, and verified-email claim. A sign-in issues an app session. A link intent requires the exact active app user and session plus recent proof from an already linked Google identity. A reauthentication intent must use a Google subject already linked to that exact user and updates only that exact session's recent-proof timestamp. Neither linking nor reauthentication issues another app session.
+
+Public signup has no email allowlist and no invitation admission requirement. A previously unseen Google subject can create an ordinary active account only when its verified email is not already assigned to another account and the installation-wide new-account circuit and daily allowance are open. The new account receives global role `user` and no workspace membership. Google email, Cloudflare Access, and successful Turnstile verification never grant global-admin or workspace authority.
+
+Google OAuth is the only supported ordinary-account provider at launch. `POST /api/auth/access` is a bounded migration path, not ongoing crossover authentication: it returns `404` unless `AUTH_ACCESS_MIGRATION_ENABLED=true`, accepts only a verified Access subject already linked to an existing account, cannot create or link an account by email, and fixes the resulting session lifetime at two hours. Session rows record `google`, `development`, or `cloudflare-access` provenance for newly issued sessions; rows predating provenance remain `null`. Disable the exchange after affected accounts have linked and verified Google, bulk-revoke the active pre-Google scope containing both `cloudflare-access` and legacy `null` sessions, and verify the admin inventory's `active pre-Google` count is zero before removing Access from ordinary account routes. The Access assertion protecting `/admin*` and `/api/admin/*` remains an independent gate.
 
 ## Account sessions
 
@@ -40,6 +54,14 @@ All responses containing workspace or administrative data use `Cache-Control: no
 The request requires `X-Stowplan-Account-Id` to match the active app session. `DELETE /api/auth/sessions/:sessionId` also requires a trusted mutation origin and accepts no body. Its conditional write can affect only a session owned by the caller. Another account's session uses the generic `404 NOT_FOUND_OR_INACCESSIBLE` response, while a repeated, expired, or otherwise inactive target returns a visible `409` refusal. Revoking the current session clears its cookie; `POST /api/auth/logout` remains an idempotent current-session revoke and cookie clear. Revoking another session does not delete that device's IndexedDB replicas or queued work.
 
 Issuing a session, revoking it through Account, and signing out create non-secret authentication audit records only when the corresponding state change commits. Successful authenticated requests refresh session and user `last_seen_at` values no more often than approximately once every five minutes. That write throttle makes the timestamp useful for operational review without turning every request into a database write; it does not measure offline or device-only use.
+
+## Account deletion
+
+`GET /api/account/deletion` requires the active session and matching `X-Stowplan-Account-Id`. It returns the exact `accountRevision` and `membershipRevision`, status and global role, membership count, any custody transfers that can safely preserve shared workspaces, and typed blockers. A global admin must be demoted before deletion. The final active global admin, an inactive account, a final workspace owner, or custody that cannot be transferred within the recipient's workspace and storage limits blocks execution.
+
+`POST /api/account/deletion` requires the same account binding, trusted mutation origin, JSON body, and a body within the control-request limit. The body must contain exactly `confirmation: "DELETE"`, `expectedAccountRevision`, and `expectedMembershipRevision`. The active session must carry sign-in or explicit Google reauthentication proof no more than ten minutes old. A stale review returns `409 ACCESS_STALE`; unresolved authority or custody returns `409 ACCOUNT_DELETION_BLOCKED`; missing recent proof returns `403 REAUTHENTICATION_REQUIRED`.
+
+The deletion transaction rechecks every blocker and revision, transfers safe workspace custody, revokes active sessions and unused links, removes direct sign-in identities and memberships, scrubs the profile and retained session metadata, pseudonymizes exact and workspace-qualified audit references, and writes a minimal keyed deletion receipt. It clears the current session cookie. Device replicas, pending commands, blocked commands, and exported backups remain separate local-first data; the user must export, keep read-only, or remove each device copy explicitly.
 
 ## Workspace discovery
 
@@ -121,9 +143,11 @@ Global administration is a separate control plane. A global admin can perform ex
 
 ## Global administration
 
+Global-admin authority comes only from the database `users.global_role` field. When `AUTH_ADMIN_REQUIRE_ACCESS=true`, every normal admin request additionally requires a verified Access assertion whose email matches one of the signed-in account's linked verified Google identities whenever any are linked. Only a legacy account with no linked Google identity may fall back to its canonical email. A Cloudflare Access identity row is not a direct sign-in identity and does not satisfy that match. Passing Access, authenticating with Google, and holding a workspace role never promote an account.
+
 `GET /api/admin/overview` returns a fixed database inventory plus bounded, searchable detail arrays for every durable record family: workspace snapshots, deletion tombstones, users, linked identities, workspace memberships, sessions, guest links, OAuth states, authentication audit events, and the migration stream and ledgers present in the active adapter. Each list has an independent `listInfo` entry with its `limit`, `offset`, `hasMore`, and `nextOffset`. A continuation request names exactly one `resource` and its non-negative `offset`; every query has deterministic tie-breakers, and the UI exposes **Load more** for an incomplete section. Search remains inside this global-admin control plane.
 
-Workspace overview rows expose the name and stable ID, snapshot and access revisions, timestamps, serialized size, quota-relevant record counts, member and owner counts, and retained and active link counts. Other detail rows expose operational IDs, display identity and email, roles and status, membership revisions, lifecycle timestamps, session user agents and anonymized network prefixes, link creation and redemption references, OAuth provider and lifecycle status, non-secret audit details, and migration records. A used guest-link row includes the accepting user's ID, display name, email, and acceptance time by correlating one deterministic `member.invite.accept` audit event whose action-aware detail allowlist contains the stable `guestLinkId`. Admin search covers that ID and accepting account, while raw tokens and token hashes remain excluded. Linked provider subjects may be returned as account-linking identifiers, but provider assertions are never returned.
+Workspace overview rows expose the name and stable ID, snapshot and access revisions, timestamps, serialized size, quota-relevant record counts, member and owner counts, and retained and active link counts. Other detail rows expose operational IDs, display identity and email, roles and status, membership revisions, lifecycle timestamps, session authentication-provider provenance, user agents and anonymized network prefixes, link creation and redemption references, OAuth provider and lifecycle status, non-secret audit details, and migration records. A used guest-link row includes the accepting user's ID, display name, email, and acceptance time by correlating one deterministic `member.invite.accept` audit event whose action-aware detail allowlist contains the stable `guestLinkId`. Admin search covers that ID and accepting account, while raw tokens and token hashes remain excluded. Linked provider subjects may be returned as account-linking identifiers, but provider assertions are never returned.
 
 `POST /api/admin/workspaces/:workspaceId` is an origin-protected, account-bound, body-limited control action. `{ "action": "inspect" }` reads the exact stored snapshot, validates and normalizes it with the runtime-neutral snapshot parser, rechecks active global-admin authority and the snapshot and access revisions before writing `workspace.inspect`, and then returns the complete state plus revision, timestamp, size, and operator-membership metadata. The audit contains only counts and revisions, never a second copy of the content. Inspection creates neither a membership nor an IndexedDB replica and does not change the active workspace. A failed validation, concurrent change, or audit failure returns no snapshot.
 
@@ -131,7 +155,9 @@ Workspace overview rows expose the name and stable ID, snapshot and access revis
 
 `DELETE /api/admin/workspaces/:workspaceId` accepts `confirmationName`, `expectedRevision`, and `expectedAccessRevision`. It lets an active global admin delete without first taking custody, but it rechecks all confirmation state and active admin authority in the deletion transaction. The response and retention semantics match owner deletion.
 
-`POST /api/admin/mutate` supports explicit user role and status changes, identity unlinking, workspace role repair and member removal, session revocation, guest-link revocation, and global-admin-only `guest.delete`. Disabling an active user and revoking all of that user's active sessions commit atomically; enabling the user does not revive any session. Revoking the administrator's current session also clears the installed cookie before the client returns to Account. `guest.delete` permanently removes one retained guest-link record and writes a non-secret audit record. When the link is active, the same conditional operation invalidates it before deletion. Deleting a used link record does not remove the membership created by redemption. Repeated and missing targets return a visible refusal rather than false success.
+`POST /api/admin/mutate` supports explicit user role and status changes, identity unlinking, workspace role repair and member removal, individual session revocation, bulk pre-Google session revocation, guest-link revocation, and global-admin-only `guest.delete`. The `session.revoke-pre-google` action accepts only target ID `pre-google`, then revokes every active `cloudflare-access` migration session and every active legacy session whose provenance is `null`. It writes one audit event only when at least one session changes and reports and clears the operator's current cookie when that session was included. Disabling an active user, revoking all of that user's active sessions, and revoking every active unused guest link created by that user commit atomically; enabling the user does not revive any session or link. A lifted ban leaves its permanently redacted account disabled and non-enableable while permitting the external identity to register anew; re-banning that retained account reactivates every retained keyed identity digest. Revoking the administrator's current session also clears the installed cookie before the client returns to Account. `guest.delete` permanently removes one retained guest-link record and writes a non-secret audit record. When the link is active, the same conditional operation invalidates it before deletion. Deleting a used link record does not remove the membership created by redemption. Repeated and missing targets return a visible refusal rather than false success.
+
+`POST /api/admin/recovery` is the bootstrap and lockout-recovery exception. It accepts no body, requires the exact account binding and a 43 through 256 character temporary secret in `X-Stowplan-Admin-Recovery`, and never discloses whether the server secret is configured. It requires an active app session. When `AUTH_ADMIN_REQUIRE_ACCESS=true`, it also requires a verified Access assertion but deliberately permits the Access and app emails to differ for this recovery request. A successful transaction promotes only the signed-in active account, retains that exact session, revokes every other active session for every database global admin, and writes `admin.recover` with a keyed principal digest and non-secret recovery mode. The environment token remains reusable until an operator removes or replaces it, so verify normal admin access and the audit event and then remove it immediately.
 
 Permanent operator deletion covers retained guest-link records and live server workspaces. Sessions are revocable but remain available for review until cleanup, OAuth state rows are diagnostic, and deletion tombstones remain durable. Session rows become cleanup-eligible when their original expiry is at least 30 days old. OAuth PKCE verifiers and return paths are cleared when a state is claimed or when bounded authentication maintenance observes its expiry, and the remaining lifecycle row becomes eligible 24 hours after expiry. Guest-link rows become eligible 30 days after expiry unless a global admin deletes one earlier. Cleanup runs in bounded batches. Authentication audit events have no automatic expiry and remain indefinitely; orphan guest-account cleanup may null an actor reference without deleting the event.
 
@@ -141,7 +167,7 @@ Admin responses and audit details categorically exclude raw session credentials 
 
 Owners can create `viewer` or `editor` guest links with an integer expiry from 1 through 168 hours. Active-link and retained-link quotas are checked in the same conditional write as creation. Guest redemption also reserves the final member slot transactionally.
 
-Creation returns the raw token and normalized URL once. Only its hash is stored. New URLs use `/guest#token=…&returnTo=…`; the browser fragment is absent from the HTTP request path, query string, `Referer`, and ordinary access logs. The fixed `/guest` client validates and normalizes the fragment, retains it only in same-tab session storage while sign-in is in progress, and gives OAuth or Access only the credential-free `/account?resume=invitation` continuation. The fragment return path is bounded to 2,048 characters.
+Creation returns the raw token and normalized URL once. Only its hash is stored. New URLs use `/guest#token=…&returnTo=…`; the browser fragment is absent from the HTTP request path, query string, `Referer`, and ordinary access logs. The fixed `/guest` client validates and normalizes the fragment, retains it only in same-tab session storage while Google sign-in is in progress, and gives OAuth only the credential-free `/account?resume=invitation` continuation. The fragment return path is bounded to 2,048 characters.
 
 Only an explicit confirmation sends the token, in the JSON body of the origin-protected and 4 KiB-bounded `POST /api/auth/guest`. The request carries the expected account in both its body and `X-Stowplan-Account-Id`; authenticated errors retain that account context. The endpoint atomically attaches the durable membership to the signed-in account, writes the non-secret acceptance audit record, marks the link used, and returns a validated workspace route without creating or replacing a session. The browser uses replacement navigation when leaving for sign-in, returning to the invitation, and opening the accepted workspace so Back does not reveal a consumed credential.
 
@@ -181,14 +207,14 @@ Same-field stale edits reject. Unrelated stale edits can merge because expectati
 
 ## Application quotas
 
-`src/shared/quotas.js` is the commented source of truth for these deliberately generous application limits and the guest-link expiry policy. Transport security ceilings, pagination and query bounds, retry timing, and presentation limits stay beside their enforcement because they are not application quotas:
+`src/shared/quotas.js` is the commented source of truth for workspace limits and the guest-link expiry policy. `src/shared/governance-policy.ts` is the source of truth for public-launch account, session, identity, membership, allocation, and storage safeguards. Transport security ceilings, pagination and query bounds, retry timing, and presentation limits stay beside their enforcement because they are not application quotas.
 
 | Resource | Limit |
 |---|---:|
-| Owned workspaces per user | 50 |
-| Members per workspace | 100 |
-| Active guest links per workspace | 100 |
-| Retained guest links per workspace | 2,000 |
+| Owned workspaces per account | 5 |
+| Members per workspace | 25 |
+| Active guest links per workspace | 10 |
+| Retained guest links per workspace | 100 |
 | Commands per sync request | 100 |
 | Compacted command receipts per snapshot | 20,000 |
 | Serialized workspace snapshot | 1,800,000 UTF-8 bytes |
@@ -199,6 +225,26 @@ Same-field stale edits reject. Unrelated stale edits can merge because expectati
 | Activities per snapshot | 10,000 |
 | Activity patches per snapshot | 50,000 |
 | Audit events per snapshot | 10,000 |
+
+The public launch adds durable account and allocation safeguards:
+
+| Scope | Limit or behavior |
+|---|---:|
+| New accounts per installation per UTC day | 25 by default; database-managed and adjustable by a global admin |
+| Active sessions per account | 8; a new session revokes the oldest excess active session |
+| Sessions issued per account per UTC day | 12 |
+| Sessions issued per account per rolling 30 days | 60 |
+| Retained terminal sessions per account | At most 32 and no longer than 30 days after terminal state |
+| Linked direct sign-in identities per account | 5 |
+| Workspace memberships per account | 25 |
+| Aggregate stored snapshot bytes in account custody | 8,000,000 |
+| Guest links created per account per UTC day | 10 |
+| Guest links created per account per rolling 30 days | 50 |
+| Server workspaces created per account per UTC day | 5 |
+| Server workspaces created per account per rolling 30 days | 20 |
+| Server workspaces created per account lifetime | 100 |
+
+The daily new-account value is an installation fuse, not a permanent admission list. Changing it is an audited database mutation. Independent database-backed circuits cover `new_accounts`, `new_workspaces`, `snapshot_growth`, `guest_links`, and `guest_redemptions`. A capacity pause remains latched until an audited reopen. A security pause requires a bounded automatic resume time. Returning-account sign-in remains available when only new accounts are paused, existing workspaces remain readable when allocation or growth is paused, and local work and export remain available.
 
 The snapshot byte limit leaves headroom beneath [D1's 2,000,000-byte maximum value and row size](https://developers.cloudflare.com/d1/platform/limits/) because a workspace is stored as one JSON value. Initial sync and owner restore reject an oversized snapshot before persistence. During replay, a command that would cross a live-record limit receives a rejected receipt while earlier valid commands in the batch may still commit. A snapshot that already exceeds a newly introduced limit may stay level or shrink, but no command may increase an over-limit live-record dimension.
 
@@ -215,9 +261,9 @@ Hard quota responses use:
   "error": "This workspace has reached its member limit",
   "code": "QUOTA_EXCEEDED",
   "quota": "membersPerWorkspace",
-  "limit": 100,
-  "actual": 101
+  "limit": 25,
+  "actual": 26
 }
 ```
 
-State and account quotas return `409`; oversized request batches and snapshots return `413`. Command-produced snapshot overages stay inside the normal `200` sync response as a rejected receipt carrying the same `code`, `quota`, `limit`, and `actual` fields. Hard quotas do not use `429`, which is reserved for rate limiting.
+Static capacity, membership, ownership, aggregate-storage, and lifetime-allocation conflicts return `409`. Oversized request batches and snapshots return `413`. Velocity safeguards return `429`, including new-account creation, session issuance, linked-identity allocation, and daily or rolling workspace and guest-link creation. Quota-limited authentication issuance and retriable sync responses include a quota-aware `Retry-After`: daily limits use the remaining seconds until the next UTC day, rolling session issuance and workspace allocation use the remaining seconds until enough counted events leave the 30-day window to admit one more allocation, simultaneous workspace velocity limits use the longer applicable floor, and other retriable refusals use a conservative fallback. A paused public-operation circuit returns `503 CIRCUIT_PAUSED`; automatic retry timing is provided only when the specific route has a safe server-held floor. Command-produced snapshot overages stay inside the normal `200` sync response as a rejected receipt carrying the same `code`, `quota`, `limit`, and `actual` fields. Cloudflare edge rate limiting can independently return `429` before a request reaches the application.

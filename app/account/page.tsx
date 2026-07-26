@@ -12,7 +12,9 @@ import {
 import {
   clearActiveServerWorkspaceCatalogAccount,
 } from "../../src/client/local-replica";
+import { AccountDeletion } from "../../src/client/account-deletion";
 import { AccountSessions } from "../../src/client/account-sessions";
+import { GoogleSignIn } from "../../src/client/google-sign-in";
 import styles from "./account.module.css";
 
 interface User {
@@ -24,8 +26,10 @@ interface User {
 }
 
 interface MeResponse {
+  accessMigrationAvailable: boolean;
   configured: boolean;
   providers: string[];
+  turnstileSiteKey: string | null;
   user: User | null;
 }
 
@@ -36,7 +40,6 @@ interface NavigationState {
   workspace: string | null;
 }
 
-const ACCESS_LOGOUT_PATH = "/cdn-cgi/access/logout";
 const DEFAULT_RETURN_TO = "/";
 const INITIAL_NAVIGATION: NavigationState = {
   ready: false,
@@ -85,30 +88,10 @@ async function readResponse<T>(
   return body as T;
 }
 
-async function fetchAccount(): Promise<{
-  accessSignedIn: boolean;
-  account: MeResponse;
-}> {
+async function fetchAccount(): Promise<MeResponse> {
   const statusError = "Could not check account status";
-  let response = await fetch("/api/auth/me", { cache: "no-store" });
-  let account = await readResponse<MeResponse>(response, statusError);
-  let accessSignedIn = false;
-  if (!account.user && account.providers?.includes("cloudflare-access")) {
-    const access = await fetch("/api/auth/access", { method: "POST" });
-    await readResponse<{ user: User }>(
-      access,
-      "Cloudflare Access could not create an app session",
-    );
-    response = await fetch("/api/auth/me", { cache: "no-store" });
-    account = await readResponse<MeResponse>(response, statusError);
-    if (!account.user) {
-      throw new Error(
-        "Cloudflare Access signed in, but the app session was not created",
-      );
-    }
-    accessSignedIn = true;
-  }
-  return { accessSignedIn, account };
+  const response = await fetch("/api/auth/me", { cache: "no-store" });
+  return readResponse<MeResponse>(response, statusError);
 }
 
 function navigationHref(): string {
@@ -200,10 +183,16 @@ function broadcastAccountChange(): void {
 }
 
 export default function Account() {
+  const [
+    accessMigrationAvailable,
+    setAccessMigrationAvailable,
+  ] = useState(false);
   const [configured, setConfigured] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [message, setMessage] = useState("");
   const [providers, setProviders] = useState<string[]>([]);
+  const [turnstileSiteKey, setTurnstileSiteKey] =
+    useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const href = useSyncExternalStore(
     subscribeNavigation,
@@ -231,11 +220,15 @@ export default function Account() {
         }
       });
     }
-    void fetchAccount().then(({ accessSignedIn, account }) => {
+    void fetchAccount().then((account) => {
       if (!active) return;
       setUser(account.user);
+      setAccessMigrationAvailable(
+        account.accessMigrationAvailable ?? false,
+      );
       setConfigured(account.configured);
       setProviders(account.providers ?? []);
+      setTurnstileSiteKey(account.turnstileSiteKey ?? null);
       if (account.user) broadcastAccountChange();
       const invitationDestination = account.user
         ? resumeInvitation
@@ -247,11 +240,6 @@ export default function Account() {
       if (account.user && invitationDestination) {
         setMessage("Signed in. Returning to the invitation.");
         location.replace(invitationDestination);
-        return;
-      }
-      if (accessSignedIn) {
-        setMessage("Signed in. Returning to your workspace so its backup can start.");
-        location.replace(returnTo);
         return;
       }
       if (account.user && resumeInvitation) {
@@ -287,10 +275,6 @@ export default function Account() {
       }
       await clearActiveServerWorkspaceCatalogAccount().catch(() => undefined);
       broadcastAccountChange();
-      if (providers.includes("cloudflare-access")) {
-        location.assign(ACCESS_LOGOUT_PATH);
-        return null;
-      }
       location.reload();
       return null;
     } catch (error) {
@@ -298,6 +282,13 @@ export default function Account() {
       setMessage(failure);
       return failure;
     }
+  };
+
+  const accountDeleted = async (): Promise<void> => {
+    await clearActiveServerWorkspaceCatalogAccount()
+      .catch(() => undefined);
+    broadcastAccountChange();
+    location.replace("/account");
   };
 
   const developmentSignIn = async (data: FormData) => {
@@ -323,10 +314,30 @@ export default function Account() {
       setMessage(actionError(error, "Development sign-in failed"));
     }
   };
-  const oauthReturn = encodeURIComponent(
+  const accessMigrationSignIn = async () => {
+    setMessage("");
+    try {
+      const response = await fetch("/api/auth/access", {
+        method: "POST",
+      });
+      await readResponse<{ user: User }>(
+        response,
+        "Existing account migration failed",
+      );
+      broadcastAccountChange();
+      location.replace(resumeInvitation
+        ? takeInvitationReturnTo() ?? DEFAULT_RETURN_TO
+        : returnTo);
+    } catch (error) {
+      setMessage(
+        actionError(error, "Existing account migration failed"),
+      );
+    }
+  };
+  const oauthReturn = (
     invitationReturn || resumeInvitation
       ? INVITATION_OAUTH_RESUME_PATH
-      : returnTo,
+      : returnTo
   );
 
   return <main className="onboarding account">
@@ -348,6 +359,11 @@ export default function Account() {
                 accountId={user.userId}
                 onSignOut={signOut}
               />
+              <AccountDeletion
+                accountId={user.userId}
+                onDeleted={accountDeleted}
+                turnstileSiteKey={turnstileSiteKey}
+              />
               <section className={styles.guestPanel}>
                 <h2>Workspace collaboration</h2>
                 <p>Member roles, invite-link enrollment expiry and revocation, leaving, and server deletion are managed from the workspace access page.</p>
@@ -362,26 +378,45 @@ export default function Account() {
               </section>
               <div className={styles.accountActions}>
                 {user.globalRole === "admin" && <Link href="/admin">Open admin control panel</Link>}
+                {providers.includes("google") && turnstileSiteKey &&
+                  <GoogleSignIn
+                    intent="link"
+                    returnTo={returnTo}
+                    siteKey={turnstileSiteKey}
+                  />}
               </div>
             </>
           : <>
               <p>{configured
-                ? "Sign in to back up this device, administer the server, and share authorized workspaces."
+                ? "Sign in to back up this device and collaborate in workspaces where your account is a member. Global administration requires a separate database role and Cloudflare Access."
                 : "This deployment has no server database. Local organizing remains fully available; use the Node + SQLite or Cloudflare + D1 runbook to test server features."}</p>
               {providers.includes("development") && <form action={developmentSignIn} className="dev-signin">
                 <h2>Local development sign-in</h2>
                 <label>Name<input name="name" defaultValue="Local Owner" required /></label>
                 <label>Email<input name="email" type="email" defaultValue="owner@example.test" required /></label>
                 <button className="primary">Sign in locally</button>
-                <small>Use <code>owner@example.test</code> for deterministic local admin access, or add another address to <code>AUTH_ADMIN_EMAILS</code> before starting the server. Sign-in is immediate and does not send a code. Never enable this provider on a public deployment.</small>
+                <small>Create any synthetic <code>@example.test</code> persona you need. Sign-in is immediate and does not send a code. Public production hosts refuse this provider even if it is accidentally enabled.</small>
               </form>}
-              {providers.includes("google") &&
-                <a className="auth-button" href={`/api/auth/google/start?returnTo=${oauthReturn}`}>Continue with Google</a>}
-              {providers.includes("github") &&
-                <a className="auth-button" href={`/api/auth/github/start?returnTo=${oauthReturn}`}>Continue with GitHub</a>}
+              {accessMigrationAvailable &&
+                <section className={styles.guestPanel}>
+                  <h2>Existing account migration</h2>
+                  <p>Use your temporary Cloudflare Access identity to recover an existing Stowplan account, then link Google below. This cannot create an account or grant authority.</p>
+                  <button
+                    className="auth-button"
+                    onClick={accessMigrationSignIn}
+                    type="button"
+                  >
+                    Recover existing account
+                  </button>
+                </section>}
+              {providers.includes("google") && turnstileSiteKey &&
+                <GoogleSignIn
+                  returnTo={oauthReturn}
+                  siteKey={turnstileSiteKey}
+                />}
               {configured && !providers.length &&
                 <p className="muted">The database is ready, but no sign-in provider is enabled. Local development sign-in requires <code>AUTH_DEV_ENABLED=true</code>; it creates a session immediately and never sends an email code.</p>}
-              <p className="muted">Cloudflare Access can sign you in automatically when enabled by the operator. Invite URLs expire and can be redeemed once; the resulting workspace membership remains until the member leaves or is removed.</p>
+              <p className="muted">Invite URLs expire and can be redeemed once; the resulting workspace membership remains until the member leaves or is removed.</p>
             </>}
       {message && <output aria-live="polite">{message}</output>}
       <Link href={returnTo}>Back to Stowplan</Link>

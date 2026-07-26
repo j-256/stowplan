@@ -33,6 +33,25 @@ describe("Cloudflare edge configuration", () => {
     }
   });
 
+  it("rate-limits account control APIs in every plan profile", () => {
+    for (const profile of Object.values(configuration.profiles)) {
+      expect(profile.phases.http_ratelimit.some(
+        rule => rule.expression.includes("/api/account"),
+      )).toBe(true);
+    }
+  });
+
+  it("rate-limits sync and snapshot traffic in every plan profile", () => {
+    for (const profile of Object.values(configuration.profiles)) {
+      expect(profile.phases.http_ratelimit.some(
+        rule => rule.expression.includes("/api/sync"),
+      )).toBe(true);
+      expect(profile.phases.http_ratelimit.some(
+        rule => rule.expression.includes("/api/snapshot"),
+      )).toBe(true);
+    }
+  });
+
   it("rate-limits fixed and legacy guest confirmation APIs", () => {
     const rules = Object.values(configuration.profiles).flatMap(
       profile => profile.phases.http_ratelimit.filter(

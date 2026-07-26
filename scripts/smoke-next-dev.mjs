@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { GUEST_LINK_EXPIRY_HOURS } from "../src/shared/quotas.js";
 
 const origin = "http://127.0.0.1:3000";
@@ -7,7 +10,12 @@ const workspaceId = `ws_next_d1_smoke_${process.pid}`;
 const workspaceName = `Next D1 smoke ${process.pid}`;
 const workspaceReturnTo = `/workspaces/${workspaceId}/inventory`;
 const accountContextHeader = "x-stowplan-account-id";
+const localIdentityDigestKey =
+  "stowplan-local-identity-digest-key-not-for-production";
 let output = "";
+const persistenceDirectory = await mkdtemp(
+  join(tmpdir(), "stowplan-next-d1-smoke-"),
+);
 
 function safeOutput(value) {
   return value
@@ -16,7 +24,7 @@ function safeOutput(value) {
       "$1[redacted]",
     )
     .replace(
-      /(stowplan_session=)[^;\s]+/gu,
+      /(__Host-stowplan_session=)[^;\s]+/gu,
       "$1[redacted]",
     );
 }
@@ -83,6 +91,8 @@ const migration = spawnSync("bash", [
   "--local",
   "--config",
   "wrangler.jsonc",
+  "--persist-to",
+  persistenceDirectory,
 ], {
   cwd: process.cwd(),
   encoding: "utf8",
@@ -97,9 +107,10 @@ const child = spawn("bash", ["scripts/sites-env.sh", "--", "./node_modules/.bin/
   cwd: process.cwd(),
   env: {
     ...process.env,
-    AUTH_ADMIN_EMAILS: "owner@example.test",
     AUTH_BASE_URL: origin,
     AUTH_DEV_ENABLED: "true",
+    AUTH_IDENTITY_DIGEST_KEY: localIdentityDigestKey,
+    STOWPLAN_WRANGLER_PERSIST_PATH: join(persistenceDirectory, "v3"),
   },
   detached: true,
   stdio: ["ignore", "pipe", "pipe"],
@@ -121,7 +132,7 @@ try {
   });
   await assertStatus(login, 200);
   const cookie = (login.headers.get("set-cookie") ?? "").split(";")[0];
-  assert.match(cookie, /^stowplan_session=/);
+  assert.match(cookie, /^__Host-stowplan_session=/);
 
   const me = await fetch(`${origin}/api/auth/me`, { headers: { cookie } });
   assert.equal(me.status, 200);
@@ -254,7 +265,7 @@ try {
   const viewerCookie = (
     viewerLogin.headers.get("set-cookie") ?? ""
   ).split(";")[0];
-  assert.match(viewerCookie, /^stowplan_session=/);
+  assert.match(viewerCookie, /^__Host-stowplan_session=/);
   const viewerMe = await fetch(`${origin}/api/auth/me`, {
     headers: { cookie: viewerCookie },
   });
@@ -471,4 +482,8 @@ try {
   console.log("Next dev + local D1 smoke passed: bindings, development login, member discovery, owner access, viewer forgery rejection, scanner-safe invite enrollment, final-owner leave refusal, guarded online deletion, and the control-panel route.");
 } finally {
   await stop(child);
+  await rm(persistenceDirectory, {
+    force: true,
+    recursive: true,
+  });
 }

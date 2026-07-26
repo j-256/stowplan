@@ -1,23 +1,50 @@
-import { authenticate } from "../../../../src/server/auth";
+import {
+  authenticate,
+  developmentAuthenticationAllowed,
+  identityEnforcementConfigured,
+  provider,
+} from "../../../../src/server/auth";
 import { runtimeEnv } from "../../../../src/server/runtime";
 
 export async function GET(request: Request) {
   const env = await runtimeEnv();
+  const googleConfigured =
+    provider(env, "google", request.url) !== null;
   const providers = [
-    env.AUTH_DEV_ENABLED === "true" ? "development" : null,
-    env.AUTH_GOOGLE_CLIENT_ID && env.AUTH_GOOGLE_CLIENT_SECRET ? "google" : null,
-    env.AUTH_GITHUB_CLIENT_ID && env.AUTH_GITHUB_CLIENT_SECRET ? "github" : null,
-    env.AUTH_CLOUDFLARE_ACCESS_TEAM_DOMAIN && env.AUTH_CLOUDFLARE_ACCESS_AUD ? "cloudflare-access" : null,
+    developmentAuthenticationAllowed(env, request.url)
+      && identityEnforcementConfigured(env)
+      ? "development"
+      : null,
+    googleConfigured ? "google" : null,
   ].filter((provider): provider is string => provider !== null);
   if (!env.DB) {
     return Response.json(
-      { user: null, configured: false, providers: [] },
+      {
+        accessMigrationAvailable: false,
+        adminAccessRequired:
+          env.AUTH_ADMIN_REQUIRE_ACCESS === "true",
+        configured: false,
+        providers: [],
+        turnstileSiteKey: null,
+        user: null,
+      },
       { headers: { "cache-control": "no-store" } },
     );
   }
   const user = await authenticate(env.DB, request);
   return Response.json(
-    { user, configured: true, providers },
+    {
+      accessMigrationAvailable:
+        env.AUTH_ACCESS_MIGRATION_ENABLED === "true",
+      adminAccessRequired:
+        env.AUTH_ADMIN_REQUIRE_ACCESS === "true",
+      configured: true,
+      providers,
+      turnstileSiteKey: googleConfigured
+        ? env.AUTH_TURNSTILE_SITE_KEY
+        : null,
+      user,
+    },
     { headers: { "cache-control": "no-store" } },
   );
 }

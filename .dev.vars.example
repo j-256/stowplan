@@ -1,4 +1,7 @@
-# Copy to .dev.vars for `npm run dev:next` with local Wrangler bindings.
+# Copy to .dev.vars for `npm run dev:next` with local Wrangler bindings
 AUTH_BASE_URL=http://localhost:3000
-AUTH_ADMIN_EMAILS=owner@example.test
+AUTH_ACCESS_MIGRATION_ENABLED=false
 AUTH_DEV_ENABLED=true
+AUTH_IDENTITY_DIGEST_KEY=stowplan-local-identity-digest-key-not-for-production
+AUTH_TURNSTILE_SITE_KEY=1x00000000000000000000AA
+AUTH_TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA

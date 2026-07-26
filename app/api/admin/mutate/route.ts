@@ -13,7 +13,9 @@ import {
   AuthorizationError,
   authorizeAdmin,
   clearSessionCookie,
+  developmentAuthenticationAllowed,
   isTrustedMutation,
+  provider,
 } from "../../../../src/server/auth";
 import {
   QuotaExceededError,
@@ -28,8 +30,11 @@ import { runtimeEnv } from "../../../../src/server/runtime";
 
 interface AdminMutationBody {
   action: string;
+  expectedAccountRevision?: number;
   expectedAccessRevision?: number;
   expectedMembershipRevision?: number;
+  pauseKind?: string;
+  reason?: string;
   targetId: string;
   value?: string;
 }
@@ -51,6 +56,14 @@ function parseAdminMutationBody(value: unknown): AdminMutationBody {
       typeof value.value !== "string"
     ) ||
     (
+      value.expectedAccountRevision !== undefined &&
+      (
+        typeof value.expectedAccountRevision !== "number" ||
+        !Number.isSafeInteger(value.expectedAccountRevision) ||
+        value.expectedAccountRevision < 0
+      )
+    ) ||
+    (
       value.expectedAccessRevision !== undefined &&
       (
         typeof value.expectedAccessRevision !== "number" ||
@@ -65,22 +78,37 @@ function parseAdminMutationBody(value: unknown): AdminMutationBody {
         !Number.isSafeInteger(value.expectedMembershipRevision) ||
         value.expectedMembershipRevision < 0
       )
+    ) ||
+    (
+      value.pauseKind !== undefined &&
+      typeof value.pauseKind !== "string"
+    ) ||
+    (
+      value.reason !== undefined &&
+      typeof value.reason !== "string"
     )
   ) {
     throw new ApiProblem(
       "INVALID_REQUEST",
-      "action and targetId are required strings; value must be a string and expected revisions must be non-negative safe integers when provided",
+      "action and targetId are required strings; value, pauseKind, and reason must be strings and expected revisions must be non-negative safe integers when provided",
       400,
     );
   }
   return {
     action: value.action,
+    ...(value.expectedAccountRevision === undefined
+      ? {}
+      : { expectedAccountRevision: value.expectedAccountRevision }),
     ...(value.expectedAccessRevision === undefined
       ? {}
       : { expectedAccessRevision: value.expectedAccessRevision }),
     ...(value.expectedMembershipRevision === undefined
       ? {}
       : { expectedMembershipRevision: value.expectedMembershipRevision }),
+    ...(value.pauseKind === undefined
+      ? {}
+      : { pauseKind: value.pauseKind }),
+    ...(value.reason === undefined ? {} : { reason: value.reason }),
     targetId: value.targetId,
     ...(value.value === undefined ? {} : { value: value.value }),
   };
@@ -121,10 +149,35 @@ export async function POST(request: Request) {
         CONTROL_REQUEST_MAX_BYTES,
       ),
     );
-    const result = await adminMutation(env.DB, user.userId, body);
+    const result = await adminMutation(
+      env.DB,
+      user.userId,
+      body,
+      {
+        actorSessionId: user.sessionId,
+        identityDigestKey: env.AUTH_IDENTITY_DIGEST_KEY,
+        signInProviderIds: [
+          provider(env, "google", request.url)?.id,
+          developmentAuthenticationAllowed(env, request.url)
+            ? "development"
+            : null,
+        ].filter(
+          (providerId): providerId is string =>
+            typeof providerId === "string",
+        ),
+      },
+    );
     const currentSessionRevoked =
-      body.action === "session.revoke" &&
-      body.targetId === user.sessionId;
+      result.currentSessionRevoked === true ||
+      (
+        body.action === "session.revoke" &&
+        body.targetId === user.sessionId
+      ) ||
+      (
+        body.targetId === user.userId &&
+        result.revokedSessions !== undefined &&
+        result.revokedSessions > 0
+      );
     return accountScopedJson(
       {
         ok: true,

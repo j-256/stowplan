@@ -1,0 +1,79 @@
+.panel {
+  border-block: 1px solid var(--line);
+  display: grid;
+  gap: 0.85rem;
+  margin-block: 1.25rem;
+  padding-block: 1.25rem;
+}
+
+.panel > h2,
+.panel > p {
+  margin: 0;
+}
+
+.panel > p {
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.panel > button {
+  min-height: 44px;
+  justify-self: start;
+}
+
+.blockers,
+.error,
+.review {
+  border-radius: 0.7rem;
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.85rem;
+}
+
+.blockers,
+.error {
+  background: color-mix(in srgb, var(--danger-bg) 50%, transparent);
+  border: 1px solid var(--danger);
+  color: var(--danger);
+}
+
+.review {
+  background: var(--bg);
+  border: 1px solid var(--line);
+}
+
+.blockers ul,
+.review ul {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0;
+  padding-inline-start: 1.2rem;
+}
+
+.review label {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.review input {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  min-height: 44px;
+  padding: 0.65rem;
+}
+
+.review button {
+  min-height: 44px;
+}
+
+.error p {
+  margin: 0;
+}
+
+@media (max-width: 540px) {
+  .panel > button {
+    justify-self: stretch;
+    width: 100%;
+  }
+}

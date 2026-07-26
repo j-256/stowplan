@@ -17,7 +17,9 @@ const mocks = vi.hoisted(() => ({
   createOrLinkUser: vi.fn(),
   finishOAuth: vi.fn(),
   issueSession: vi.fn(),
+  markSessionReauthenticated: vi.fn(),
   provider: vi.fn(),
+  runtimeEnv: vi.fn(),
   verifyAccess: vi.fn(),
 }));
 
@@ -34,17 +36,14 @@ vi.mock("../src/server/auth", async (importOriginal) => ({
   finishOAuth: mocks.finishOAuth,
   isTrustedMutation: vi.fn(() => true),
   issueSession: mocks.issueSession,
+  markSessionReauthenticated: mocks.markSessionReauthenticated,
   provider: mocks.provider,
-  sessionCookie: vi.fn(() => "stowplan_session=test"),
+  sessionCookie: vi.fn(() => "__Host-stowplan_session=test"),
   verifyAccess: mocks.verifyAccess,
 }));
 
 vi.mock("../src/server/runtime", () => ({
-  runtimeEnv: vi.fn(async () => ({
-    AUTH_BASE_URL: "https://stowplan.test",
-    AUTH_DEV_ENABLED: "true",
-    DB: {},
-  })),
+  runtimeEnv: mocks.runtimeEnv,
 }));
 
 import { POST as postAdminMutation } from "../app/api/admin/mutate/route";
@@ -56,6 +55,8 @@ import {
   GET as getGuestInvitation,
   POST as postGuestInvitation,
 } from "../app/api/auth/guest/[token]/route";
+import { ApiProblem } from "../src/server/api-problem";
+import { OAuthCallbackError } from "../src/server/auth";
 
 function jsonRequest(
   path: string,
@@ -75,6 +76,14 @@ function jsonRequest(
 describe("private route request hardening", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.runtimeEnv.mockResolvedValue({
+      AUTH_ACCESS_MIGRATION_ENABLED: "true",
+      AUTH_BASE_URL: "https://stowplan.test",
+      AUTH_DEV_ENABLED: "true",
+      AUTH_IDENTITY_DIGEST_KEY:
+        "test-identity-digest-key-at-least-32-bytes",
+      DB: {},
+    });
     mocks.authenticate.mockResolvedValue(null);
     mocks.authorizeAdmin.mockResolvedValue({ userId: "usr_admin" });
     mocks.provider.mockReturnValue({
@@ -94,12 +103,12 @@ describe("private route request hardening", () => {
 
     const response = await getOAuthCallback(
       new Request(
-        "https://stowplan.test/api/auth/github/callback?state=state&code=code",
+        `https://stowplan.test/api/auth/github/callback?state=${"a".repeat(64)}&code=code`,
       ),
       { params: Promise.resolve({ provider: "github" }) },
     );
 
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(500);
     expect(response.headers.get("cache-control")).toBe("no-store");
     const body = await response.json();
     expect(body).toEqual({
@@ -108,6 +117,172 @@ describe("private route request hardening", () => {
     });
     expect(JSON.stringify(body)).not.toContain("provider_secret");
     expect(JSON.stringify(body)).not.toContain("SQL");
+  });
+
+  it("distinguishes a provider outage from an invalid callback", async () => {
+    mocks.finishOAuth.mockRejectedValueOnce(
+      new OAuthCallbackError(
+        "private upstream response",
+        503,
+      ),
+    );
+    const response = await getOAuthCallback(
+      new Request(
+        `https://stowplan.test/api/auth/google/callback?state=${"c".repeat(64)}&code=code`,
+      ),
+      { params: Promise.resolve({ provider: "google" }) },
+    );
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({
+      code: "AUTHENTICATION_UNAVAILABLE",
+      error: "The identity provider is temporarily unavailable",
+    });
+  });
+
+  it.each([
+    {
+      code: "ACCOUNT_BANNED" as const,
+      expectedError: "This account cannot sign in",
+      expectedStatus: 403,
+      sourceStatus: 403,
+    },
+    {
+      code: "CIRCUIT_PAUSED" as const,
+      expectedError: "New sign-ins are temporarily unavailable",
+      expectedStatus: 503,
+      sourceStatus: 503,
+    },
+    {
+      code: "QUOTA_EXCEEDED" as const,
+      expectedError:
+        "Sign-in capacity is temporarily unavailable; try again later",
+      expectedStatus: 429,
+      sourceStatus: 409,
+    },
+  ])(
+    "returns a private $code OAuth refusal",
+    async ({
+      code,
+      expectedError,
+      expectedStatus,
+      sourceStatus,
+    }) => {
+      mocks.finishOAuth.mockResolvedValueOnce({
+        intent: "sign-in",
+        linkIntent: null,
+        profile: {
+          displayName: "User",
+          email: "user@example.com",
+          provider: "github",
+          subject: "provider-subject",
+        },
+        returnTo: "/account",
+      });
+      mocks.createOrLinkUser.mockRejectedValueOnce(
+        new ApiProblem(
+          code,
+          "private provider and database detail",
+          sourceStatus,
+        ),
+      );
+      const response = await getOAuthCallback(
+        new Request(
+          `https://stowplan.test/api/auth/github/callback?state=${"b".repeat(64)}&code=code`,
+        ),
+        { params: Promise.resolve({ provider: "github" }) },
+      );
+
+      expect(response.status).toBe(expectedStatus);
+      await expect(response.json()).resolves.toEqual({
+        code,
+        error: expectedError,
+      });
+      expect(response.headers.get("set-cookie")).toContain(
+        "Max-Age=0",
+      );
+      if (code === "QUOTA_EXCEEDED") {
+        expect(response.headers.get("retry-after")).toBe("3600");
+      }
+    },
+  );
+
+  it("marks only the exact current session after subject-bound Google reauthentication", async () => {
+    mocks.provider.mockReturnValueOnce({
+      authorizationUrl: "https://accounts.google.com/authorize",
+      clientId: "client",
+      clientSecret: "secret",
+      id: "google",
+      scopes: "openid email profile",
+      tokenUrl: "https://oauth2.googleapis.com/token",
+    });
+    mocks.finishOAuth.mockResolvedValueOnce({
+      intent: "reauthenticate",
+      linkIntent: {
+        sessionId: "ses_existing",
+        userId: "usr_existing",
+      },
+      profile: {
+        displayName: "Existing user",
+        email: "existing@example.com",
+        provider: "google",
+        subject: "google-existing",
+      },
+      returnTo: "/account",
+    });
+    mocks.authenticate.mockResolvedValueOnce({
+      sessionId: "ses_existing",
+      userId: "usr_existing",
+    });
+    mocks.createOrLinkUser.mockResolvedValueOnce({
+      displayName: "Existing user",
+      email: "existing@example.com",
+      expiresAt: "",
+      globalRole: "user",
+      userId: "usr_existing",
+    });
+    mocks.markSessionReauthenticated.mockResolvedValueOnce({
+      reauthenticatedAt: "2026-07-26T12:00:00.000Z",
+    });
+    const state = "a".repeat(64);
+    const response = await getOAuthCallback(
+      new Request(
+        `https://stowplan.test/api/auth/google/callback?state=${state}&code=code`,
+        {
+          headers: {
+            cookie:
+              `__Host-stowplan_session=existing; __Secure-stowplan_oauth_google_${state.slice(0, 16)}=binding`,
+          },
+        },
+      ),
+      { params: Promise.resolve({ provider: "google" }) },
+    );
+
+    expect(response.status).toBe(302);
+    expect(mocks.createOrLinkUser).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({
+        provider: "google",
+        subject: "google-existing",
+      }),
+      {
+        linkIntent: {
+          sessionId: "ses_existing",
+          userId: "usr_existing",
+        },
+        requireExistingIdentity: true,
+      },
+    );
+    expect(mocks.markSessionReauthenticated).toHaveBeenCalledWith(
+      expect.anything(),
+      "usr_existing",
+      "ses_existing",
+    );
+    expect(mocks.issueSession).not.toHaveBeenCalled();
+    expect(response.headers.get("set-cookie")).not.toContain(
+      "__Host-stowplan_session=test",
+    );
   });
 
   it("does not expose Access assertion verification failures", async () => {
@@ -136,6 +311,82 @@ describe("private route request hardening", () => {
     expect(JSON.stringify(body)).not.toContain("private-assertion");
   });
 
+  it("keeps the legacy Access exchange disabled by default", async () => {
+    mocks.runtimeEnv.mockResolvedValueOnce({
+      AUTH_BASE_URL: "https://stowplan.test",
+      AUTH_IDENTITY_DIGEST_KEY:
+        "test-identity-digest-key-at-least-32-bytes",
+      DB: {},
+    });
+    const response = await postAccessAuthentication(new Request(
+      "https://stowplan.test/api/auth/access",
+      {
+        headers: {
+          "cf-access-jwt-assertion": "private-assertion",
+        },
+        method: "POST",
+      },
+    ));
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({
+      code: "NOT_FOUND_OR_INACCESSIBLE",
+      error: "Authentication route is not available",
+    });
+    expect(mocks.verifyAccess).not.toHaveBeenCalled();
+    expect(mocks.createOrLinkUser).not.toHaveBeenCalled();
+  });
+
+  it("limits an enabled Access exchange to an existing linked identity", async () => {
+    const profile = {
+      displayName: "Legacy user",
+      email: "legacy@example.com",
+      provider: "cloudflare-access",
+      subject: "legacy-access-subject",
+    };
+    mocks.verifyAccess.mockResolvedValueOnce(profile);
+    mocks.createOrLinkUser.mockResolvedValueOnce({
+      displayName: "Legacy user",
+      email: "legacy@example.com",
+      expiresAt: "",
+      globalRole: "user",
+      userId: "usr_legacy",
+    });
+    mocks.issueSession.mockResolvedValueOnce({
+      maxAge: 3_600,
+      raw: "legacy-session",
+      sessionId: "ses_legacy",
+    });
+
+    const response = await postAccessAuthentication(new Request(
+      "https://stowplan.test/api/auth/access",
+      {
+        headers: {
+          "cf-access-jwt-assertion": "private-assertion",
+        },
+        method: "POST",
+      },
+    ));
+
+    expect(response.status).toBe(200);
+    expect(mocks.createOrLinkUser).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      profile,
+      { requireExistingIdentity: true },
+    );
+    expect(mocks.issueSession).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ userId: "usr_legacy" }),
+      expect.any(Request),
+      {
+        authenticationProvider: "cloudflare-access",
+        maximumSeconds: 7_200,
+      },
+    );
+  });
+
   it("does not expose development sign-in storage failures", async () => {
     mocks.createOrLinkUser.mockRejectedValue(
       new Error("SQLITE_ERROR token_hash=private"),
@@ -143,7 +394,7 @@ describe("private route request hardening", () => {
 
     const response = await postDevelopmentSignIn(jsonRequest(
       "/api/auth/dev",
-      JSON.stringify({ email: "member@example.com" }),
+      JSON.stringify({ email: "member@example.test" }),
     ));
 
     expect(response.status).toBe(500);
@@ -273,6 +524,33 @@ describe("private route request hardening", () => {
       code: "INVALID_REQUEST",
       error: "Invitation URL is invalid",
     });
+  });
+
+  it("rejects an oversized legacy invitation token before authentication", async () => {
+    const response = await postGuestInvitation(
+      new Request(
+        "https://stowplan.test/api/auth/guest/oversized",
+        {
+          body: "expectedAccountId=usr_test",
+          headers: {
+            "content-type":
+              "application/x-www-form-urlencoded",
+          },
+          method: "POST",
+        },
+      ),
+      {
+        params: Promise.resolve({
+          token: "x".repeat(
+            GUEST_INVITATION_TOKEN_MAX_CHARACTERS + 1,
+          ),
+        }),
+      },
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.authenticate).not.toHaveBeenCalled();
+    expect(mocks.consumeGuestLink).not.toHaveBeenCalled();
   });
 
   it("validates invitation media type before redirecting", async () => {

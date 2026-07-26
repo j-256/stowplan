@@ -22,6 +22,7 @@ import {
 } from "../../../src/domain/workspace-access";
 import {
   ApiProblem,
+  apiProblemRetryAfter,
   apiProblemResponse,
   internalProblemResponse,
   privateJson,
@@ -267,7 +268,16 @@ function authorizationProblem(
 }
 
 function syncErrorResponse(error: unknown): Response {
-  if (error instanceof ApiProblem) return apiProblemResponse(error);
+  if (error instanceof ApiProblem) {
+    const response = apiProblemResponse(error);
+    if (error.status === 429 || error.status === 503) {
+      response.headers.set(
+        "retry-after",
+        apiProblemRetryAfter(error),
+      );
+    }
+    return response;
+  }
   if (error instanceof QuotaExceededError) {
     return privateJson(quotaProblem(error), { status: error.status });
   }

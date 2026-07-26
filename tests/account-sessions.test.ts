@@ -13,6 +13,7 @@ import {
   issueSession,
   SESSION_ACTIVITY_TOUCH_INTERVAL_MS,
 } from "../src/server/auth";
+import { TEST_AUTH_ENV } from "./helpers/auth";
 import {
   applySqlDirectory,
   numberedMigrationDatabase,
@@ -21,7 +22,7 @@ import {
 
 function authenticatedRequest(raw: string): Request {
   return new Request("https://stowplan.test/api/auth/sessions", {
-    headers: { cookie: `stowplan_session=${raw}` },
+    headers: { cookie: `__Host-stowplan_session=${raw}` },
   });
 }
 
@@ -35,7 +36,7 @@ async function userFixture(
   database: ReturnType<typeof numberedMigrationDatabase>["database"],
   subject: string,
 ) {
-  return createOrLinkUser(database, {}, {
+  return createOrLinkUser(database, TEST_AUTH_ENV, {
     displayName: subject,
     email: `${subject}@example.test`,
     provider: "test",

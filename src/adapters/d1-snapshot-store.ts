@@ -1,5 +1,7 @@
 import { normalizeWorkspaceState, type WorkspaceState } from "../domain";
 import type { WorkspaceRole } from "../domain/workspace-access";
+import { snapshotGrowthRefusal } from "../server/account-governance";
+import { serializedJsonBytes } from "../server/quotas";
 import type { SnapshotStore } from "../server/storage";
 
 export const MAX_SAFE_AUTHORIZATION_REVISION = Number.MAX_SAFE_INTEGER;
@@ -88,20 +90,40 @@ export class D1SnapshotStore implements SnapshotStore {
         state: WorkspaceState,
     ): Promise<boolean> {
         const persistedAt = new Date().toISOString();
-        const result = await this.database
-            .prepare(
-                `UPDATE workspace_snapshots
-                 SET revision = ?, state_json = ?, updated_at = ?
-                 WHERE workspace_id = ? AND revision = ?`,
-            )
-            .bind(
-                state.workspace.revision,
-                JSON.stringify(state),
-                persistedAt,
+        const stateJson = JSON.stringify(state);
+        const preflight = await snapshotGrowthRefusal(
+            this.database,
+            workspaceId,
+            serializedJsonBytes(state),
+            new Date(persistedAt),
+        );
+        if (preflight) throw preflight;
+        let result: D1ResultLike;
+        try {
+            result = await this.database
+                .prepare(
+                    `UPDATE workspace_snapshots
+                     SET revision = ?, state_json = ?, updated_at = ?
+                     WHERE workspace_id = ? AND revision = ?`,
+                )
+                .bind(
+                    state.workspace.revision,
+                    stateJson,
+                    persistedAt,
+                    workspaceId,
+                    expectedRevision,
+                )
+                .run();
+        } catch (error) {
+            const refusal = await snapshotGrowthRefusal(
+                this.database,
                 workspaceId,
-                expectedRevision,
-            )
-            .run();
+                serializedJsonBytes(state),
+                new Date(persistedAt),
+            );
+            if (refusal) throw refusal;
+            throw error;
+        }
         return result.success && result.meta?.changes === 1;
     }
 
@@ -126,44 +148,65 @@ export class D1SnapshotStore implements SnapshotStore {
                 : null;
         if (!rolePredicate) throw new Error("Invalid required workspace role");
         const persistedAt = new Date().toISOString();
-        const result = await this.database
-            .prepare(
-                `UPDATE workspace_snapshots
-                 SET revision = ?, state_json = ?, updated_at = ?
-                 WHERE workspace_id = ?
-                   AND revision = ?
-                   AND NOT EXISTS (
-                     SELECT 1
-                     FROM workspace_deletions
-                     WHERE workspace_id = workspace_snapshots.workspace_id
-                   )
-                   AND EXISTS (
-                     SELECT 1
-                     FROM workspace_members members
-                     JOIN users
-                       ON users.user_id = members.user_id
-                     WHERE members.workspace_id =
-                         workspace_snapshots.workspace_id
-                       AND members.user_id = ?
-                       AND users.status = 'active'
-                       AND ${rolePredicate}
-                       AND (
-                         users.membership_revision = ?
-                         OR workspace_snapshots.access_revision = ?
+        const stateJson = JSON.stringify(state);
+        const preflight = await snapshotGrowthRefusal(
+            this.database,
+            workspaceId,
+            serializedJsonBytes(state),
+            new Date(persistedAt),
+        );
+        if (preflight) throw preflight;
+        let result: D1ResultLike;
+        try {
+            result = await this.database
+                .prepare(
+                    `UPDATE workspace_snapshots
+                     SET revision = ?, state_json = ?, updated_at = ?
+                     WHERE workspace_id = ?
+                       AND revision = ?
+                       AND NOT EXISTS (
+                         SELECT 1
+                         FROM workspace_deletions
+                         WHERE workspace_id =
+                           workspace_snapshots.workspace_id
                        )
-                   )`,
-            )
-            .bind(
-                state.workspace.revision,
-                JSON.stringify(state),
-                persistedAt,
+                       AND EXISTS (
+                         SELECT 1
+                         FROM workspace_members members
+                         JOIN users
+                           ON users.user_id = members.user_id
+                         WHERE members.workspace_id =
+                             workspace_snapshots.workspace_id
+                           AND members.user_id = ?
+                           AND users.status = 'active'
+                           AND ${rolePredicate}
+                           AND (
+                             users.membership_revision = ?
+                             OR workspace_snapshots.access_revision = ?
+                           )
+                       )`,
+                )
+                .bind(
+                    state.workspace.revision,
+                    stateJson,
+                    persistedAt,
+                    workspaceId,
+                    expectedRevision,
+                    authorization.userId,
+                    authorization.membershipRevision,
+                    authorization.accessRevision,
+                )
+                .run();
+        } catch (error) {
+            const refusal = await snapshotGrowthRefusal(
+                this.database,
                 workspaceId,
-                expectedRevision,
-                authorization.userId,
-                authorization.membershipRevision,
-                authorization.accessRevision,
-            )
-            .run();
+                serializedJsonBytes(state),
+                new Date(persistedAt),
+            );
+            if (refusal) throw refusal;
+            throw error;
+        }
         return result.success && result.meta?.changes === 1;
     }
 

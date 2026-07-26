@@ -3,6 +3,9 @@ import {
   D1SnapshotStore,
   type D1DatabaseLike,
 } from "../src/adapters/d1-snapshot-store";
+import {
+  GUEST_INVITATION_RETURN_TO_MAX_CHARACTERS,
+} from "../src/domain/app-url";
 import { createEmptyState } from "../src/domain/factories";
 import {
   changeWorkspaceMemberRole,
@@ -28,6 +31,7 @@ import {
   API_QUOTAS,
   GUEST_LINK_EXPIRY_HOURS,
 } from "../src/shared/api-quotas";
+import { TEST_AUTH_ENV } from "./helpers/auth";
 import { numberedMigrationDatabase } from "./helpers/sqlite-d1";
 
 type TestDatabase = ReturnType<typeof numberedMigrationDatabase>;
@@ -48,9 +52,9 @@ async function user(
   } = {},
 ): Promise<SessionUser> {
   const email = `${subject}@example.test`;
-  return createOrLinkUser(
+  const created = await createOrLinkUser(
     database,
-    options.admin ? { AUTH_ADMIN_EMAILS: email } : {},
+    TEST_AUTH_ENV,
     {
       displayName: options.displayName ?? subject,
       email,
@@ -58,6 +62,11 @@ async function user(
       subject,
     },
   );
+  if (!options.admin) return created;
+  await database.prepare(
+    "UPDATE users SET global_role='admin' WHERE user_id=?",
+  ).bind(created.userId).run();
+  return { ...created, globalRole: "admin" };
 }
 
 async function workspace(
@@ -1317,6 +1326,55 @@ describe("owner guest-link lifecycle", () => {
     ]);
   });
 
+  it("rejects an overlong canonical return path before durable guest-link writes", async () => {
+    const { database, sqlite } = numberedMigrationDatabase();
+    const owner = await user(database, "bounded-return-owner");
+    const state = await workspace(
+      database,
+      owner,
+      "Bounded guest return",
+    );
+    const before = revisions(
+      sqlite,
+      state.workspace.id,
+      owner.userId,
+    );
+    const returnTo =
+      `/workspaces/${state.workspace.id}/inventory/items/${
+        "i".repeat(GUEST_INVITATION_RETURN_TO_MAX_CHARACTERS + 1)
+      }`;
+
+    await expect(createWorkspaceGuestLink(
+      database,
+      state.workspace.id,
+      owner.userId,
+      {
+        expectedAccessRevision: before.access_revision,
+        expiresInHours: 24,
+        returnTo,
+        role: "viewer",
+      },
+    )).rejects.toMatchObject({
+      code: "INVALID_REQUEST",
+      message:
+        `returnTo must resolve to a valid workspace path no longer than ${GUEST_INVITATION_RETURN_TO_MAX_CHARACTERS} characters`,
+      status: 400,
+    });
+
+    expect(sqlite.prepare(
+      `SELECT
+         (SELECT COUNT(*) FROM guest_links) AS guest_links,
+         (SELECT COUNT(*) FROM auth_audit_events
+          WHERE action='guest.create') AS audit_events,
+         (SELECT COUNT(*) FROM creation_ledger
+          WHERE resource='guest_link') AS ledger_events`,
+    ).get()).toEqual({
+      audit_events: 0,
+      guest_links: 0,
+      ledger_events: 0,
+    });
+  });
+
   it("enforces the active-link quota under concurrent creation", async () => {
     const { database, sqlite } = numberedMigrationDatabase();
     const owner = await user(database, "link-quota-owner");
@@ -1979,13 +2037,13 @@ describe("workspace lifecycle", () => {
       database,
       "delete-session-account",
     );
-    const orphanedGuest = await createOrLinkUser(database, {}, {
+    const orphanedGuest = await createOrLinkUser(database, TEST_AUTH_ENV, {
       displayName: "Orphaned guest",
       email: "delete-session-orphan@example.test",
       provider: "guest",
       subject: "delete-session-orphan",
     });
-    const sharedGuest = await createOrLinkUser(database, {}, {
+    const sharedGuest = await createOrLinkUser(database, TEST_AUTH_ENV, {
       displayName: "Shared guest",
       email: "delete-session-shared@example.test",
       provider: "guest",

@@ -55,9 +55,15 @@ test("shows an action-specific error for an empty account status response", asyn
   );
 });
 
-test("shows an action-specific error when Access refuses an empty exchange", async ({
+test("does not exchange an Access identity for an ordinary account session", async ({
   page,
 }) => {
+  let accessExchanges = 0;
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/auth/access") {
+      accessExchanges += 1;
+    }
+  });
   await page.route("**/api/auth/me", (route) => route.fulfill({
     body: JSON.stringify({
       configured: true,
@@ -67,15 +73,54 @@ test("shows an action-specific error when Access refuses an empty exchange", asy
     contentType: "application/json",
     status: 200,
   }));
+  await page.goto("/account");
+
+  await expect(page.getByRole("heading", {
+    name: "Connect Stowplan",
+  })).toBeVisible();
+  expect(accessExchanges).toBe(0);
+});
+
+test("offers the temporary Access migration handoff only when enabled", async ({
+  page,
+}) => {
+  await page.route("**/api/auth/me", (route) => route.fulfill({
+    body: JSON.stringify({
+      accessMigrationAvailable: true,
+      configured: true,
+      providers: [],
+      turnstileSiteKey: null,
+      user: null,
+    }),
+    contentType: "application/json",
+    status: 200,
+  }));
   await page.route("**/api/auth/access", (route) => route.fulfill({
-    body: "",
-    status: 401,
+    body: JSON.stringify({
+      user: {
+        displayName: OWNER_NAME,
+        email: OWNER_EMAIL,
+        expiresAt: new Date(
+          Date.now() + 3_600_000,
+        ).toISOString(),
+        globalRole: "user",
+        userId: OWNER_ID,
+      },
+    }),
+    contentType: "application/json",
+    status: 200,
   }));
   await page.goto("/account");
 
-  await expect(page.locator("output")).toContainText(
-    "Cloudflare Access could not create an app session: the server returned an empty or unreadable response",
+  const migrationRequest = page.waitForRequest(
+    request => new URL(request.url()).pathname ===
+      "/api/auth/access",
   );
+  await page.getByRole("button", {
+    name: "Recover existing account",
+  }).click();
+
+  await expect((await migrationRequest).method()).toBe("POST");
 });
 
 test("reloads after development sign-out without visiting the Access logout endpoint", async ({
@@ -184,13 +229,13 @@ test("keeps a failed current-session sign-out in its dialog context", async ({
   );
 });
 
-test("clears the Access cookie after an Access-configured app sign-out", async ({
+test("does not visit Access logout after an ordinary app sign-out", async ({
   page,
 }) => {
-  let accessExchanges = 0;
+  let accessLogoutRequests = 0;
   page.on("request", (request) => {
-    if (new URL(request.url()).pathname === "/api/auth/access") {
-      accessExchanges += 1;
+    if (new URL(request.url()).pathname === "/cdn-cgi/access/logout") {
+      accessLogoutRequests += 1;
     }
   });
   await page.route("**/api/auth/me", (route) => route.fulfill({
@@ -218,9 +263,8 @@ test("clears the Access cookie after an Access-configured app sign-out", async (
     name: `Signed in as ${OWNER_NAME}`,
   })).toBeVisible();
 
-  const accessLogout = page.waitForRequest((request) => (
-    request.isNavigationRequest() &&
-    new URL(request.url()).pathname === "/cdn-cgi/access/logout"
+  const reloaded = page.waitForEvent("framenavigated", (frame) => (
+    frame === page.mainFrame()
   ));
   await page.getByRole("button", {
     exact: true,
@@ -230,10 +274,8 @@ test("clears the Access cookie after an Access-configured app sign-out", async (
     exact: true,
     name: "Sign out",
   }).click();
-  await accessLogout;
-  await expect(page).toHaveURL(/\/cdn-cgi\/access\/logout$/);
-  await page.waitForLoadState("domcontentloaded");
-  expect(accessExchanges).toBe(0);
+  await reloaded;
+  expect(accessLogoutRequests).toBe(0);
 });
 
 test("lists and revokes another account session with keyboard-safe confirmation", async ({

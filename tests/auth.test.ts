@@ -1,4 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
+import {
+  exportJWK,
+  generateKeyPair,
+  SignJWT,
+} from "jose";
 import { createEmptyState } from "../src/domain/factories";
 import { D1SnapshotStore } from "../src/adapters/d1-snapshot-store";
 import {
@@ -9,6 +14,7 @@ import {
   beginOAuth,
   claimWorkspace,
   cleanupAuthRecords,
+  cookieValue,
   consumeGuestLink,
   createGuestLink,
   createOrLinkUser,
@@ -16,21 +22,114 @@ import {
   InvitationError,
   isTrustedMutation,
   issueSession,
+  markSessionReauthenticated,
   revokeCurrentSession,
+  sessionCookie,
 } from "../src/server/auth";
 import { QuotaExceededError } from "../src/server/quotas";
 import {
   API_QUOTAS,
   GUEST_LINK_EXPIRY_HOURS,
 } from "../src/shared/api-quotas";
+import {
+  PUBLIC_LAUNCH_LIMITS,
+} from "../src/shared/governance-policy";
 import { numberedMigrationDatabase } from "./helpers/sqlite-d1";
+import { TEST_AUTH_ENV } from "./helpers/auth";
 
 function database() {
   return numberedMigrationDatabase().database;
 }
 
+function bindingValue(cookie: string): string {
+  return cookie.split(";", 1)[0]?.split("=", 2)[1] ?? "";
+}
+
 describe("authentication",()=>{
-  it("links identities, issues opaque sessions, and revokes them",async()=>{const db=database(),env={AUTH_ADMIN_EMAILS:"owner@example.com"};const user=await createOrLinkUser(db,env,{provider:"test",subject:"one",email:"OWNER@example.com",displayName:"Owner"});expect(user.globalRole).toBe("admin");const request=new Request("https://example.test",{headers:{"user-agent":"test"}}),session=await issueSession(db,env,user,request);expect(session.raw).toHaveLength(64);const authenticated=await authenticate(db,new Request("https://example.test",{headers:{cookie:`stowplan_session=${session.raw}`}}));expect(authenticated?.email).toBe("owner@example.com");await revokeCurrentSession(db,new Request("https://example.test",{headers:{cookie:`stowplan_session=${session.raw}`}}));expect(await authenticate(db,new Request("https://example.test",{headers:{cookie:`stowplan_session=${session.raw}`}}))).toBeNull()});
+  it("uses a host-only session cookie and rejects duplicate values", () => {
+    expect(sessionCookie("opaque", 3_600)).toMatch(
+      /^__Host-stowplan_session=opaque; Path=\/; HttpOnly; Secure; SameSite=Lax; Max-Age=3600$/u,
+    );
+    expect(cookieValue(
+      new Request("https://example.test", {
+        headers: {
+          cookie:
+            "__Host-stowplan_session=first; __Host-stowplan_session=second",
+        },
+      }),
+      "__Host-stowplan_session",
+    )).toBeNull();
+  });
+  it("links identities, issues opaque sessions, and revokes them",async()=>{const db=database(),env=TEST_AUTH_ENV;const user=await createOrLinkUser(db,env,{provider:"test",subject:"one",email:"OWNER@example.com",displayName:"Owner"});expect(user.globalRole).toBe("user");const request=new Request("https://example.test",{headers:{"user-agent":"test"}}),session=await issueSession(db,env,user,request);expect(session.raw).toHaveLength(64);const authenticated=await authenticate(db,new Request("https://example.test",{headers:{cookie:`__Host-stowplan_session=${session.raw}`}}));expect(authenticated?.email).toBe("owner@example.com");await revokeCurrentSession(db,new Request("https://example.test",{headers:{cookie:`__Host-stowplan_session=${session.raw}`}}));expect(await authenticate(db,new Request("https://example.test",{headers:{cookie:`__Host-stowplan_session=${session.raw}`}}))).toBeNull()});
+  it("records reauthentication without consuming a session issuance budget", async () => {
+    const { database: db, sqlite } = numberedMigrationDatabase();
+    const user = await createOrLinkUser(db, TEST_AUTH_ENV, {
+      displayName: "Reauthentication user",
+      email: "reauthentication@example.com",
+      provider: "test",
+      subject: "reauthentication-user",
+    });
+    const request = new Request("https://example.test");
+    const session = await issueSession(
+      db,
+      TEST_AUTH_ENV,
+      user,
+      request,
+    );
+    const ledgerInsert = sqlite.prepare(
+      `INSERT INTO creation_ledger(
+         event_id, scope_type, scope_id, resource, created_at
+       ) VALUES(?, 'account', ?, 'session', ?)`,
+    );
+    for (
+      let index = 1;
+      index < PUBLIC_LAUNCH_LIMITS.sessionsIssuedPerAccountDay;
+      index += 1
+    ) {
+      ledgerInsert.run(
+        `reauthentication-budget-${index}`,
+        user.userId,
+        new Date().toISOString(),
+      );
+    }
+
+    await expect(issueSession(
+      db,
+      TEST_AUTH_ENV,
+      user,
+      request,
+    )).rejects.toMatchObject({
+      code: "QUOTA_EXCEEDED",
+      status: 429,
+    });
+    await expect(markSessionReauthenticated(
+      db,
+      user.userId,
+      session.sessionId,
+    )).resolves.toEqual({
+      reauthenticatedAt: expect.any(String),
+    });
+    expect(sqlite.prepare(
+      `SELECT reauthenticated_at
+       FROM sessions
+       WHERE session_id=?`,
+    ).get(session.sessionId)).toEqual({
+      reauthenticated_at: expect.any(String),
+    });
+    expect(sqlite.prepare(
+      `SELECT COUNT(*) AS count
+       FROM creation_ledger
+       WHERE scope_id=? AND resource='session'`,
+    ).get(user.userId)).toEqual({
+      count: PUBLIC_LAUNCH_LIMITS.sessionsIssuedPerAccountDay,
+    });
+    expect(sqlite.prepare(
+      `SELECT COUNT(*) AS count
+       FROM auth_audit_events
+       WHERE action='session.reauthenticate'
+         AND target_id=?`,
+    ).get(session.sessionId)).toEqual({ count: 1 });
+  });
   it("scrubs OAuth credentials as soon as a state is claimed", async () => {
     const { database: db, sqlite } = numberedMigrationDatabase();
     const oauthProvider = {
@@ -41,13 +140,15 @@ describe("authentication",()=>{
       scopes: "read:user user:email",
       tokenUrl: "https://provider.example/token",
     };
-    const authorizationUrl = await beginOAuth(
+    const start = await beginOAuth(
       db,
       oauthProvider,
       "https://stowplan.example",
       "/spaces",
     );
-    const state = new URL(authorizationUrl).searchParams.get("state");
+    const state = new URL(
+      start.authorizationUrl,
+    ).searchParams.get("state");
     expect(state).toBeTruthy();
     const before = sqlite.prepare(
       `SELECT verifier_ciphertext, return_to
@@ -58,6 +159,9 @@ describe("authentication",()=>{
     };
     expect(before.return_to).toBe("/spaces");
     expect(before.verifier_ciphertext).not.toBe("");
+    const transaction = JSON.parse(
+      before.verifier_ciphertext,
+    ) as { verifier: string };
 
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(null, { status: 503 }),
@@ -69,13 +173,14 @@ describe("authentication",()=>{
         "https://stowplan.example",
         state!,
         "authorization-code",
+        bindingValue(start.bindingCookie),
       )).rejects.toThrow("OAuth token exchange failed");
       expect(fetchSpy).toHaveBeenCalledOnce();
       const requestBody = new URLSearchParams(
         String(fetchSpy.mock.calls[0]?.[1]?.body),
       );
       expect(requestBody.get("code_verifier")).toBe(
-        before.verifier_ciphertext,
+        transaction.verifier,
       );
     } finally {
       fetchSpy.mockRestore();
@@ -90,9 +195,323 @@ describe("authentication",()=>{
       verifier_ciphertext: "",
     });
   });
-  it("does not grant first-user admin scope around a configured allowlist", async () => {
+  it("binds each OAuth state to one browser without letting mismatches consume it", async () => {
+    const { database: db, sqlite } = numberedMigrationDatabase();
+    const oauthProvider = {
+      authorizationUrl: "https://provider.example/authorize",
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      id: "github" as const,
+      scopes: "read:user user:email",
+      tokenUrl: "https://provider.example/token",
+    };
+    const start = await beginOAuth(
+      db,
+      oauthProvider,
+      "https://stowplan.example",
+      "/",
+    );
+    const state = new URL(start.authorizationUrl)
+      .searchParams.get("state")!;
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    await expect(finishOAuth(
+      db,
+      oauthProvider,
+      "https://stowplan.example",
+      state,
+      "authorization-code",
+      "wrong-browser-binding",
+    )).rejects.toThrow("OAuth browser binding is invalid");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(sqlite.prepare(
+      `SELECT consumed_at,return_to,verifier_ciphertext
+       FROM oauth_states`,
+    ).get()).toMatchObject({
+      consumed_at: null,
+      return_to: "/",
+      verifier_ciphertext: expect.not.stringMatching(/^$/u),
+    });
+  });
+  it("reports Google signing-key outages as temporary unavailability", async () => {
     const db = database();
-    const env = { AUTH_ADMIN_EMAILS: "configured-admin@example.com" };
+    const { privateKey } = await generateKeyPair("RS256");
+    const oauthProvider = {
+      authorizationUrl:
+        "https://accounts.google.com/o/oauth2/v2/auth",
+      clientId: "stowplan-jwks-outage-client",
+      clientSecret: "client-secret",
+      id: "google" as const,
+      scopes: "openid email profile",
+      tokenUrl: "https://oauth2.googleapis.com/token",
+    };
+    const start = await beginOAuth(
+      db,
+      oauthProvider,
+      "https://stowplan.example",
+      "/account",
+    );
+    const authorization = new URL(start.authorizationUrl);
+    const nonce = authorization.searchParams.get("nonce")!;
+    const state = authorization.searchParams.get("state")!;
+    const idToken = await new SignJWT({
+      azp: oauthProvider.clientId,
+      email: "person@example.com",
+      email_verified: true,
+      nonce,
+    })
+      .setProtectedHeader({
+        alg: "RS256",
+        kid: "unavailable-google-key",
+      })
+      .setIssuer("https://accounts.google.com")
+      .setAudience(oauthProvider.clientId)
+      .setSubject("google-jwks-outage-subject")
+      .setIssuedAt()
+      .setExpirationTime("5m")
+      .sign(privateKey);
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockImplementation(async (input) => {
+        const requestUrl = input instanceof Request
+          ? input.url
+          : String(input);
+        if (requestUrl === oauthProvider.tokenUrl) {
+          return Response.json({ id_token: idToken });
+        }
+        if (
+          requestUrl ===
+            "https://www.googleapis.com/oauth2/v3/certs"
+        ) {
+          return new Response(null, { status: 503 });
+        }
+        throw new Error(`Unexpected request to ${requestUrl}`);
+      });
+    try {
+      await expect(finishOAuth(
+        db,
+        oauthProvider,
+        "https://stowplan.example",
+        state,
+        "authorization-code",
+        bindingValue(start.bindingCookie),
+      )).rejects.toMatchObject({
+        status: 503,
+      });
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+  it("strictly validates Google OIDC identity claims", async () => {
+    const db = database();
+    const { privateKey, publicKey } = await generateKeyPair(
+      "RS256",
+    );
+    const jwk = {
+      ...await exportJWK(publicKey),
+      alg: "RS256",
+      kid: "stowplan-google-test-key",
+      use: "sig",
+    };
+    const oauthProvider = {
+      authorizationUrl:
+        "https://accounts.google.com/o/oauth2/v2/auth",
+      clientId: "stowplan-client-id",
+      clientSecret: "client-secret",
+      id: "google" as const,
+      scopes: "openid email profile",
+      tokenUrl: "https://oauth2.googleapis.com/token",
+    };
+    let nextIdToken = "";
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockImplementation(async (input) => {
+        const requestUrl = input instanceof Request
+          ? input.url
+          : String(input);
+        if (requestUrl === oauthProvider.tokenUrl) {
+          return Response.json({ id_token: nextIdToken });
+        }
+        if (
+          requestUrl ===
+            "https://www.googleapis.com/oauth2/v3/certs"
+        ) {
+          return Response.json({ keys: [jwk] });
+        }
+        throw new Error(`Unexpected request to ${requestUrl}`);
+      });
+
+    interface TokenClaims {
+      audience?: string | string[];
+      azp?: string | null;
+      emailVerified?: boolean;
+      expiresAt?: number;
+      issuedAt?: number | null;
+      issuer?: string;
+      intent?: "link" | "reauthenticate" | "sign-in";
+      nonce?: string;
+      subject?: string | null;
+    }
+    const complete = async (
+      claims: TokenClaims = {},
+    ) => {
+      const start = await beginOAuth(
+        db,
+        oauthProvider,
+        "https://stowplan.example",
+        "/account",
+        claims.intent && claims.intent !== "sign-in"
+          ? {
+              intent: claims.intent,
+              linkIntent: {
+                sessionId: "ses_existing",
+                userId: "usr_existing",
+              },
+            }
+          : undefined,
+      );
+      const authorization = new URL(start.authorizationUrl);
+      const nonce = authorization.searchParams.get("nonce")!;
+      const state = authorization.searchParams.get("state")!;
+      const now = Math.floor(Date.now() / 1_000);
+      const payload: Record<string, unknown> = {
+        email: "person@example.com",
+        email_verified: claims.emailVerified ?? true,
+        name: "Test Person",
+        nonce: claims.nonce ?? nonce,
+      };
+      if (claims.azp !== null) {
+        payload.azp = claims.azp ?? oauthProvider.clientId;
+      }
+      let jwt = new SignJWT(payload)
+        .setProtectedHeader({
+          alg: "RS256",
+          kid: "stowplan-google-test-key",
+        })
+        .setIssuer(
+          claims.issuer ?? "https://accounts.google.com",
+        )
+        .setAudience(
+          claims.audience ?? oauthProvider.clientId,
+        )
+        .setExpirationTime(claims.expiresAt ?? now + 300);
+      if (claims.subject !== null) {
+        jwt = jwt.setSubject(
+          claims.subject ?? "google-subject-123",
+        );
+      }
+      if (claims.issuedAt !== null) {
+        jwt = jwt.setIssuedAt(claims.issuedAt ?? now);
+      }
+      nextIdToken = await jwt.sign(privateKey);
+      return finishOAuth(
+        db,
+        oauthProvider,
+        "https://stowplan.example",
+        state,
+        "authorization-code",
+        bindingValue(start.bindingCookie),
+      );
+    };
+
+    await expect(complete()).resolves.toMatchObject({
+      intent: "sign-in",
+      profile: {
+        displayName: "Test Person",
+        email: "person@example.com",
+        provider: "google",
+        subject: "google-subject-123",
+      },
+      returnTo: "/account",
+    });
+    const now = Math.floor(Date.now() / 1_000);
+    await expect(complete({
+      intent: "reauthenticate",
+    })).resolves.toMatchObject({
+      intent: "reauthenticate",
+      linkIntent: {
+        sessionId: "ses_existing",
+        userId: "usr_existing",
+      },
+    });
+    await expect(complete({
+      azp: null,
+    })).resolves.toMatchObject({
+      profile: {
+        provider: "google",
+        subject: "google-subject-123",
+      },
+    });
+    for (const invalid of [
+      { issuer: "https://lookalike.example" },
+      { audience: "another-client" },
+      { azp: "another-client" },
+      {
+        audience: [
+          oauthProvider.clientId,
+          "another-client",
+        ],
+        azp: null,
+      },
+      { nonce: "another-nonce" },
+      { emailVerified: false },
+      { subject: null },
+      { issuedAt: null },
+      { issuedAt: now - 700 },
+      { issuedAt: now + 120 },
+      { expiresAt: now - 120 },
+    ] satisfies TokenClaims[]) {
+      await expect(complete(invalid)).rejects.toThrow();
+    }
+    expect(fetchSpy).toHaveBeenCalled();
+  });
+  it("requests explicit Google account selection for linking and reauthentication", async () => {
+    const db = database();
+    const oauthProvider = {
+      authorizationUrl:
+        "https://accounts.google.com/o/oauth2/v2/auth",
+      clientId: "stowplan-client-id",
+      clientSecret: "client-secret",
+      id: "google" as const,
+      scopes: "openid email profile",
+      tokenUrl: "https://oauth2.googleapis.com/token",
+    };
+    const link = new URL((await beginOAuth(
+      db,
+      oauthProvider,
+      "https://stowplan.example",
+      "/account",
+      {
+        intent: "link",
+        linkIntent: {
+          sessionId: "ses_existing",
+          userId: "usr_existing",
+        },
+      },
+    )).authorizationUrl);
+    expect(link.searchParams.get("prompt")).toBe(
+      "select_account",
+    );
+
+    const reauthenticate = new URL((await beginOAuth(
+      db,
+      oauthProvider,
+      "https://stowplan.example",
+      "/account",
+      {
+        intent: "reauthenticate",
+        linkIntent: {
+          sessionId: "ses_existing",
+          userId: "usr_existing",
+        },
+      },
+    )).authorizationUrl);
+    expect(reauthenticate.searchParams.get("prompt")).toBe(
+      "select_account",
+    );
+    expect(reauthenticate.searchParams.has("max_age")).toBe(false);
+  });
+  it("creates every provider-backed account with ordinary user scope", async () => {
+    const db = database();
+    const env = TEST_AUTH_ENV;
     const unlisted = await createOrLinkUser(db, env, {
       displayName: "Unlisted",
       email: "unlisted@example.com",
@@ -107,17 +526,17 @@ describe("authentication",()=>{
     });
 
     expect(unlisted.globalRole).toBe("user");
-    expect(configured.globalRole).toBe("admin");
+    expect(configured.globalRole).toBe("user");
   });
-  it("promotes an existing allowlisted account when it signs in again", async () => {
+  it("never promotes an existing account during sign-in", async () => {
     const { database: db, sqlite } = numberedMigrationDatabase();
-    await createOrLinkUser(db, {}, {
+    await createOrLinkUser(db, TEST_AUTH_ENV, {
       displayName: "Initial owner",
       email: "initial-owner@example.com",
       provider: "test",
       subject: "initial-owner",
     });
-    const existing = await createOrLinkUser(db, {}, {
+    const existing = await createOrLinkUser(db, TEST_AUTH_ENV, {
       displayName: "Configured admin",
       email: "configured-admin@example.com",
       provider: "test",
@@ -125,9 +544,9 @@ describe("authentication",()=>{
     });
     expect(existing.globalRole).toBe("user");
 
-    const promoted = await createOrLinkUser(
+    const signedIn = await createOrLinkUser(
       db,
-      { AUTH_ADMIN_EMAILS: "configured-admin@example.com" },
+      TEST_AUTH_ENV,
       {
         displayName: "Configured admin",
         email: "configured-admin@example.com",
@@ -136,14 +555,161 @@ describe("authentication",()=>{
       },
     );
 
-    expect(promoted.globalRole).toBe("admin");
+    expect(signedIn.globalRole).toBe("user");
     expect(sqlite.prepare(
       "SELECT global_role FROM users WHERE user_id = ?",
-    ).get(existing.userId)).toEqual({ global_role: "admin" });
+    ).get(existing.userId)).toEqual({ global_role: "user" });
+  });
+  it("requires authenticated intent to link a new subject to an existing account", async () => {
+    const { database: db, sqlite } = numberedMigrationDatabase();
+    const user = await createOrLinkUser(db, TEST_AUTH_ENV, {
+      displayName: "Linked account",
+      email: "linked@example.com",
+      provider: "google",
+      subject: "google-primary",
+    });
+    await expect(createOrLinkUser(db, TEST_AUTH_ENV, {
+      displayName: "Linked account",
+      email: "linked@example.com",
+      provider: "github",
+      subject: "github-secondary",
+    })).rejects.toThrow(
+      "without that provider identity",
+    );
+    const session = await issueSession(
+      db,
+      {},
+      user,
+      new Request("https://example.test"),
+    );
+    await expect(createOrLinkUser(
+      db,
+      TEST_AUTH_ENV,
+      {
+        displayName: "Linked account",
+        email: "linked@example.com",
+        provider: "github",
+        subject: "github-secondary",
+      },
+      {
+        linkIntent: {
+          sessionId: session.sessionId,
+          userId: user.userId,
+        },
+        requireRecentAuthentication: true,
+      },
+    )).resolves.toMatchObject({
+      globalRole: "user",
+      userId: user.userId,
+    });
+    sqlite.prepare(
+      `UPDATE sessions
+       SET created_at='2026-01-01T00:00:00.000Z',
+           reauthenticated_at=NULL
+       WHERE session_id=?`,
+    ).run(session.sessionId);
+    await expect(createOrLinkUser(
+      db,
+      TEST_AUTH_ENV,
+      {
+        displayName: "Linked account",
+        email: "linked@example.com",
+        provider: "test",
+        subject: "stale-secondary",
+      },
+      {
+        linkIntent: {
+          sessionId: session.sessionId,
+          userId: user.userId,
+        },
+        requireRecentAuthentication: true,
+      },
+    )).rejects.toThrow(
+      "Authenticated identity-link intent is no longer valid",
+    );
+    expect(sqlite.prepare(
+      `SELECT provider,provider_subject,user_id
+       FROM identities
+       ORDER BY provider`,
+    ).all()).toEqual([
+      {
+        provider: "github",
+        provider_subject: "github-secondary",
+        user_id: user.userId,
+      },
+      {
+        provider: "google",
+        provider_subject: "google-primary",
+        user_id: user.userId,
+      },
+    ]);
+  });
+  it("caps retained identities for one account", async () => {
+    const { database: db, sqlite } = numberedMigrationDatabase();
+    const user = await createOrLinkUser(db, TEST_AUTH_ENV, {
+      displayName: "Identity quota",
+      email: "identity-quota@example.com",
+      provider: "google",
+      subject: "identity-quota-primary",
+    });
+    const session = await issueSession(
+      db,
+      {},
+      user,
+      new Request("https://example.test"),
+    );
+    for (
+      let index = 1;
+      index < PUBLIC_LAUNCH_LIMITS.linkedIdentitiesPerAccount;
+      index += 1
+    ) {
+      await createOrLinkUser(
+        db,
+        TEST_AUTH_ENV,
+        {
+          displayName: "Identity quota",
+          email: "identity-quota@example.com",
+          provider: `test-${index}`,
+          subject: `identity-quota-${index}`,
+        },
+        {
+          linkIntent: {
+            sessionId: session.sessionId,
+            userId: user.userId,
+          },
+        },
+      );
+    }
+    await expect(createOrLinkUser(
+      db,
+      TEST_AUTH_ENV,
+      {
+        displayName: "Identity quota",
+        email: "identity-quota@example.com",
+        provider: "test-over-limit",
+        subject: "identity-quota-over-limit",
+      },
+      {
+        linkIntent: {
+          sessionId: session.sessionId,
+          userId: user.userId,
+        },
+      },
+    )).rejects.toMatchObject({
+      code: "QUOTA_EXCEEDED",
+      status: 429,
+    });
+    expect(sqlite.prepare(
+      `SELECT COUNT(*) AS count
+       FROM identities
+       WHERE user_id=?`,
+    ).get(user.userId)).toEqual({
+      count: PUBLIC_LAUNCH_LIMITS.linkedIdentitiesPerAccount,
+    });
   });
   it("stores only validated anonymous IP prefixes for normal sessions", async () => {
     const { database: db, sqlite } = numberedMigrationDatabase();
-    const user = await createOrLinkUser(db, {}, {
+    const user = await createOrLinkUser(db, TEST_AUTH_ENV, {
       provider: "test",
       subject: "prefix-owner",
       email: "prefix-owner@example.com",
@@ -191,13 +757,13 @@ describe("authentication",()=>{
     });
     const state = createEmptyState("Guest prefix");
     await new D1SnapshotStore(db).initialize(state);
-    const owner = await createOrLinkUser(db, {}, {
+    const owner = await createOrLinkUser(db, TEST_AUTH_ENV, {
       provider: "test",
       subject: "guest-prefix-owner",
       email: "guest-prefix-owner@example.com",
       displayName: "Owner",
     });
-    const recipient = await createOrLinkUser(db, {}, {
+    const recipient = await createOrLinkUser(db, TEST_AUTH_ENV, {
       provider: "test",
       subject: "guest-prefix-recipient",
       email: "guest-prefix-recipient@example.com",
@@ -237,7 +803,7 @@ describe("authentication",()=>{
     const { database: db, sqlite } = numberedMigrationDatabase();
     const state = createEmptyState("Guest audit rollback");
     await new D1SnapshotStore(db).initialize(state);
-    const owner = await createOrLinkUser(db, {}, {
+    const owner = await createOrLinkUser(db, TEST_AUTH_ENV, {
       displayName: "Guest audit owner",
       email: "guest-audit-owner@example.com",
       provider: "test",
@@ -266,31 +832,121 @@ describe("authentication",()=>{
       "SELECT COUNT(*) AS count FROM auth_audit_events",
     ).get()).toEqual({ count: 0 });
   });
+  it("returns coded guest circuit refusals when breakers race mutations", async () => {
+    const { database: db, sqlite } = numberedMigrationDatabase();
+    const state = createEmptyState("Guest circuit races");
+    await new D1SnapshotStore(db).initialize(state);
+    const owner = await createOrLinkUser(db, TEST_AUTH_ENV, {
+      displayName: "Guest circuit owner",
+      email: "guest-circuit-owner@example.com",
+      provider: "test",
+      subject: "guest-circuit-owner",
+    });
+    const recipient = await createOrLinkUser(db, TEST_AUTH_ENV, {
+      displayName: "Guest circuit recipient",
+      email: "guest-circuit-recipient@example.com",
+      provider: "test",
+      subject: "guest-circuit-recipient",
+    });
+    await claimWorkspace(db, owner.userId, state.workspace.id);
+    let creationRaced = false;
+    const creationDatabase = {
+      prepare: db.prepare.bind(db),
+      async batch(statements: Parameters<typeof db.batch>[0]) {
+        if (!creationRaced && statements.length === 2) {
+          creationRaced = true;
+          sqlite.prepare(
+            `UPDATE circuit_breakers
+             SET state='paused', pause_kind='security', resume_at=NULL
+             WHERE scope='guest_links'`,
+          ).run();
+        }
+        return db.batch(statements);
+      },
+    };
+    const creationError = await createGuestLink(
+      creationDatabase,
+      state.workspace.id,
+      owner.userId,
+      "viewer",
+    ).then(() => null, (error: unknown) => error);
+    expect(creationError).toMatchObject({
+      code: "CIRCUIT_PAUSED",
+      status: 503,
+    });
+    expect(String(creationError)).not.toContain(
+      "guest link creation is temporarily unavailable",
+    );
+    sqlite.prepare(
+      `UPDATE circuit_breakers
+       SET state='open'
+       WHERE scope='guest_links'`,
+    ).run();
+    const link = await createGuestLink(
+      db,
+      state.workspace.id,
+      owner.userId,
+      "viewer",
+    );
+
+    let redemptionRaced = false;
+    const redemptionDatabase = {
+      prepare: db.prepare.bind(db),
+      async batch(statements: Parameters<typeof db.batch>[0]) {
+        if (!redemptionRaced && statements.length === 4) {
+          redemptionRaced = true;
+          sqlite.prepare(
+            `UPDATE circuit_breakers
+             SET state='paused', pause_kind='security', resume_at=NULL
+             WHERE scope='guest_redemptions'`,
+          ).run();
+        }
+        return db.batch(statements);
+      },
+    };
+    const redemptionError = await consumeGuestLink(
+      redemptionDatabase,
+      link.raw,
+      recipient.userId,
+    ).then(() => null, (error: unknown) => error);
+    expect(redemptionError).toMatchObject({
+      code: "CIRCUIT_PAUSED",
+      status: 503,
+    });
+    expect(String(redemptionError)).not.toContain(
+      "guest link redemption is temporarily unavailable",
+    );
+    expect(sqlite.prepare(
+      `SELECT consumed_at
+       FROM guest_links
+       WHERE guest_link_id=?`,
+    ).get(link.id)).toEqual({ consumed_at: null });
+  });
   it("requires an active workspace owner and strictly validates link expiry", async () => {
     const { database: db, sqlite } = numberedMigrationDatabase();
     const state = createEmptyState("Owner-only guest links");
     await new D1SnapshotStore(db).initialize(state);
-    const owner = await createOrLinkUser(db, {}, {
+    const owner = await createOrLinkUser(db, TEST_AUTH_ENV, {
       displayName: "Owner",
       email: "owner-only@example.com",
       provider: "test",
       subject: "owner-only",
     });
-    const editor = await createOrLinkUser(db, {}, {
+    const editor = await createOrLinkUser(db, TEST_AUTH_ENV, {
       displayName: "Editor",
       email: "editor-only@example.com",
       provider: "test",
       subject: "editor-only",
     });
-    const viewer = await createOrLinkUser(db, {}, {
+    const viewer = await createOrLinkUser(db, TEST_AUTH_ENV, {
       displayName: "Viewer",
       email: "viewer-only@example.com",
       provider: "test",
       subject: "viewer-only",
     });
-    const admin = await createOrLinkUser(
+    const outsider = await createOrLinkUser(
       db,
-      { AUTH_ADMIN_EMAILS: "global-admin@example.com" },
+      TEST_AUTH_ENV,
       {
         displayName: "Global admin",
         email: "global-admin@example.com",
@@ -311,7 +967,7 @@ describe("authentication",()=>{
        ) VALUES(?,?,?,?)`,
     ).run(state.workspace.id, viewer.userId, "viewer", createdAt);
 
-    for (const unauthorized of [editor, viewer, admin]) {
+    for (const unauthorized of [editor, viewer, outsider]) {
       await expect(createGuestLink(
         db,
         state.workspace.id,
@@ -347,13 +1003,13 @@ describe("authentication",()=>{
     const { database: db, sqlite } = numberedMigrationDatabase();
     const state = createEmptyState("Guest redemption revisions");
     await new D1SnapshotStore(db).initialize(state);
-    const owner = await createOrLinkUser(db, {}, {
+    const owner = await createOrLinkUser(db, TEST_AUTH_ENV, {
       displayName: "Owner",
       email: "guest-revision-owner@example.com",
       provider: "test",
       subject: "guest-revision-owner",
     });
-    const recipient = await createOrLinkUser(db, {}, {
+    const recipient = await createOrLinkUser(db, TEST_AUTH_ENV, {
       displayName: "Recipient",
       email: "guest-revision-recipient@example.com",
       provider: "test",
@@ -423,13 +1079,13 @@ describe("authentication",()=>{
     const { database: db, sqlite } = numberedMigrationDatabase();
     const state = createEmptyState("Deleted guest workspace");
     await new D1SnapshotStore(db).initialize(state);
-    const owner = await createOrLinkUser(db, {}, {
+    const owner = await createOrLinkUser(db, TEST_AUTH_ENV, {
       displayName: "Owner",
       email: "deleted-guest-owner@example.com",
       provider: "test",
       subject: "deleted-guest-owner",
     });
-    const recipient = await createOrLinkUser(db, {}, {
+    const recipient = await createOrLinkUser(db, TEST_AUTH_ENV, {
       displayName: "Recipient",
       email: "deleted-guest-recipient@example.com",
       provider: "test",
@@ -494,13 +1150,13 @@ describe("authentication",()=>{
     const { database: db, sqlite } = numberedMigrationDatabase();
     const state = createEmptyState("Invite deletion race");
     await new D1SnapshotStore(db).initialize(state);
-    const owner = await createOrLinkUser(db, {}, {
+    const owner = await createOrLinkUser(db, TEST_AUTH_ENV, {
       displayName: "Owner",
       email: "invite-race-owner@example.com",
       provider: "test",
       subject: "invite-race-owner",
     });
-    const recipient = await createOrLinkUser(db, {}, {
+    const recipient = await createOrLinkUser(db, TEST_AUTH_ENV, {
       displayName: "Recipient",
       email: "invite-race-recipient@example.com",
       provider: "test",
@@ -550,19 +1206,19 @@ describe("authentication",()=>{
     const { database: db, sqlite } = numberedMigrationDatabase();
     const state = createEmptyState("Invite concurrency");
     await new D1SnapshotStore(db).initialize(state);
-    const owner = await createOrLinkUser(db, {}, {
+    const owner = await createOrLinkUser(db, TEST_AUTH_ENV, {
       displayName: "Owner",
       email: "invite-owner@example.com",
       provider: "test",
       subject: "invite-owner",
     });
-    const first = await createOrLinkUser(db, {}, {
+    const first = await createOrLinkUser(db, TEST_AUTH_ENV, {
       displayName: "First recipient",
       email: "invite-first@example.com",
       provider: "test",
       subject: "invite-first",
     });
-    const second = await createOrLinkUser(db, {}, {
+    const second = await createOrLinkUser(db, TEST_AUTH_ENV, {
       displayName: "Second recipient",
       email: "invite-second@example.com",
       provider: "test",
@@ -601,13 +1257,13 @@ describe("authentication",()=>{
     const { database: db, sqlite } = numberedMigrationDatabase();
     const state = createEmptyState("Guest rollback");
     await new D1SnapshotStore(db).initialize(state);
-    const owner = await createOrLinkUser(db, {}, {
+    const owner = await createOrLinkUser(db, TEST_AUTH_ENV, {
       provider: "test",
       subject: "rollback-owner",
       email: "rollback-owner@example.com",
       displayName: "Owner",
     });
-    const recipient = await createOrLinkUser(db, {}, {
+    const recipient = await createOrLinkUser(db, TEST_AUTH_ENV, {
       provider: "test",
       subject: "rollback-recipient",
       email: "rollback-recipient@example.com",
@@ -665,7 +1321,7 @@ describe("authentication",()=>{
     const { database: db, sqlite } = numberedMigrationDatabase();
     const state = createEmptyState("Cleanup");
     await new D1SnapshotStore(db).initialize(state);
-    const owner = await createOrLinkUser(db, {}, {
+    const owner = await createOrLinkUser(db, TEST_AUTH_ENV, {
       provider: "test",
       subject: "cleanup-owner",
       email: "cleanup-owner@example.com",
@@ -761,16 +1417,27 @@ describe("authentication",()=>{
       }
     }
 
+    const retainedSessions = sqlite.prepare(
+      "SELECT COUNT(*) AS count FROM sessions WHERE expires_at = ?",
+    ).get(stale) as { count: number };
     await expect(cleanupAuthRecords(db, now)).resolves.toEqual({
       guestLinks: AUTH_CLEANUP_BATCH_SIZE,
       guestMemberships: 0,
       guestUsers: 0,
       oauthStates: AUTH_CLEANUP_BATCH_SIZE,
-      sessions: AUTH_CLEANUP_BATCH_SIZE,
+      sessions: Math.min(
+        AUTH_CLEANUP_BATCH_SIZE,
+        retainedSessions.count,
+      ),
     });
     expect(sqlite.prepare(
       "SELECT COUNT(*) AS count FROM sessions WHERE expires_at = ?",
-    ).get(stale)).toEqual({ count: 1 });
+    ).get(stale)).toEqual({
+      count: Math.max(
+        0,
+        retainedSessions.count - AUTH_CLEANUP_BATCH_SIZE,
+      ),
+    });
     expect(sqlite.prepare(
       "SELECT COUNT(*) AS count FROM oauth_states",
     ).get()).toEqual({ count: 1 });
@@ -840,7 +1507,7 @@ describe("authentication",()=>{
     const guestOwned = createEmptyState("Guest final owner");
     await new D1SnapshotStore(db).initialize(shared);
     await new D1SnapshotStore(db).initialize(guestOwned);
-    const owner = await createOrLinkUser(db, {}, {
+    const owner = await createOrLinkUser(db, TEST_AUTH_ENV, {
       displayName: "Owner",
       email: "cleanup-revision-owner@example.com",
       provider: "test",
@@ -930,13 +1597,13 @@ describe("authentication",()=>{
     const { database: db, sqlite } = numberedMigrationDatabase();
     const state = createEmptyState("Guest creator cleanup");
     await new D1SnapshotStore(db).initialize(state);
-    const owner = await createOrLinkUser(db, {}, {
+    const owner = await createOrLinkUser(db, TEST_AUTH_ENV, {
       provider: "test",
       subject: "guest-creator-owner",
       email: "guest-creator-owner@example.com",
       displayName: "Owner",
     });
-    const recipient = await createOrLinkUser(db, {}, {
+    const recipient = await createOrLinkUser(db, TEST_AUTH_ENV, {
       provider: "test",
       subject: "guest-creator-recipient",
       email: "guest-creator-recipient@example.com",
@@ -996,12 +1663,13 @@ describe("authentication",()=>{
   });
   it("limits the workspaces owned by one account", async () => {
     const { database: db, sqlite } = numberedMigrationDatabase();
-    const owner = await createOrLinkUser(db, {}, {
+    const owner = await createOrLinkUser(db, TEST_AUTH_ENV, {
       provider: "test",
       subject: "workspace-quota-owner",
       email: "workspace-quota-owner@example.com",
       displayName: "Owner",
     });
+    let existingWorkspaceId = "";
     for (
       let index = 0;
       index < API_QUOTAS.ownedWorkspacesPerUser;
@@ -1010,7 +1678,13 @@ describe("authentication",()=>{
       const state = createEmptyState(`Workspace ${index}`);
       await new D1SnapshotStore(db).initialize(state);
       await claimWorkspace(db, owner.userId, state.workspace.id);
+      existingWorkspaceId = state.workspace.id;
     }
+    await expect(claimWorkspace(
+      db,
+      owner.userId,
+      existingWorkspaceId,
+    )).resolves.toBeUndefined();
     const overage = createEmptyState("Workspace overage");
     await new D1SnapshotStore(db).initialize(overage);
 
@@ -1019,11 +1693,14 @@ describe("authentication",()=>{
       owner.userId,
       overage.workspace.id,
     )).rejects.toMatchObject({
-      actual: API_QUOTAS.ownedWorkspacesPerUser + 1,
       code: "QUOTA_EXCEEDED",
-      limit: API_QUOTAS.ownedWorkspacesPerUser,
-      quota: "ownedWorkspacesPerUser",
-    } satisfies Partial<QuotaExceededError>);
+      detail: {
+        actual: API_QUOTAS.ownedWorkspacesPerUser + 1,
+        limit: API_QUOTAS.ownedWorkspacesPerUser,
+        quota: "ownedWorkspacesPerUser",
+      },
+      status: 409,
+    });
     expect(sqlite.prepare(
       `SELECT COUNT(*) AS count
        FROM workspace_members
@@ -1036,7 +1713,7 @@ describe("authentication",()=>{
     const activeDatabase = numberedMigrationDatabase();
     const activeState = createEmptyState("Active guest link quota");
     await new D1SnapshotStore(activeDatabase.database).initialize(activeState);
-    const activeOwner = await createOrLinkUser(activeDatabase.database, {}, {
+    const activeOwner = await createOrLinkUser(activeDatabase.database, TEST_AUTH_ENV, {
       provider: "test",
       subject: "active-link-owner",
       email: "active-link-owner@example.com",
@@ -1047,7 +1724,7 @@ describe("authentication",()=>{
       activeOwner.userId,
       activeState.workspace.id,
     );
-    const now = "2026-07-24T00:00:00.000Z";
+    const now = "2020-01-01T00:00:00.000Z";
     const future = "2099-01-01T00:00:00.000Z";
     const insertLink = activeDatabase.sqlite.prepare(
       `INSERT INTO guest_links(
@@ -1091,7 +1768,7 @@ describe("authentication",()=>{
     );
     const retainedOwner = await createOrLinkUser(
       retainedDatabase.database,
-      {},
+      TEST_AUTH_ENV,
       {
         provider: "test",
         subject: "retained-link-owner",
@@ -1143,7 +1820,7 @@ describe("authentication",()=>{
     const { database: db, sqlite } = numberedMigrationDatabase();
     const state = createEmptyState("Member quota");
     await new D1SnapshotStore(db).initialize(state);
-    const owner = await createOrLinkUser(db, {}, {
+    const owner = await createOrLinkUser(db, TEST_AUTH_ENV, {
       provider: "test",
       subject: "member-quota-owner",
       email: "member-quota-owner@example.com",
@@ -1182,13 +1859,13 @@ describe("authentication",()=>{
       createGuestLink(db, state.workspace.id, owner.userId, "viewer"),
     ]);
     const recipients = await Promise.all([
-      createOrLinkUser(db, {}, {
+      createOrLinkUser(db, TEST_AUTH_ENV, {
         displayName: "First quota recipient",
         email: "first-quota-recipient@example.com",
         provider: "test",
         subject: "first-quota-recipient",
       }),
-      createOrLinkUser(db, {}, {
+      createOrLinkUser(db, TEST_AUTH_ENV, {
         displayName: "Second quota recipient",
         email: "second-quota-recipient@example.com",
         provider: "test",
@@ -1229,6 +1906,39 @@ describe("authentication",()=>{
        WHERE workspace_id = ? AND consumed_at IS NOT NULL`,
     ).get(state.workspace.id)).toEqual({ count: 1 });
   });
-  it("optionally requires a matching Cloudflare Access assertion for admin",async()=>{const db=database(),baseEnv={AUTH_ADMIN_EMAILS:"owner@example.com"};const user=await createOrLinkUser(db,baseEnv,{provider:"test",subject:"owner",email:"owner@example.com",displayName:"Owner"});const session=await issueSession(db,baseEnv,user,new Request("https://example.test"));const request=new Request("https://example.test/admin",{headers:{cookie:`stowplan_session=${session.raw}`}});expect((await authorizeAdmin(db,baseEnv,request)).userId).toBe(user.userId);await expect(authorizeAdmin(db,{...baseEnv,AUTH_ADMIN_REQUIRE_ACCESS:"true"},request)).rejects.toMatchObject({status:403} satisfies Partial<AuthorizationError>)});
+  it("optionally requires a matching Cloudflare Access assertion for admin", async () => {
+    const { database: db, sqlite } = numberedMigrationDatabase();
+    const baseEnv = TEST_AUTH_ENV;
+    const user = await createOrLinkUser(db, baseEnv, {
+      displayName: "Owner",
+      email: "owner@example.com",
+      provider: "test",
+      subject: "owner",
+    });
+    sqlite.prepare(
+      "UPDATE users SET global_role='admin' WHERE user_id=?",
+    ).run(user.userId);
+    const session = await issueSession(
+      db,
+      baseEnv,
+      { ...user, globalRole: "admin" },
+      new Request("https://example.test"),
+    );
+    const request = new Request("https://example.test/admin", {
+      headers: {
+        cookie: `__Host-stowplan_session=${session.raw}`,
+      },
+    });
+    expect(
+      (await authorizeAdmin(db, baseEnv, request)).userId,
+    ).toBe(user.userId);
+    await expect(authorizeAdmin(
+      db,
+      { ...baseEnv, AUTH_ADMIN_REQUIRE_ACCESS: "true" },
+      request,
+    )).rejects.toMatchObject({
+      status: 403,
+    } satisfies Partial<AuthorizationError>);
+  });
   it("rejects cross-origin browser mutations while supporting trusted proxy origins",()=>{expect(isTrustedMutation(new Request("https://example.test/api/sync",{method:"POST"}))).toBe(true);expect(isTrustedMutation(new Request("https://example.test/api/sync",{method:"POST",headers:{"sec-fetch-mode":"cors","sec-fetch-site":"same-origin"}}))).toBe(false);expect(isTrustedMutation(new Request("https://example.test/api/sync",{method:"POST",headers:{origin:"https://example.test","sec-fetch-site":"cross-site"}}))).toBe(false);expect(isTrustedMutation(new Request("https://example.test/api/sync",{method:"POST",headers:{origin:"https://evil.test"}}))).toBe(false);expect(isTrustedMutation(new Request("http://internal:3000/api/sync",{method:"POST",headers:{origin:"https://stowplan.example","x-forwarded-host":"stowplan.example","x-forwarded-proto":"https"}}))).toBe(true);expect(isTrustedMutation(new Request("http://internal:3000/api/sync",{method:"POST",headers:{origin:"https://stowplan.example"}}),"https://stowplan.example")).toBe(true)});
 });

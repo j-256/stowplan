@@ -14,15 +14,60 @@ import {
   claimWorkspace,
   consumeGuestLink,
   createGuestLink,
-  createOrLinkUser,
+  createOrLinkUser as createOrLinkUserWithEnv,
   issueSession,
 } from "../src/server/auth";
 import { QuotaExceededError } from "../src/server/quotas";
 import { API_QUOTAS } from "../src/shared/api-quotas";
+import {
+  SESSION_AUTHENTICATION_PROVIDER,
+  SESSION_REVOCATION_SCOPE,
+} from "../src/shared/authentication";
+import { TEST_AUTH_ENV } from "./helpers/auth";
 import { numberedMigrationDatabase } from "./helpers/sqlite-d1";
 
 function database() {
   return numberedMigrationDatabase().database;
+}
+
+async function createOrLinkUser(
+  db: Parameters<typeof createOrLinkUserWithEnv>[0],
+  env: Parameters<typeof createOrLinkUserWithEnv>[1],
+  profile: Parameters<typeof createOrLinkUserWithEnv>[2],
+  options?: Parameters<typeof createOrLinkUserWithEnv>[3],
+) {
+  return createOrLinkUserWithEnv(
+    db,
+    { ...TEST_AUTH_ENV, ...env },
+    profile,
+    options,
+  );
+}
+
+async function createAdmin(
+  db: D1DatabaseLike,
+  profile: Parameters<typeof createOrLinkUser>[2],
+) {
+  const user = await createOrLinkUser(db, {}, profile);
+  await db.prepare(
+    `UPDATE users
+     SET global_role='admin'
+     WHERE user_id=?`,
+  ).bind(user.userId).run();
+  return { ...user, globalRole: "admin" as const };
+}
+
+async function accountPreconditions(
+  db: D1DatabaseLike,
+  userId: string,
+) {
+  const row = await db.prepare(
+    `SELECT account_revision
+     FROM users
+     WHERE user_id=?`,
+  ).bind(userId).first<{ account_revision: number }>();
+  if (!row) throw new Error("Account revision is unavailable");
+  return { expectedAccountRevision: row.account_revision };
 }
 
 async function memberPreconditions(
@@ -51,9 +96,24 @@ async function memberPreconditions(
 describe("admin control plane", () => {
   it("lists and safely unlinks identities", async () => {
     const db = database();
-    const env = { AUTH_ADMIN_EMAILS: "owner@example.com" };
-    const owner = await createOrLinkUser(db, env, { provider: "google", subject: "google-owner", email: "owner@example.com", displayName: "Owner" });
-    await createOrLinkUser(db, env, { provider: "github", subject: "github-owner", email: "owner@example.com", displayName: "Owner" });
+    const owner = await createAdmin(db, { provider: "google", subject: "google-owner", email: "owner@example.com", displayName: "Owner" });
+    const session = await issueSession(
+      db,
+      {},
+      owner,
+      new Request("https://example.test"),
+    );
+    await createOrLinkUser(
+      db,
+      {},
+      { provider: "github", subject: "github-owner", email: "owner@example.com", displayName: "Owner" },
+      {
+        linkIntent: {
+          sessionId: session.sessionId,
+          userId: owner.userId,
+        },
+      },
+    );
     const first = await adminOverview(db);
     expect(first.identities).toHaveLength(2);
     await adminMutation(db, owner.userId, { action: "identity.unlink", targetId: String(first.identities[0].identity_id) });
@@ -62,11 +122,74 @@ describe("admin control plane", () => {
     await expect(adminMutation(db, owner.userId, { action: "identity.unlink", targetId: String(remaining[0].identity_id) })).rejects.toThrow(/retain at least one/);
   });
 
+  it("does not count a dormant Access identity as a direct sign-in path", async () => {
+    const db = database();
+    const owner = await createAdmin(db, {
+      displayName: "Owner",
+      email: "owner@example.com",
+      provider: "google",
+      subject: "google-owner-direct",
+    });
+    const session = await issueSession(
+      db,
+      {},
+      owner,
+      new Request("https://example.test"),
+    );
+    await createOrLinkUser(
+      db,
+      {},
+      {
+        displayName: "Owner",
+        email: "owner@example.com",
+        provider: "cloudflare-access",
+        subject: "access-owner-migration",
+      },
+      {
+        linkIntent: {
+          sessionId: session.sessionId,
+          userId: owner.userId,
+        },
+      },
+    );
+    const identities = (await adminOverview(db)).identities;
+    const google = identities.find(identity =>
+      identity.provider === "google"
+    );
+    const access = identities.find(identity =>
+      identity.provider === "cloudflare-access"
+    );
+    await expect(adminMutation(
+      db,
+      owner.userId,
+      {
+        action: "identity.unlink",
+        targetId: String(google?.identity_id),
+      },
+      { signInProviderIds: ["google"] },
+    )).rejects.toThrow(/configured direct sign-in identity/);
+    await expect(adminMutation(
+      db,
+      owner.userId,
+      {
+        action: "identity.unlink",
+        targetId: String(access?.identity_id),
+      },
+      { signInProviderIds: ["google"] },
+    )).resolves.toMatchObject({
+      message: "Sign-in identity unlinked",
+    });
+  });
+
   it("protects the final active admin and final workspace owner", async () => {
     const db = database();
-    const env = { AUTH_ADMIN_EMAILS: "owner@example.com" };
-    const owner = await createOrLinkUser(db, env, { provider: "test", subject: "owner", email: "owner@example.com", displayName: "Owner" });
-    await expect(adminMutation(db, owner.userId, { action: "user.role", targetId: owner.userId, value: "user" })).rejects.toThrow(/last active administrator/);
+    const owner = await createAdmin(db, { provider: "test", subject: "owner", email: "owner@example.com", displayName: "Owner" });
+    await expect(adminMutation(db, owner.userId, {
+      action: "user.role",
+      ...(await accountPreconditions(db, owner.userId)),
+      targetId: owner.userId,
+      value: "user",
+    })).rejects.toThrow(/last active administrator/);
     const state = createEmptyState("Admin test");
     await new D1SnapshotStore(db).initialize(state);
     await claimWorkspace(db, owner.userId, state.workspace.id);
@@ -91,9 +214,8 @@ describe("admin control plane", () => {
 
   it("keeps final active workspace owners enabled and rejects disabled owner promotion", async () => {
     const { database: db, sqlite } = numberedMigrationDatabase();
-    const admin = await createOrLinkUser(
+    const admin = await createAdmin(
       db,
-      { AUTH_ADMIN_EMAILS: "active-owner-admin@example.com" },
       {
         displayName: "Active owner admin",
         email: "active-owner-admin@example.com",
@@ -120,17 +242,20 @@ describe("admin control plane", () => {
 
     await expect(adminMutation(db, admin.userId, {
       action: "user.status",
+      ...(await accountPreconditions(db, disabledOwner.userId)),
       targetId: disabledOwner.userId,
       value: "disabled",
     })).resolves.toEqual({
       message: "User disabled",
       revokedSessions: 0,
+      unusedGuestLinksRevoked: 0,
     });
     await expect(adminMutation(db, admin.userId, {
       action: "user.status",
+      ...(await accountPreconditions(db, owner.userId)),
       targetId: owner.userId,
       value: "disabled",
-    })).rejects.toThrow(/final active workspace owner/);
+    })).rejects.toThrow(/Transfer required authority/);
     await expect(adminMutation(db, admin.userId, {
       action: "member.role",
       ...(await memberPreconditions(
@@ -168,9 +293,8 @@ describe("admin control plane", () => {
 
   it("revokes active sessions atomically when disabling an account", async () => {
     const { database: db, sqlite } = numberedMigrationDatabase();
-    const admin = await createOrLinkUser(
+    const admin = await createAdmin(
       db,
-      { AUTH_ADMIN_EMAILS: "session-admin@example.com" },
       {
         displayName: "Session admin",
         email: "session-admin@example.com",
@@ -200,53 +324,69 @@ describe("admin control plane", () => {
         headers: { "user-agent": "Second test browser" },
       }),
     );
+    const shared = createEmptyState("Disabled invite revocation");
+    await new D1SnapshotStore(db).initialize(shared);
+    await claimWorkspace(db, admin.userId, shared.workspace.id);
+    await claimWorkspace(db, target.userId, shared.workspace.id);
+    const guestLink = await createGuestLink(
+      db,
+      shared.workspace.id,
+      target.userId,
+      "viewer",
+    );
 
     await expect(adminMutation(db, admin.userId, {
       action: "user.status",
+      ...(await accountPreconditions(db, target.userId)),
       targetId: target.userId,
       value: "disabled",
     })).resolves.toEqual({
       message: "User disabled",
       revokedSessions: 2,
+      unusedGuestLinksRevoked: 1,
     });
     expect(sqlite.prepare(
       `SELECT COUNT(*) AS count
        FROM sessions
        WHERE user_id=? AND revoked_at IS NOT NULL`,
     ).get(target.userId)).toEqual({ count: 2 });
+    expect(sqlite.prepare(
+      `SELECT revoked_at
+       FROM guest_links
+       WHERE guest_link_id=?`,
+    ).get(guestLink.id)).toEqual({
+      revoked_at: expect.any(String),
+    });
     for (const raw of [first.raw, second.raw]) {
       await expect(authenticate(db, new Request(
         "https://example.test",
-        { headers: { cookie: `stowplan_session=${raw}` } },
+        { headers: { cookie: `__Host-stowplan_session=${raw}` } },
       ))).resolves.toBeNull();
     }
 
     await expect(adminMutation(db, admin.userId, {
       action: "user.status",
+      ...(await accountPreconditions(db, target.userId)),
       targetId: target.userId,
       value: "active",
     })).resolves.toEqual({ message: "User enabled" });
     for (const raw of [first.raw, second.raw]) {
       await expect(authenticate(db, new Request(
         "https://example.test",
-        { headers: { cookie: `stowplan_session=${raw}` } },
+        { headers: { cookie: `__Host-stowplan_session=${raw}` } },
       ))).resolves.toBeNull();
     }
   });
 
   it("rechecks active global-admin authority in the mutation transaction", async () => {
     const { database: db, sqlite } = numberedMigrationDatabase();
-    const env = {
-      AUTH_ADMIN_EMAILS:
-        "racing-admin@example.test,backup-admin@example.test",
-    };
-    const actor = await createOrLinkUser(db, env, {
+    const actor = await createAdmin(db, {
       displayName: "Racing administrator",
       email: "racing-admin@example.test",
       provider: "test",
       subject: "racing-admin",
     });
-    await createOrLinkUser(db, env, {
+    await createAdmin(db, {
       displayName: "Backup administrator",
       email: "backup-admin@example.test",
       provider: "test",
@@ -279,6 +419,7 @@ describe("admin control plane", () => {
       actor.userId,
       {
         action: "user.status",
+        ...(await accountPreconditions(db, target.userId)),
         targetId: target.userId,
         value: "disabled",
       },
@@ -296,11 +437,180 @@ describe("admin control plane", () => {
     ).get(target.userId)).toEqual({ count: 0 });
   });
 
+  it("rejects an administrator deleted during an inline mutation", async () => {
+    const { database: db, sqlite } = numberedMigrationDatabase();
+    const actor = await createAdmin(db, {
+      displayName: "Deleted racing administrator",
+      email: "deleted-racing-admin@example.test",
+      provider: "test",
+      subject: "deleted-racing-admin",
+    });
+    await createAdmin(db, {
+      displayName: "Deleted race backup",
+      email: "deleted-race-backup@example.test",
+      provider: "test",
+      subject: "deleted-race-backup",
+    });
+    const target = await createOrLinkUser(db, {}, {
+      displayName: "Session revocation target",
+      email: "session-revocation-target@example.test",
+      provider: "test",
+      subject: "session-revocation-target",
+    });
+    const targetSession = await issueSession(
+      db,
+      {},
+      target,
+      new Request("https://example.test"),
+    );
+    let raced = false;
+    const racingDatabase: D1DatabaseLike = {
+      batch: async statements => {
+        if (!raced) {
+          raced = true;
+          await db.prepare(
+            `UPDATE users
+             SET deleted_at=?,updated_at=?
+             WHERE user_id=?`,
+          ).bind(
+            "2026-07-26T00:00:00.000Z",
+            "2026-07-26T00:00:00.000Z",
+            actor.userId,
+          ).run();
+        }
+        return db.batch(statements);
+      },
+      prepare: query => db.prepare(query),
+    };
+
+    await expect(adminMutation(
+      racingDatabase,
+      actor.userId,
+      {
+        action: "session.revoke",
+        targetId: targetSession.sessionId,
+      },
+    )).rejects.toMatchObject({
+      code: "ADMIN_REQUIRED",
+      status: 403,
+    });
+    expect(sqlite.prepare(
+      `SELECT revoked_at
+       FROM sessions
+       WHERE session_id=?`,
+    ).get(targetSession.sessionId)).toEqual({ revoked_at: null });
+    expect(sqlite.prepare(
+      `SELECT COUNT(*) AS count
+       FROM auth_audit_events
+       WHERE action='session.revoke' AND target_id=?`,
+    ).get(targetSession.sessionId)).toEqual({ count: 0 });
+  });
+
+  it("revokes every active pre-Google session with one audited control", async () => {
+    const { database: db, sqlite } = numberedMigrationDatabase();
+    const actor = await createAdmin(db, {
+      displayName: "Migration administrator",
+      email: "migration-admin@example.test",
+      provider: "test",
+      subject: "migration-admin",
+    });
+    const target = await createOrLinkUser(db, {}, {
+      displayName: "Migrating account",
+      email: "migrating-account@example.test",
+      provider: "test",
+      subject: "migrating-account",
+    });
+    const actorSession = await issueSession(
+      db,
+      {},
+      actor,
+      new Request("https://example.test"),
+      {
+        authenticationProvider:
+          SESSION_AUTHENTICATION_PROVIDER.ACCESS_MIGRATION,
+      },
+    );
+    await issueSession(
+      db,
+      {},
+      target,
+      new Request("https://example.test"),
+      {
+        authenticationProvider:
+          SESSION_AUTHENTICATION_PROVIDER.ACCESS_MIGRATION,
+      },
+    );
+    const googleSession = await issueSession(
+      db,
+      {},
+      target,
+      new Request("https://example.test"),
+      {
+        authenticationProvider:
+          SESSION_AUTHENTICATION_PROVIDER.GOOGLE,
+      },
+    );
+    await issueSession(
+      db,
+      {},
+      target,
+      new Request("https://example.test"),
+    );
+
+    await expect(adminMutation(
+      db,
+      actor.userId,
+      {
+        action: "session.revoke-pre-google",
+        targetId: SESSION_REVOCATION_SCOPE.PRE_GOOGLE,
+      },
+      { actorSessionId: actorSession.sessionId },
+    )).resolves.toMatchObject({
+      currentSessionRevoked: true,
+      revokedSessions: 3,
+    });
+    expect(sqlite.prepare(
+      `SELECT COUNT(*) AS count
+       FROM sessions
+       WHERE (
+           authentication_provider=?
+           OR authentication_provider IS NULL
+         )
+         AND revoked_at IS NULL
+         AND expires_at>?`,
+    ).get(
+      SESSION_AUTHENTICATION_PROVIDER.ACCESS_MIGRATION,
+      new Date().toISOString(),
+    )).toEqual({ count: 0 });
+    expect(sqlite.prepare(
+      `SELECT revoked_at
+       FROM sessions
+       WHERE session_id=?`,
+    ).get(googleSession.sessionId)).toEqual({ revoked_at: null });
+    expect(sqlite.prepare(
+      `SELECT COUNT(*) AS count
+       FROM auth_audit_events
+       WHERE action='session.revoke-pre-google'
+         AND target_id=?`,
+    ).get(
+      SESSION_REVOCATION_SCOPE.PRE_GOOGLE,
+    )).toEqual({ count: 1 });
+    await expect(adminMutation(
+      db,
+      actor.userId,
+      {
+        action: "session.revoke-pre-google",
+        targetId: SESSION_REVOCATION_SCOPE.PRE_GOOGLE,
+      },
+    )).rejects.toThrow(
+      /No active pre-Google sessions remain/,
+    );
+  });
+
   it("requires revision preconditions for global membership changes", async () => {
     const { database: db, sqlite } = numberedMigrationDatabase();
-    const admin = await createOrLinkUser(
+    const admin = await createAdmin(
       db,
-      { AUTH_ADMIN_EMAILS: "precondition-admin@example.test" },
       {
         displayName: "Precondition admin",
         email: "precondition-admin@example.test",
@@ -364,9 +674,8 @@ describe("admin control plane", () => {
 
   it("returns current revisions for stale global membership changes", async () => {
     const { database: db, sqlite } = numberedMigrationDatabase();
-    const admin = await createOrLinkUser(
+    const admin = await createAdmin(
       db,
-      { AUTH_ADMIN_EMAILS: "stale-admin@example.test" },
       {
         displayName: "Stale admin",
         email: "stale-admin@example.test",
@@ -453,9 +762,8 @@ describe("admin control plane", () => {
 
   it("checks global membership revisions inside the mutation transaction", async () => {
     const { database: db, sqlite } = numberedMigrationDatabase();
-    const admin = await createOrLinkUser(
+    const admin = await createAdmin(
       db,
-      { AUTH_ADMIN_EMAILS: "revision-race-admin@example.test" },
       {
         displayName: "Revision race admin",
         email: "revision-race-admin@example.test",
@@ -575,9 +883,8 @@ describe("admin control plane", () => {
 
   it("advances revisions for global control-plane access changes", async () => {
     const { database: db, sqlite } = numberedMigrationDatabase();
-    const globalAdmin = await createOrLinkUser(
+    const globalAdmin = await createAdmin(
       db,
-      { AUTH_ADMIN_EMAILS: "control-admin@example.com" },
       {
         displayName: "Control admin",
         email: "control-admin@example.com",
@@ -675,9 +982,8 @@ describe("admin control plane", () => {
     const { database: db, sqlite } = numberedMigrationDatabase({
       triggerInclusiveChanges: true,
     });
-    const admin = await createOrLinkUser(
+    const admin = await createAdmin(
       db,
-      { AUTH_ADMIN_EMAILS: "trigger-admin@example.com" },
       {
         displayName: "Trigger admin",
         email: "trigger-admin@example.com",
@@ -765,9 +1071,8 @@ describe("admin control plane", () => {
 
   it("deletes active or retained guest links with an audit and access revision", async () => {
     const { database: db, sqlite } = numberedMigrationDatabase();
-    const admin = await createOrLinkUser(
+    const admin = await createAdmin(
       db,
-      { AUTH_ADMIN_EMAILS: "guest-delete-admin@example.com" },
       {
         displayName: "Guest delete admin",
         email: "guest-delete-admin@example.com",
@@ -867,9 +1172,8 @@ describe("admin control plane", () => {
 
   it("rolls back guest-link deletion when its audit insert fails", async () => {
     const { database: db, sqlite } = numberedMigrationDatabase();
-    const admin = await createOrLinkUser(
+    const admin = await createAdmin(
       db,
-      { AUTH_ADMIN_EMAILS: "guest-delete-rollback@example.com" },
       {
         displayName: "Guest delete rollback",
         email: "guest-delete-rollback@example.com",
@@ -914,30 +1218,31 @@ describe("admin control plane", () => {
 
   it("atomically retains an active admin during concurrent demotions", async () => {
     const { database: db, sqlite } = numberedMigrationDatabase();
-    const env = {
-      AUTH_ADMIN_EMAILS: "first@example.com,second@example.com",
-    };
-    const first = await createOrLinkUser(db, env, {
+    const first = await createAdmin(db, {
       displayName: "First",
       email: "first@example.com",
       provider: "test",
       subject: "first",
     });
-    const second = await createOrLinkUser(db, env, {
+    const second = await createAdmin(db, {
       displayName: "Second",
       email: "second@example.com",
       provider: "test",
       subject: "second",
     });
+    const firstAccount = await accountPreconditions(db, first.userId);
+    const secondAccount = await accountPreconditions(db, second.userId);
 
     const results = await Promise.allSettled([
       adminMutation(db, first.userId, {
         action: "user.role",
+        ...firstAccount,
         targetId: first.userId,
         value: "user",
       }),
       adminMutation(db, second.userId, {
         action: "user.role",
+        ...secondAccount,
         targetId: second.userId,
         value: "user",
       }),
@@ -956,13 +1261,13 @@ describe("admin control plane", () => {
 
   it("atomically retains a workspace owner during concurrent demotions", async () => {
     const { database: db, sqlite } = numberedMigrationDatabase();
-    const first = await createOrLinkUser(db, {}, {
+    const first = await createAdmin(db, {
       displayName: "First owner",
       email: "first-owner@example.com",
       provider: "test",
       subject: "first-owner",
     });
-    const second = await createOrLinkUser(db, {}, {
+    const second = await createAdmin(db, {
       displayName: "Second owner",
       email: "second-owner@example.com",
       provider: "test",
@@ -1011,9 +1316,8 @@ describe("admin control plane", () => {
 
   it("atomically retains an active owner during concurrent account disables", async () => {
     const { database: db, sqlite } = numberedMigrationDatabase();
-    const admin = await createOrLinkUser(
+    const admin = await createAdmin(
       db,
-      { AUTH_ADMIN_EMAILS: "disable-race-admin@example.com" },
       {
         displayName: "Disable race admin",
         email: "disable-race-admin@example.com",
@@ -1037,15 +1341,19 @@ describe("admin control plane", () => {
     await new D1SnapshotStore(db).initialize(state);
     await claimWorkspace(db, first.userId, state.workspace.id);
     await claimWorkspace(db, second.userId, state.workspace.id);
+    const firstAccount = await accountPreconditions(db, first.userId);
+    const secondAccount = await accountPreconditions(db, second.userId);
 
     const results = await Promise.allSettled([
       adminMutation(db, admin.userId, {
         action: "user.status",
+        ...firstAccount,
         targetId: first.userId,
         value: "disabled",
       }),
       adminMutation(db, admin.userId, {
         action: "user.status",
+        ...secondAccount,
         targetId: second.userId,
         value: "disabled",
       }),
@@ -1072,18 +1380,34 @@ describe("admin control plane", () => {
 
   it("atomically retains a sign-in identity during concurrent unlinks", async () => {
     const { database: db, sqlite } = numberedMigrationDatabase();
-    const user = await createOrLinkUser(db, {}, {
+    const user = await createAdmin(db, {
       displayName: "Linked user",
       email: "linked@example.com",
       provider: "google",
       subject: "linked-google",
     });
-    await createOrLinkUser(db, {}, {
-      displayName: "Linked user",
-      email: "linked@example.com",
-      provider: "github",
-      subject: "linked-github",
-    });
+    const session = await issueSession(
+      db,
+      {},
+      user,
+      new Request("https://example.test"),
+    );
+    await createOrLinkUser(
+      db,
+      {},
+      {
+        displayName: "Linked user",
+        email: "linked@example.com",
+        provider: "github",
+        subject: "linked-github",
+      },
+      {
+        linkIntent: {
+          sessionId: session.sessionId,
+          userId: user.userId,
+        },
+      },
+    );
     const identities = sqlite.prepare(
       "SELECT identity_id FROM identities WHERE user_id=?",
     ).all(user.userId) as { identity_id: string }[];
@@ -1106,8 +1430,7 @@ describe("admin control plane", () => {
 
   it("refuses repeated and nonexistent mutations without auditing them", async () => {
     const { database: db, sqlite } = numberedMigrationDatabase();
-    const env = { AUTH_ADMIN_EMAILS: "owner@example.com" };
-    const owner = await createOrLinkUser(db, env, {
+    const owner = await createAdmin(db, {
       displayName: "Owner",
       email: "owner@example.com",
       provider: "test",
@@ -1119,6 +1442,7 @@ describe("admin control plane", () => {
 
     await expect(adminMutation(db, owner.userId, {
       action: "user.role",
+      ...(await accountPreconditions(db, owner.userId)),
       targetId: owner.userId,
       value: "admin",
     })).rejects.toThrow(/already has the admin role/);
@@ -1144,14 +1468,13 @@ describe("admin control plane", () => {
 
   it("rolls back an admin mutation when its audit insert fails", async () => {
     const { database: db, sqlite } = numberedMigrationDatabase();
-    const env = { AUTH_ADMIN_EMAILS: "owner@example.com" };
-    const owner = await createOrLinkUser(db, env, {
+    const owner = await createAdmin(db, {
       displayName: "Owner",
       email: "owner@example.com",
       provider: "test",
       subject: "owner-audit-rollback",
     });
-    const target = await createOrLinkUser(db, env, {
+    const target = await createOrLinkUser(db, {}, {
       displayName: "Target",
       email: "target@example.com",
       provider: "test",
@@ -1159,7 +1482,7 @@ describe("admin control plane", () => {
     });
     await issueSession(
       db,
-      env,
+      {},
       target,
       new Request("https://example.test"),
     );
@@ -1176,6 +1499,7 @@ describe("admin control plane", () => {
 
     await expect(adminMutation(db, owner.userId, {
       action: "user.status",
+      ...(await accountPreconditions(db, target.userId)),
       targetId: target.userId,
       value: "disabled",
     })).rejects.toThrow(/injected audit failure/);
@@ -1404,9 +1728,8 @@ describe("admin control plane", () => {
 
   it("redacts new and historical audit secrets before administrators read them", async () => {
     const { database: db, sqlite } = numberedMigrationDatabase();
-    const operator = await createOrLinkUser(
+    const operator = await createAdmin(
       db,
-      { AUTH_ADMIN_EMAILS: "audit-redaction@example.com" },
       {
         displayName: "Audit redaction administrator",
         email: "audit-redaction@example.com",
@@ -1475,9 +1798,8 @@ describe("admin control plane", () => {
     const privateStateHash = "oauth_state_hash_must_stay_private";
     const privateVerifier = "oauth_verifier_must_stay_private";
     const privateAuditDetail = "audit_detail_must_stay_private";
-    const operator = await createOrLinkUser(
+    const operator = await createAdmin(
       db,
-      { AUTH_ADMIN_EMAILS: "inventory-admin@example.com" },
       {
         displayName: "Inventory administrator",
         email: "inventory-admin@example.com",
@@ -1679,6 +2001,12 @@ describe("admin control plane", () => {
       "guest_links",
       "oauth_states",
       "auth_audit_events",
+      "workspace_custody",
+      "creation_ledger",
+      "circuit_breakers",
+      "governance_limits",
+      "identity_ban_digests",
+      "account_deletion_receipts",
       "stowplan_migration_stream",
       "stowplan_node_migrations",
     ]);
@@ -2053,9 +2381,8 @@ describe("admin control plane", () => {
 
   it("does not bypass the owned workspace quota during role promotion", async () => {
     const { database: db, sqlite } = numberedMigrationDatabase();
-    const actor = await createOrLinkUser(
+    const actor = await createAdmin(
       db,
-      { AUTH_ADMIN_EMAILS: "promotion-actor@example.com" },
       {
         provider: "test",
         subject: "promotion-actor",

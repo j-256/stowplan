@@ -6,6 +6,7 @@ import {
 import type {
   WorkspaceState,
 } from "../src/domain/types";
+import { ApiProblem } from "../src/server/api-problem";
 import { SYNC_REQUEST_MAX_BYTES } from "../src/server/request-body";
 import { API_QUOTAS } from "../src/shared/api-quotas";
 import { ACCOUNT_CONTEXT_HEADER } from "../src/shared/account-context";
@@ -454,6 +455,51 @@ describe("sync route authorization", () => {
     expect(mocks.synchronize).not.toHaveBeenCalled();
   });
 
+  it("emits Retry-After for retriable allocation refusals", async () => {
+    const state = createEmptyState("Deferred workspace");
+    mocks.initializeOwnedWorkspace.mockRejectedValueOnce(
+      new ApiProblem(
+        "QUOTA_EXCEEDED",
+        "Workspace allocation is temporarily limited",
+        429,
+        {
+          retryAfterSeconds: 86_400,
+          quota: "workspacesCreatedPerAccountDay",
+        },
+      ),
+    );
+
+    const quotaResponse = await POST(syncRequest({
+      commands: [],
+      snapshot: state,
+      workspaceId: state.workspace.id,
+    }));
+
+    expect(quotaResponse.status).toBe(429);
+    expect(quotaResponse.headers.get("retry-after")).toBe("86400");
+    await expect(quotaResponse.json()).resolves.toMatchObject({
+      code: "QUOTA_EXCEEDED",
+      quota: "workspacesCreatedPerAccountDay",
+      retryAfterSeconds: 86_400,
+    });
+
+    mocks.initializeOwnedWorkspace.mockRejectedValueOnce(
+      new ApiProblem(
+        "CIRCUIT_PAUSED",
+        "New server workspace allocation is temporarily paused",
+        503,
+      ),
+    );
+    const circuitResponse = await POST(syncRequest({
+      commands: [],
+      snapshot: state,
+      workspaceId: state.workspace.id,
+    }));
+
+    expect(circuitResponse.status).toBe(503);
+    expect(circuitResponse.headers.get("retry-after")).toBe("3600");
+  });
+
   it("surfaces a role downgrade race with rejected command context", async () => {
     const state = createEmptyState("Downgrade");
     const command = createEnvelope(
@@ -591,8 +637,11 @@ describe("authentication status", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
+      accessMigrationAvailable: false,
+      adminAccessRequired: false,
       configured: true,
       providers: [],
+      turnstileSiteKey: null,
       user: null,
     });
   });

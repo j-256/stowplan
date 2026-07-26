@@ -8,6 +8,7 @@ import {
 } from "../domain";
 import { newId, nowIso } from "../domain/factories";
 import { API_QUOTAS } from "../shared/api-quotas";
+import { membershipAdmissionRefusal } from "./account-governance";
 import { ApiProblem } from "./api-problem";
 import { safeAuditDetailJson } from "./audit-detail";
 import { QuotaExceededError } from "./quotas";
@@ -390,9 +391,23 @@ export async function takeAdminWorkspaceOwnership(
       409,
     );
   }
+  const existingMembership = await db.prepare(
+    `SELECT 1 AS present
+     FROM workspace_members
+     WHERE workspace_id = ? AND user_id = ?`,
+  ).bind(workspaceId, actorUserId).first<{ present: number }>();
+  if (!existingMembership) {
+    const refusal = await membershipAdmissionRefusal(
+      database,
+      actorUserId,
+    );
+    if (refusal) throw refusal;
+  }
   const changedAt = nowIso();
-  const results = await db.batch([
-    db.prepare(
+  let results: D1ResultLike[];
+  try {
+    results = await db.batch([
+      db.prepare(
       `INSERT INTO workspace_members(
          workspace_id,user_id,role,created_at
        )
@@ -474,8 +489,24 @@ export async function takeAdminWorkspaceOwnership(
              AND member.role='owner'
          )
          AND changes()=1`,
-    ).bind(workspaceId, actorUserId),
-  ]);
+      ).bind(workspaceId, actorUserId),
+    ]);
+  } catch (error) {
+    await requireActiveAdmin(db, actorUserId);
+    const membership = await db.prepare(
+      `SELECT 1 AS present
+       FROM workspace_members
+       WHERE workspace_id = ? AND user_id = ?`,
+    ).bind(workspaceId, actorUserId).first<{ present: number }>();
+    if (!membership) {
+      const refusal = await membershipAdmissionRefusal(
+        database,
+        actorUserId,
+      );
+      if (refusal) throw refusal;
+    }
+    throw error;
+  }
   const result = results[2]?.results?.[0] as
     | { access_revision: number }
     | undefined;
@@ -769,7 +800,7 @@ export async function deleteAdminWorkspace(
     resultChanges(results[0]) !== 1 ||
     resultChanges(results[1]) !== 1 ||
     resultChanges(results[5]) !== 1 ||
-    resultChanges(results[6]) !== 1
+    resultChanges(results[6]) < 1
   ) {
     const deleted = await db.prepare(
       `SELECT deletion_id,deleted_at

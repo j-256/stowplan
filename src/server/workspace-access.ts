@@ -2,7 +2,10 @@ import type {
   D1DatabaseLike,
   D1ResultLike,
 } from "../adapters/d1-snapshot-store";
-import { workspaceReturnTo } from "../domain/app-url";
+import {
+  GUEST_INVITATION_RETURN_TO_MAX_CHARACTERS,
+  workspaceReturnTo,
+} from "../domain/app-url";
 import {
   capabilitiesForWorkspaceRole,
   isWorkspaceRole,
@@ -27,6 +30,7 @@ import {
   privateJson,
 } from "./api-problem";
 import { requireExpectedAccount } from "./account-context";
+import { guestLinkCreationRefusal } from "./account-governance";
 import { safeAuditDetailJson } from "./audit-detail";
 import {
   QuotaExceededError,
@@ -44,6 +48,8 @@ const MAXIMUM_PAGE_LIMIT = 50;
 const MAXIMUM_QUERY_LENGTH = 120;
 const MAXIMUM_CURSOR_LENGTH = 2_048;
 const MAXIMUM_SAFE_REVISION = Number.MAX_SAFE_INTEGER;
+const INVALID_GUEST_LINK_RETURN_TO_MESSAGE =
+  `returnTo must resolve to a valid workspace path no longer than ${GUEST_INVITATION_RETURN_TO_MAX_CHARACTERS} characters`;
 
 const GUEST_LINK_ROLES = Object.freeze([
   "editor",
@@ -915,6 +921,32 @@ function parseCreateGuestLink(value: unknown): CreateGuestLinkInput {
     returnTo: record.returnTo as string | undefined,
     role: record.role as GuestLinkRole,
   };
+}
+
+function guestLinkReturnTo(
+  requested: string | undefined,
+  workspaceId: string,
+): string {
+  let returnTo: string;
+  try {
+    returnTo = workspaceReturnTo(requested, workspaceId);
+  } catch {
+    throw new ApiProblem(
+      "INVALID_REQUEST",
+      INVALID_GUEST_LINK_RETURN_TO_MESSAGE,
+      400,
+    );
+  }
+  if (
+    returnTo.length > GUEST_INVITATION_RETURN_TO_MAX_CHARACTERS
+  ) {
+    throw new ApiProblem(
+      "INVALID_REQUEST",
+      INVALID_GUEST_LINK_RETURN_TO_MESSAGE,
+      400,
+    );
+  }
+  return returnTo;
 }
 
 function parseRevokeGuestLink(value: unknown): RevokeGuestLinkInput {
@@ -2044,17 +2076,26 @@ export async function createWorkspaceGuestLink(
   value: unknown,
 ) {
   const input = parseCreateGuestLink(value);
+  const returnTo = guestLinkReturnTo(input.returnTo, workspaceId);
   const db = databaseLike(database);
   const context = await ownerContext(db, workspaceId, actorUserId);
   assertExpectedAccess(context, input.expectedAccessRevision);
+  const at = nowIso();
+  const refusal = await guestLinkCreationRefusal(
+    database,
+    actorUserId,
+    new Date(at),
+  );
+  if (refusal) throw refusal;
   const raw = randomToken();
   const guestLinkId = newId("guest");
-  const at = nowIso();
   const expiresAt = new Date(
     Date.parse(at) + input.expiresInHours * 3_600_000,
   ).toISOString();
-  const [, audit, committed] = await db.batch([
-    db.prepare(
+  let results: D1ResultLike[];
+  try {
+    results = await db.batch([
+      db.prepare(
       `INSERT INTO guest_links(
          guest_link_id,workspace_id,created_by_user_id,token_hash,role,
          created_at,expires_at
@@ -2117,8 +2158,18 @@ export async function createWorkspaceGuestLink(
       workspaceId,
       guestLinkId,
       at,
-    ),
-  ]);
+      ),
+    ]);
+  } catch (error) {
+    const racedRefusal = await guestLinkCreationRefusal(
+      database,
+      actorUserId,
+      new Date(at),
+    );
+    if (racedRefusal) throw racedRefusal;
+    throw error;
+  }
+  const [, audit, committed] = results;
   if (resultChanges(audit) !== 1) {
     const current = await ownerContext(db, workspaceId, actorUserId);
     const usage = await guestLinkUsage(db, workspaceId, at);
@@ -2149,7 +2200,7 @@ export async function createWorkspaceGuestLink(
     accessRevision: link.access_revision,
     guestLink: guestLinkResponse(link),
     raw,
-    returnTo: workspaceReturnTo(input.returnTo, workspaceId),
+    returnTo,
   };
 }
 
@@ -2436,7 +2487,7 @@ export async function deleteServerWorkspace(
     resultChanges(results[0]) !== 1 ||
     resultChanges(results[1]) !== 1 ||
     resultChanges(results[5]) !== 1 ||
-    resultChanges(results[6]) !== 1
+    resultChanges(results[6]) < 1
   ) {
     if (await deletedByCaller(db, workspaceId, actorUserId)) {
       throw new ApiProblem(

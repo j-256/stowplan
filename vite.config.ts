@@ -5,7 +5,8 @@ import { sites } from "./build/sites-vite-plugin";
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
   "00000000-0000-4000-8000-000000000000";
-const DEFAULT_LOCAL_ADMIN_EMAIL = "owner@example.test";
+const DEFAULT_LOCAL_IDENTITY_DIGEST_KEY =
+  "stowplan-local-identity-digest-key-not-for-production";
 
 const { d1, r2 } = hostingConfig;
 
@@ -60,14 +61,14 @@ export default defineConfig(async ({ command, mode }) => {
           ...(command === "serve"
             ? {
                 vars: {
-                  AUTH_ADMIN_EMAILS:
-                    process.env.AUTH_ADMIN_EMAILS ??
-                    fileEnv.AUTH_ADMIN_EMAILS ??
-                    DEFAULT_LOCAL_ADMIN_EMAIL,
                   AUTH_DEV_ENABLED:
                     process.env.AUTH_DEV_ENABLED ??
                     fileEnv.AUTH_DEV_ENABLED ??
                     "true",
+                  AUTH_IDENTITY_DIGEST_KEY:
+                    process.env.AUTH_IDENTITY_DIGEST_KEY ??
+                    fileEnv.AUTH_IDENTITY_DIGEST_KEY ??
+                    DEFAULT_LOCAL_IDENTITY_DIGEST_KEY,
                 },
               }
             : {}),

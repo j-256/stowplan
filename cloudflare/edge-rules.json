@@ -29,7 +29,7 @@
         "http_ratelimit": [
           {
             "description": "[stowplan] Limit sensitive API requests by source",
-            "expression": "(http.request.uri.path eq \"/api/auth\" or starts_with(http.request.uri.path, \"/api/auth/\") or http.request.uri.path eq \"/api/admin\" or starts_with(http.request.uri.path, \"/api/admin/\") or http.request.uri.path eq \"/api/workspaces\" or starts_with(http.request.uri.path, \"/api/workspaces/\"))",
+            "expression": "(http.request.uri.path eq \"/api/account\" or starts_with(http.request.uri.path, \"/api/account/\") or http.request.uri.path eq \"/api/auth\" or starts_with(http.request.uri.path, \"/api/auth/\") or http.request.uri.path eq \"/api/admin\" or starts_with(http.request.uri.path, \"/api/admin/\") or http.request.uri.path eq \"/api/workspaces\" or starts_with(http.request.uri.path, \"/api/workspaces/\") or http.request.uri.path eq \"/api/sync\" or http.request.uri.path eq \"/api/snapshot\")",
             "action": "block",
             "action_parameters": {
               "response": {
@@ -58,7 +58,7 @@
         "http_ratelimit": [
           {
             "description": "[stowplan] Limit sensitive API requests by source",
-            "expression": "http.host eq \"stowplan.jklein.dev\" and (http.request.uri.path eq \"/api/auth\" or starts_with(http.request.uri.path, \"/api/auth/\") or http.request.uri.path eq \"/api/admin\" or starts_with(http.request.uri.path, \"/api/admin/\") or http.request.uri.path eq \"/api/workspaces\" or starts_with(http.request.uri.path, \"/api/workspaces/\"))",
+            "expression": "http.host eq \"stowplan.jklein.dev\" and (http.request.uri.path eq \"/api/account\" or starts_with(http.request.uri.path, \"/api/account/\") or http.request.uri.path eq \"/api/auth\" or starts_with(http.request.uri.path, \"/api/auth/\") or http.request.uri.path eq \"/api/admin\" or starts_with(http.request.uri.path, \"/api/admin/\") or http.request.uri.path eq \"/api/workspaces\" or starts_with(http.request.uri.path, \"/api/workspaces/\"))",
             "action": "block",
             "action_parameters": {
               "response": {
@@ -153,7 +153,7 @@
           },
           {
             "description": "[stowplan] Limit administration requests by source",
-            "expression": "http.host eq \"stowplan.jklein.dev\" and (http.request.uri.path eq \"/api/admin\" or starts_with(http.request.uri.path, \"/api/admin/\") or http.request.uri.path eq \"/api/workspaces\" or starts_with(http.request.uri.path, \"/api/workspaces/\"))",
+            "expression": "http.host eq \"stowplan.jklein.dev\" and (http.request.uri.path eq \"/api/account\" or starts_with(http.request.uri.path, \"/api/account/\") or http.request.uri.path eq \"/api/admin\" or starts_with(http.request.uri.path, \"/api/admin/\") or http.request.uri.path eq \"/api/workspaces\" or starts_with(http.request.uri.path, \"/api/workspaces/\"))",
             "action": "block",
             "action_parameters": {
               "response": {
@@ -203,7 +203,7 @@
         "http_request_firewall_custom": [
           {
             "description": "[stowplan] Block duplicate application session cookies",
-            "expression": "http.host eq \"stowplan.jklein.dev\" and starts_with(http.request.uri.path, \"/api/\") and len(http.request.cookies[\"stowplan_session\"]) gt 1",
+            "expression": "http.host eq \"stowplan.jklein.dev\" and starts_with(http.request.uri.path, \"/api/\") and len(http.request.cookies[\"__Host-stowplan_session\"]) gt 1",
             "action": "block",
             "enabled": true,
             "position": {
@@ -285,7 +285,7 @@
           },
           {
             "description": "[stowplan] Limit administration requests by source",
-            "expression": "http.host eq \"stowplan.jklein.dev\" and (http.request.uri.path eq \"/api/admin\" or starts_with(http.request.uri.path, \"/api/admin/\") or http.request.uri.path eq \"/api/workspaces\" or starts_with(http.request.uri.path, \"/api/workspaces/\"))",
+            "expression": "http.host eq \"stowplan.jklein.dev\" and (http.request.uri.path eq \"/api/account\" or starts_with(http.request.uri.path, \"/api/account/\") or http.request.uri.path eq \"/api/admin\" or starts_with(http.request.uri.path, \"/api/admin/\") or http.request.uri.path eq \"/api/workspaces\" or starts_with(http.request.uri.path, \"/api/workspaces/\"))",
             "action": "block",
             "action_parameters": {
               "response": {
@@ -329,7 +329,7 @@
           },
           {
             "description": "[stowplan] Limit authenticated API requests by session",
-            "expression": "http.host eq \"stowplan.jklein.dev\" and starts_with(http.request.uri.path, \"/api/\") and len(http.request.cookies[\"stowplan_session\"]) gt 0",
+            "expression": "http.host eq \"stowplan.jklein.dev\" and starts_with(http.request.uri.path, \"/api/\") and len(http.request.cookies[\"__Host-stowplan_session\"]) gt 0",
             "action": "block",
             "action_parameters": {
               "response": {
@@ -341,7 +341,7 @@
             "ratelimit": {
               "characteristics": [
                 "cf.colo.id",
-                "http.request.cookies[\"stowplan_session\"]"
+                "http.request.cookies[\"__Host-stowplan_session\"]"
               ],
               "period": 60,
               "requests_per_period": 300,

@@ -33,7 +33,7 @@ export default defineConfig({
       ]},
       { text: "Authentication", items: [
         { text: "Overview", link: "/auth/" }, { text: "Google OAuth", link: "/auth/google" },
-        { text: "GitHub OAuth", link: "/auth/github" }, { text: "Cloudflare Access", link: "/auth/cloudflare-access" },
+        { text: "Cloudflare Access", link: "/auth/cloudflare-access" },
       ]},
       { text: "Deploy", items: [
         { text: "Target matrix", link: "/deploy/" }, { text: "Cloudflare Workers + D1", link: "/deploy/cloudflare" },

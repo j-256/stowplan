@@ -25,7 +25,7 @@ import { GUEST_LINK_EXPIRY_HOURS } from "../../src/shared/api-quotas";
 
 const DATABASE_NAME = "stowplan-v1";
 const DATABASE_STORE = "records";
-const ORIGIN_FALLBACK = "http://127.0.0.1:3100";
+const ORIGIN_FALLBACK = "https://localhost:3100";
 const SYNTHETIC_TIMESTAMP = "2026-07-25T12:00:00.000Z";
 const WORKSPACE_KEY_PREFIX = "workspace:";
 
@@ -155,7 +155,7 @@ async function responseJson<T>(
   const text = await response.text();
   if (response.status() !== expectedStatus) {
     throw new Error(
-      `${response.url()} returned ${response.status()}: ${text.slice(0, 800)}`,
+      `API request returned HTTP ${response.status()}`,
     );
   }
   try {
@@ -197,17 +197,18 @@ async function installSessionCookie(
   response: APIResponse,
 ): Promise<void> {
   const setCookie = response.headers()["set-cookie"] ?? "";
-  const raw = /^stowplan_session=([^;]+)/u.exec(setCookie)?.[1];
+  const raw = /^__Host-stowplan_session=([^;]+)/u.exec(setCookie)?.[1];
   if (!raw) {
     throw new Error("The authentication response did not set a session");
   }
+  const cookieUrl = new URL(origin);
+  cookieUrl.protocol = "https:";
   await context.addCookies([{
-    domain: new URL(origin).hostname,
     httpOnly: true,
-    name: "stowplan_session",
-    path: "/",
+    name: "__Host-stowplan_session",
     sameSite: "Lax",
-    secure: false,
+    secure: true,
+    url: cookieUrl.toString(),
     value: raw,
   }]);
 }
@@ -488,7 +489,7 @@ export const test = base.extend<{ safeBeta: SafeBetaFixture }>({
       );
       if (response.status() !== 200) {
         throw new Error(
-          `Invite redemption returned ${response.status()}: ${(await response.text()).slice(0, 800)}`,
+          `Invite redemption returned HTTP ${response.status()}`,
         );
       }
       const me = await responseJson<{

@@ -10,6 +10,7 @@ import {
   claimWorkspace,
   createOrLinkUser,
 } from "../src/server/auth";
+import { TEST_AUTH_ENV } from "./helpers/auth";
 import { numberedMigrationDatabase } from "./helpers/sqlite-d1";
 
 function renamedState(
@@ -55,7 +56,7 @@ describe("authorization-aware D1 snapshot storage", () => {
     const store = new D1SnapshotStore(database);
     const initial = createEmptyState("Authorization CAS");
     expect(await store.initialize(initial)).toBe("created");
-    const owner = await createOrLinkUser(database, {}, {
+    const owner = await createOrLinkUser(database, TEST_AUTH_ENV, {
       displayName: "Owner",
       email: "authorization-owner@example.test",
       provider: "test",
@@ -73,7 +74,7 @@ describe("authorization-aware D1 snapshot storage", () => {
       role: "owner",
     });
 
-    const other = await createOrLinkUser(database, {}, {
+    const other = await createOrLinkUser(database, TEST_AUTH_ENV, {
       displayName: "Other member",
       email: "authorization-other@example.test",
       provider: "test",
@@ -176,7 +177,7 @@ describe("authorization-aware D1 snapshot storage", () => {
     const store = new D1SnapshotStore(database);
     const initial = createEmptyState("Authorization denial");
     expect(await store.initialize(initial)).toBe("created");
-    const member = await createOrLinkUser(database, {}, {
+    const member = await createOrLinkUser(database, TEST_AUTH_ENV, {
       displayName: "Member",
       email: "authorization-member@example.test",
       provider: "test",
@@ -202,7 +203,7 @@ describe("authorization-aware D1 snapshot storage", () => {
         },
       },
     });
-    const outsider = await createOrLinkUser(database, {}, {
+    const outsider = await createOrLinkUser(database, TEST_AUTH_ENV, {
       displayName: "Outsider",
       email: "authorization-outsider@example.test",
       provider: "test",

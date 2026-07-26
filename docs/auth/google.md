@@ -1,20 +1,22 @@
-# Google OAuth setup
+# Google sign-in and Turnstile setup
 
-Google's console is the authoritative setup surface; `gcloud` can create/select the project and enable APIs, but Google still requires browser work for OAuth branding, audience, and web-client redirect URIs.
+Google is the ordinary-account identity provider. Cloudflare Turnstile protects the same-origin request that starts Google OAuth, while Google remains the authority that authenticates the person.
 
 ## Values to decide first
 
 ```text
-Production origin: https://stowplan.example.com
-Production callback: https://stowplan.example.com/api/auth/google/callback
-Local callback: http://localhost:3000/api/auth/google/callback
+Production origin: https://stowplan.jklein.dev
+Production callback: https://stowplan.jklein.dev/api/auth/google/callback
+Node and OpenNext local callback: http://localhost:3000/api/auth/google/callback
+Sites/Vite local callback, when used: http://localhost:5173/api/auth/google/callback
 Scopes: openid email profile
 Client type: Web application
+Turnstile action: oauth_start
 ```
 
-The callback must match **exactly**: scheme, hostname, port, path, and trailing slash.
+Authorize the production and port `3000` callbacks. Add the port `5173` callback only when testing Google through the Sites/Vite development server. Each callback must match its request exactly by scheme, hostname, port, path, and absence of a trailing slash. This server-side authorization-code flow does not use an authorized JavaScript origin.
 
-## CLI-assisted project setup
+## Google project setup
 
 ```bash
 gcloud auth login
@@ -22,37 +24,54 @@ gcloud projects create YOUR_PROJECT_ID --name="Stowplan"
 gcloud config set project YOUR_PROJECT_ID
 ```
 
-No People API call is needed: Stowplan reads the signed OIDC ID token and requests only `openid email profile`.
+No People API call is needed because Stowplan reads the signed OIDC ID token and requests only `openid email profile`.
 
-Then open **Google Cloud Console → Google Auth Platform**:
+Open **Google Cloud Console > Google Auth Platform**:
 
-1. **Branding:** enter app name, support email, homepage, privacy policy, and authorized domain.
-2. **Audience:** choose Internal only for a suitable Workspace organization; otherwise External. While testing, add every test-user email explicitly.
+1. **Branding:** enter the app name, support email, homepage, privacy policy, and authorized domain.
+2. **Audience:** choose Internal only for a suitable Workspace organization; otherwise choose External.
 3. **Data Access:** request only `openid`, `email`, and `profile`.
-4. **Clients → Create client → Web application.** Add the exact local and production callback URIs above. JavaScript origins are not used by the server flow but may be entered for clarity.
+4. **Clients > Create client > Web application:** add the exact production and port `3000` callback URIs, plus the optional port `5173` callback when that preview needs real Google sign-in. Leave authorized JavaScript origins empty because the browser never receives or exchanges the OAuth client secret.
 
-Install Cloudflare secrets without putting them in a file:
+## Turnstile widget setup
+
+Create a Managed Turnstile widget in Cloudflare and restrict its hostname list to the exact production hostname. Do not add localhost to the production widget. Stowplan validates the Siteverify `hostname` against `AUTH_BASE_URL` and validates the action as `oauth_start`, so a token minted for another host or action is refused.
+
+The account page uses Turnstile's interaction-only appearance. The normal browser check stays out of view, while a visitor can complete an interactive check when Cloudflare requires one. The Content Security Policy admits only `https://challenges.cloudflare.com` for the Turnstile script and frame.
+
+Install the provider and Turnstile secrets without putting them in a file:
 
 ```bash
 npx wrangler secret put AUTH_GOOGLE_CLIENT_ID
 npx wrangler secret put AUTH_GOOGLE_CLIENT_SECRET
+npx wrangler secret put AUTH_TURNSTILE_SECRET_KEY
 ```
 
-For Node, set the same names in your process/service secret manager. Also set `AUTH_BASE_URL` to the public origin.
+Set the public Turnstile site key as `AUTH_TURNSTILE_SITE_KEY`. Set `AUTH_IDENTITY_DIGEST_KEY` to an independently generated secret of at least 32 bytes through the secret manager so banned provider identities can be recognized without retaining a raw provider subject after deletion. For Node, set the same names in the process or service secret manager. Set `AUTH_BASE_URL` to the exact public origin.
+
+## Security boundary
+
+The server accepts only a same-origin form POST to start OAuth. Every Google start, including ordinary sign-in, identity linking, and reauthentication, requires a fresh Turnstile result. The server validates that single-use result before allocating OAuth state, then creates a browser-bound, single-use transaction containing PKCE, an OIDC nonce, and the explicit intent. The transaction envelope is stored in the existing OAuth credential field and is not encrypted; it is cleared atomically when the callback claims the state.
+
+The callback validates Google's signature, issuer, audience, token time, nonce, stable subject, and verified-email claim. Google's `azp` authorized-presenter claim is optional for a single-audience web token: when present it must match the configured client, and a multi-audience token is accepted only with a matching `azp`. Email is display and contact data, not an account-linking key. A new provider subject creates an ordinary account only when its email is not already assigned to another Stowplan account. Linking an additional identity requires an explicit OAuth transaction bound to the active Stowplan user and session, recent authentication through an already-linked identity, and Google account selection. A newly issued app session counts as recent; otherwise the user must sign in again before linking. Reauthentication also requires explicit account selection and requires that the Google subject already belong to that exact user, then records a fresh proof timestamp on that exact active app session. It does not issue another session or consume the ordinary session-issuance budget. Google's documented web OIDC parameters do not provide a portable force-password prompt, so Stowplan does not claim that this flow proves a new password entry.
 
 ## Testing versus production
 
-An External app in testing mode accepts only listed test users and may impose shorter refresh behavior. Stowplan does not request offline access or store Google refresh tokens. Publish the app when ready; Google may request domain or branding verification even though the scopes are basic.
+Use Cloudflare's [documented Turnstile test credentials](https://developers.cloudflare.com/turnstile/troubleshooting/testing/) in local, CI, and isolated test deployments. The test pair works on reserved and loopback hosts without weakening the production widget. Stowplan refuses the official Turnstile test credentials on public hosts, including `stowplan.jklein.dev`. Stowplan's development provider accepts synthetic personas only on loopback, reserved `.test` hosts, or hosts explicitly named in `AUTH_DEV_ALLOWED_HOSTS`; it always refuses `stowplan.jklein.dev`.
+
+Stowplan does not request offline access or store Google access or refresh tokens after the callback, so it cannot revoke Google consent on the user's behalf during account deletion. A user who wants to remove that consent must also remove Stowplan from the connections page in their Google Account. Publish and verify the Google app according to the console's production requirements before launch.
 
 ## Troubleshooting
 
 | Symptom | Check |
 |---|---|
 | `redirect_uri_mismatch` | Compare the callback character-for-character and confirm the correct client ID is deployed. |
-| "Access blocked" or `access_denied` | Add the account as a test user; verify audience type; ensure the user did not deny consent. |
-| Unverified-app warning | Finish branding/domain verification and publish, or remain in a controlled test audience. |
-| Callback loops to the wrong host | Set `AUTH_BASE_URL`; check reverse-proxy forwarded host/proto settings. |
-| State invalid/expired | Retry from Stowplan; state lasts ten minutes and is single-use. Check clock skew. |
-| Works locally, not production | Confirm production secrets, callback, cookie HTTPS, and that two deployments are not using different databases. |
+| `access_denied` | Verify the audience type and confirm the user did not deny consent. |
+| Unverified-app warning | Finish branding and domain verification and publish the app. |
+| Callback loops to the wrong host | Set `AUTH_BASE_URL` and check reverse-proxy forwarded host and protocol settings. |
+| State invalid or expired | Retry from Stowplan; state lasts ten minutes and is single-use. Check clock skew and cookie handling. |
+| Browser verification unavailable | Confirm both Turnstile keys, the widget hostname, CSP delivery, and access to `challenges.cloudflare.com`. |
+| Browser verification refused after completion | Confirm the widget action is `oauth_start` and `AUTH_BASE_URL` has the exact public hostname. |
+| Works locally but not in production | Confirm production secrets, callback, cookie HTTPS, and that the deployments use the intended database. |
 
-Never copy a client secret into `wrangler.jsonc`, `.env.example`, documentation, screenshots, or issue reports.
+Never copy a Google client secret, Turnstile secret, OAuth transaction, authorization code, token, or assertion into `wrangler.jsonc`, `.env.example`, documentation, screenshots, logs, or issue reports.

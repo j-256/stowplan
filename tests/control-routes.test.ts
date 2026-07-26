@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CONTROL_REQUEST_MAX_BYTES } from "../src/server/request-body";
 import { ACCOUNT_CONTEXT_HEADER } from "../src/shared/account-context";
-import { GUEST_LINK_EXPIRY_HOURS } from "../src/shared/api-quotas";
 
 const OWNER_ACCOUNT_ID = "usr_owner";
 
@@ -13,12 +12,12 @@ const mocks = vi.hoisted(() => ({
   authorizeAdmin: vi.fn(),
   beginOAuth: vi.fn(),
   consumeGuestLink: vi.fn(),
-  createWorkspaceGuestLink: vi.fn(),
   createOrLinkUser: vi.fn(),
-  getWorkspaceAccess: vi.fn(),
   issueSession: vi.fn(),
   isTrustedMutation: vi.fn(() => true),
   provider: vi.fn(),
+  requireRecentIdentityLinkAuthentication: vi.fn(),
+  verifyTurnstile: vi.fn(),
 }));
 
 vi.mock("../src/server/admin", () => ({
@@ -38,30 +37,29 @@ vi.mock("../src/server/auth", async (importOriginal) => ({
   isTrustedMutation: mocks.isTrustedMutation,
   issueSession: mocks.issueSession,
   provider: mocks.provider,
+  requireRecentIdentityLinkAuthentication:
+    mocks.requireRecentIdentityLinkAuthentication,
   sessionCookie: vi.fn(() => "session=test"),
-}));
-
-vi.mock("../src/server/workspace-access", async (importOriginal) => ({
-  ...await importOriginal<typeof import("../src/server/workspace-access")>(),
-  createWorkspaceGuestLink: mocks.createWorkspaceGuestLink,
-  getWorkspaceAccess: mocks.getWorkspaceAccess,
+  verifyTurnstile: mocks.verifyTurnstile,
 }));
 
 vi.mock("../src/server/runtime", () => ({
   runtimeEnv: vi.fn(async () => ({
     AUTH_DEV_ENABLED: "true",
+    AUTH_IDENTITY_DIGEST_KEY:
+      "test-identity-digest-key-at-least-32-bytes",
     DB: {},
   })),
 }));
 
-import { POST as postGuestLink } from "../app/api/admin/guest-links/route";
 import { POST as postAdminMutation } from "../app/api/admin/mutate/route";
 import { GET as getAdminOverview } from "../app/api/admin/overview/route";
 import { POST as postDevelopmentSignIn } from "../app/api/auth/dev/route";
 import { POST as postGuestConfirmation } from "../app/api/auth/guest/route";
 import { POST as postGuestInvitation } from "../app/api/auth/guest/[token]/route";
-import { GET as getOAuthStart } from "../app/api/auth/[provider]/start/route";
+import { POST as postOAuthStart } from "../app/api/auth/[provider]/start/route";
 import { ApiProblem } from "../src/server/api-problem";
+import { TurnstileVerificationError } from "../src/server/auth";
 
 function oversizedRequest(path: string): Request {
   return new Request(`https://stowplan.test${path}`, {
@@ -88,9 +86,11 @@ describe("control route request limits", () => {
       sessionId: "ses_current_admin",
       userId: "usr_admin",
     });
-    mocks.beginOAuth.mockResolvedValue(
-      "https://identity.example.test/authorize?state=opaque",
-    );
+    mocks.beginOAuth.mockResolvedValue({
+      authorizationUrl:
+        "https://identity.example.test/authorize?state=opaque",
+      bindingCookie: "oauth-binding=test",
+    });
     mocks.provider.mockReturnValue({ id: "google" });
     mocks.adminOverviewPage.mockReturnValue(undefined);
     mocks.adminOverview.mockResolvedValue({
@@ -112,23 +112,12 @@ describe("control route request limits", () => {
       users: [],
       workspaces: [],
     });
-    mocks.getWorkspaceAccess.mockResolvedValue({
-      access: { accessRevision: 4, role: "owner" },
-    });
-    mocks.createWorkspaceGuestLink.mockResolvedValue({
-      guestLink: {
-        expiresAt: "2030-01-01T00:00:00.000Z",
-      },
-      raw: "guest_token",
-      returnTo: "/workspace/ws_owned",
-    });
     mocks.consumeGuestLink.mockResolvedValue({
       workspaceId: "ws_invited",
     });
   });
 
   it.each([
-    ["/api/admin/guest-links", postGuestLink],
     ["/api/admin/mutate", postAdminMutation],
     ["/api/auth/guest", postGuestConfirmation],
     ["/api/auth/dev", postDevelopmentSignIn],
@@ -139,11 +128,7 @@ describe("control route request limits", () => {
     await expect(response.json()).resolves.toMatchObject({
       error: expect.stringContaining("byte limit"),
     });
-    if (path === "/api/admin/guest-links") {
-      expect(response.headers.get("cache-control")).toBe("no-store");
-    }
     expect(mocks.adminMutation).not.toHaveBeenCalled();
-    expect(mocks.createWorkspaceGuestLink).not.toHaveBeenCalled();
     expect(mocks.createOrLinkUser).not.toHaveBeenCalled();
     expect(mocks.consumeGuestLink).not.toHaveBeenCalled();
     expect(mocks.issueSession).not.toHaveBeenCalled();
@@ -180,24 +165,197 @@ describe("control route request limits", () => {
   });
 
   it("keeps OAuth start redirects with one-time state uncached", async () => {
-    const response = await getOAuthStart(
+    const response = await postOAuthStart(
       new Request(
         "https://stowplan.test/api/auth/google/start?returnTo=%2Faccount",
+        {
+          body: new URLSearchParams({
+            "cf-turnstile-response": "turnstile-token",
+            intent: "sign-in",
+          }),
+          headers: {
+            "content-type":
+              "application/x-www-form-urlencoded",
+          },
+          method: "POST",
+        },
       ),
       { params: Promise.resolve({ provider: "google" }) },
     );
 
-    expect(response.status).toBe(302);
+    expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
-    expect(response.headers.get("location")).toBe(
-      "https://identity.example.test/authorize?state=opaque",
+    expect(response.headers.get("set-cookie")).toBe(
+      "oauth-binding=test",
+    );
+    await expect(response.json()).resolves.toEqual({
+      authorizationUrl:
+        "https://identity.example.test/authorize?state=opaque",
+    });
+    expect(mocks.verifyTurnstile).toHaveBeenCalledWith(
+      expect.anything(),
+      "turnstile-token",
+      "https://stowplan.test/api/auth/google/start?returnTo=%2Faccount",
+      null,
     );
     expect(mocks.beginOAuth).toHaveBeenCalledWith(
       expect.anything(),
       { id: "google" },
       "https://stowplan.test",
       "/account",
+      {
+        intent: "sign-in",
+        linkIntent: undefined,
+      },
     );
+  });
+
+  it("does not allocate OAuth state after a failed browser check", async () => {
+    mocks.verifyTurnstile.mockRejectedValueOnce(
+      new TurnstileVerificationError(
+        "Browser verification was not accepted; try again",
+        400,
+      ),
+    );
+    const response = await postOAuthStart(
+      new Request(
+        "https://stowplan.test/api/auth/google/start",
+        {
+          body: new URLSearchParams({
+            "cf-turnstile-response": "invalid-token",
+            intent: "sign-in",
+          }),
+          headers: {
+            "content-type":
+              "application/x-www-form-urlencoded",
+          },
+          method: "POST",
+        },
+      ),
+      { params: Promise.resolve({ provider: "google" }) },
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "BROWSER_VERIFICATION_FAILED",
+    });
+    expect(mocks.beginOAuth).not.toHaveBeenCalled();
+  });
+
+  it("binds explicit identity linking to the current app session", async () => {
+    mocks.authenticate.mockResolvedValueOnce({
+      sessionId: "ses_linking",
+      userId: OWNER_ACCOUNT_ID,
+    });
+    const response = await postOAuthStart(
+      new Request(
+        "https://stowplan.test/api/auth/google/start",
+        {
+          body: new URLSearchParams({
+            "cf-turnstile-response": "turnstile-token",
+            intent: "link",
+          }),
+          headers: {
+            "content-type":
+              "application/x-www-form-urlencoded",
+          },
+          method: "POST",
+        },
+      ),
+      { params: Promise.resolve({ provider: "google" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(
+      mocks.requireRecentIdentityLinkAuthentication,
+    ).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        sessionId: "ses_linking",
+        userId: OWNER_ACCOUNT_ID,
+      },
+    );
+    expect(mocks.beginOAuth).toHaveBeenCalledWith(
+      expect.anything(),
+      { id: "google" },
+      "https://stowplan.test",
+      "/",
+      {
+        intent: "link",
+        linkIntent: {
+          sessionId: "ses_linking",
+          userId: OWNER_ACCOUNT_ID,
+        },
+      },
+    );
+  });
+
+  it("requires recent authentication before allocating link state", async () => {
+    mocks.authenticate.mockResolvedValueOnce({
+      sessionId: "ses_stale",
+      userId: OWNER_ACCOUNT_ID,
+    });
+    mocks.requireRecentIdentityLinkAuthentication.mockRejectedValueOnce(
+      new ApiProblem(
+        "REAUTHENTICATION_REQUIRED",
+        "private stale-session detail",
+        401,
+      ),
+    );
+    const response = await postOAuthStart(
+      new Request(
+        "https://stowplan.test/api/auth/google/start",
+        {
+          body: new URLSearchParams({
+            "cf-turnstile-response": "turnstile-token",
+            intent: "link",
+          }),
+          headers: {
+            "content-type":
+              "application/x-www-form-urlencoded",
+          },
+          method: "POST",
+        },
+      ),
+      { params: Promise.resolve({ provider: "google" }) },
+    );
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({
+      code: "REAUTHENTICATION_REQUIRED",
+      error:
+        "Sign in again with an existing Google identity before linking another",
+    });
+    expect(mocks.beginOAuth).not.toHaveBeenCalled();
+  });
+
+  it("does not use a non-Google provider for reauthentication", async () => {
+    mocks.provider.mockReturnValueOnce({ id: "github" });
+    const response = await postOAuthStart(
+      new Request(
+        "https://stowplan.test/api/auth/github/start",
+        {
+          body: new URLSearchParams({
+            "cf-turnstile-response": "turnstile-token",
+            intent: "reauthenticate",
+          }),
+          headers: {
+            "content-type":
+              "application/x-www-form-urlencoded",
+          },
+          method: "POST",
+        },
+      ),
+      { params: Promise.resolve({ provider: "github" }) },
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      code: "INVALID_REQUEST",
+      error: "Google is required for reauthentication",
+    });
+    expect(mocks.verifyTurnstile).not.toHaveBeenCalled();
+    expect(mocks.beginOAuth).not.toHaveBeenCalled();
   });
 
   it("clears the cookie after an administrator revokes the current session", async () => {
@@ -442,6 +600,98 @@ describe("control route request limits", () => {
     );
   });
 
+  it.each([
+    {
+      code: "QUOTA_EXCEEDED" as const,
+      detail: {
+        actual: 11,
+        limit: 10,
+        quota: "guestLinksCreatedPerAccountDay",
+      },
+      message: "This account has reached a durable usage limit",
+      status: 429,
+    },
+    {
+      code: "QUOTA_EXCEEDED" as const,
+      detail: {
+        actual: 26,
+        limit: 25,
+        quota: "membershipsPerAccount",
+      },
+      message: "This account has reached a durable usage limit",
+      status: 409,
+    },
+    {
+      code: "CIRCUIT_PAUSED" as const,
+      detail: {},
+      message: "Guest link redemption is temporarily paused",
+      status: 503,
+    },
+  ])(
+    "preserves the $status guest admission refusal",
+    async ({ code, detail, message, status }) => {
+      mocks.consumeGuestLink.mockRejectedValueOnce(
+        new ApiProblem(code, message, status, detail),
+      );
+      const response = await postGuestConfirmation(new Request(
+        "https://stowplan.test/api/auth/guest",
+        {
+          body: JSON.stringify({
+            expectedAccountId: OWNER_ACCOUNT_ID,
+            token: "raw_token",
+          }),
+          headers: {
+            "content-type": "application/json",
+            origin: "https://stowplan.test",
+            [ACCOUNT_CONTEXT_HEADER]: OWNER_ACCOUNT_ID,
+          },
+          method: "POST",
+        },
+      ));
+
+      expect(response.status).toBe(status);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      await expect(response.json()).resolves.toEqual({
+        code,
+        error: message,
+        ...detail,
+      });
+    },
+  );
+
+  it("preserves a coded refusal on the legacy invitation route", async () => {
+    mocks.consumeGuestLink.mockRejectedValueOnce(
+      new ApiProblem(
+        "CIRCUIT_PAUSED",
+        "Guest link redemption is temporarily paused",
+        503,
+      ),
+    );
+    const response = await postGuestInvitation(
+      new Request(
+        "https://stowplan.test/api/auth/guest/raw_token",
+        {
+          body: new URLSearchParams({
+            expectedAccountId: OWNER_ACCOUNT_ID,
+          }),
+          headers: {
+            "content-type":
+              "application/x-www-form-urlencoded",
+            origin: "https://stowplan.test",
+          },
+          method: "POST",
+        },
+      ),
+      { params: Promise.resolve({ token: "raw_token" }) },
+    );
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({
+      code: "CIRCUIT_PAUSED",
+      error: "Guest link redemption is temporarily paused",
+    });
+  });
+
   it("keeps database failures and private responses uncached and non-secret", async () => {
     mocks.adminOverview.mockRejectedValue(
       new Error("SQLITE_ERROR token_hash=private_hash"),
@@ -563,142 +813,13 @@ describe("control route request limits", () => {
         targetId: "ws_target::usr_target",
         value: "editor",
       },
-    );
-  });
-
-  it("does not treat a global admin as a workspace member", async () => {
-    mocks.getWorkspaceAccess.mockRejectedValue(
-      new ApiProblem(
-        "NOT_FOUND_OR_INACCESSIBLE",
-        "The workspace was not found or is not accessible",
-        404,
-      ),
-    );
-
-    const response = await postGuestLink(new Request(
-      "https://stowplan.test/api/admin/guest-links",
       {
-        body: JSON.stringify({ workspaceId: "ws_remote" }),
-        headers: {
-          "content-type": "application/json",
-          [ACCOUNT_CONTEXT_HEADER]: OWNER_ACCOUNT_ID,
-        },
-        method: "POST",
-      },
-    ));
-
-    expect(response.status).toBe(404);
-    expect(response.headers.get("cache-control")).toBe("no-store");
-    await expect(response.json()).resolves.toMatchObject({
-      code: "NOT_FOUND_OR_INACCESSIBLE",
-    });
-    expect(mocks.authorizeAdmin).not.toHaveBeenCalled();
-    expect(mocks.createWorkspaceGuestLink).not.toHaveBeenCalled();
-  });
-
-  it.each(["editor", "viewer"] as const)(
-    "does not let a workspace %s use the legacy invitation route",
-    async (role) => {
-      mocks.getWorkspaceAccess.mockResolvedValue({
-        access: { accessRevision: 4, role },
-      });
-      mocks.createWorkspaceGuestLink.mockRejectedValue(
-        new ApiProblem(
-          "OWNER_REQUIRED",
-          "Workspace owner access is required",
-          403,
-        ),
-      );
-
-      const response = await postGuestLink(new Request(
-        "https://stowplan.test/api/admin/guest-links",
-        {
-          body: JSON.stringify({ workspaceId: "ws_shared" }),
-          headers: {
-            "content-type": "application/json",
-            [ACCOUNT_CONTEXT_HEADER]: OWNER_ACCOUNT_ID,
-          },
-          method: "POST",
-        },
-      ));
-
-      expect(response.status).toBe(403);
-      expect(response.headers.get("cache-control")).toBe("no-store");
-      await expect(response.json()).resolves.toMatchObject({
-        code: "OWNER_REQUIRED",
-      });
-      expect(mocks.authorizeAdmin).not.toHaveBeenCalled();
-    },
-  );
-
-  it.each([
-    GUEST_LINK_EXPIRY_HOURS.minimum - 1,
-    GUEST_LINK_EXPIRY_HOURS.maximum + 1,
-    GUEST_LINK_EXPIRY_HOURS.minimum + 0.5,
-  ])(
-    "strictly refuses the invalid legacy expiry %s",
-    async (hours) => {
-      const response = await postGuestLink(new Request(
-        "https://stowplan.test/api/admin/guest-links",
-        {
-          body: JSON.stringify({ hours, workspaceId: "ws_owned" }),
-          headers: {
-            "content-type": "application/json",
-            [ACCOUNT_CONTEXT_HEADER]: OWNER_ACCOUNT_ID,
-          },
-          method: "POST",
-        },
-      ));
-
-      expect(response.status).toBe(400);
-      expect(response.headers.get("cache-control")).toBe("no-store");
-      await expect(response.json()).resolves.toMatchObject({
-        code: "INVALID_REQUEST",
-        error: expect.stringContaining(
-          `integer from ${GUEST_LINK_EXPIRY_HOURS.minimum} through ${GUEST_LINK_EXPIRY_HOURS.maximum}`,
-        ),
-      });
-      expect(mocks.getWorkspaceAccess).not.toHaveBeenCalled();
-      expect(mocks.createWorkspaceGuestLink).not.toHaveBeenCalled();
-    },
-  );
-
-  it("lets a workspace owner create a strictly bounded guest link", async () => {
-    const response = await postGuestLink(new Request(
-      "https://stowplan.test/api/admin/guest-links",
-      {
-        body: JSON.stringify({
-          hours: 48,
-          role: "viewer",
-          workspaceId: "ws_owned",
-        }),
-        headers: {
-          "content-type": "application/json",
-          [ACCOUNT_CONTEXT_HEADER]: OWNER_ACCOUNT_ID,
-        },
-        method: "POST",
-      },
-    ));
-
-    expect(response.status).toBe(201);
-    expect(response.headers.get("cache-control")).toBe("no-store");
-    const body = await response.json() as { url: string };
-    const invitation = new URL(body.url);
-    expect(invitation.pathname).toBe("/guest");
-    expect(invitation.search).toBe("");
-    expect(new URLSearchParams(invitation.hash.slice(1)).get("token"))
-      .toBe("guest_token");
-    expect(mocks.authorizeAdmin).not.toHaveBeenCalled();
-    expect(mocks.createWorkspaceGuestLink).toHaveBeenCalledWith(
-      {},
-      "ws_owned",
-      "usr_owner",
-      {
-        expectedAccessRevision: 4,
-        expiresInHours: 48,
-        returnTo: undefined,
-        role: "viewer",
+        actorSessionId: "ses_current_admin",
+        identityDigestKey:
+          "test-identity-digest-key-at-least-32-bytes",
+        signInProviderIds: ["google", "development"],
       },
     );
   });
+
 });

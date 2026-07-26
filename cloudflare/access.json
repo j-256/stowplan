@@ -1,42 +1,158 @@
 {
-  "application": {
-    "name": "Stowplan account identity",
-    "type": "self_hosted",
-    "domain": "stowplan.jklein.dev/account*",
-    "destinations": [
-      {
-        "type": "public",
-        "uri": "stowplan.jklein.dev/account*"
+  "schema_version": 2,
+  "organization_guard": {
+    "mfa_required_for_all_apps": true,
+    "mfa_session_duration": "24h",
+    "required_mfa_authenticators": [
+      "biometrics",
+      "totp"
+    ]
+  },
+  "identity_providers": [
+    {
+      "key": "admin-cloudflare",
+      "name": "Stowplan administrators",
+      "type": "cloudflare",
+      "config": {
+        "restrict_to_account_members": true
       },
-      {
-        "type": "public",
-        "uri": "stowplan.jklein.dev/api/auth/access*"
-      },
-      {
-        "type": "public",
-        "uri": "stowplan.jklein.dev/admin*"
-      },
-      {
-        "type": "public",
-        "uri": "stowplan.jklein.dev/api/admin/*"
+      "adopt": {
+        "aliases": [
+          "Cloudflare"
+        ],
+        "fingerprints": [
+          {
+            "type": "cloudflare",
+            "config": {
+              "restrict_to_account_members": true
+            }
+          }
+        ]
       }
-    ],
-    "session_duration": "24h",
-    "app_launcher_visible": false,
-    "auto_redirect_to_identity": true,
-    "allow_authenticate_via_warp": false,
-    "http_only_cookie_attribute": true,
-    "options_preflight_bypass": false
-  },
-  "identity_provider": {
-    "name": "One-time PIN",
-    "type": "onetimepin"
-  },
-  "policy": {
-    "name": "Allow configured Stowplan identities",
-    "decision": "allow",
-    "precedence": 1,
-    "session_duration": "24h",
-    "allowed_emails": []
-  }
+    }
+  ],
+  "groups": [],
+  "reusable_policies": [
+    {
+      "key": "admin-account-members",
+      "name": "Stowplan administrator account members",
+      "decision": "allow",
+      "include": [
+        {
+          "cloudflare_account_member": {}
+        }
+      ],
+      "exclude": [],
+      "require": [],
+      "session_duration": "2h",
+      "mfa_config": {
+        "mfa_disabled": false,
+        "allowed_authenticators": [
+          "biometrics"
+        ]
+      },
+      "adopt": {
+        "aliases": [],
+        "fingerprints": [
+          {
+            "decision": "allow",
+            "include": [
+              {
+                "cloudflare_account_member": {}
+              }
+            ],
+            "exclude": [],
+            "require": [],
+            "session_duration": "2h",
+            "mfa_config": {
+              "mfa_disabled": false,
+              "allowed_authenticators": [
+                "biometrics"
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "applications": [
+    {
+      "key": "admin",
+      "name": "Stowplan",
+      "type": "self_hosted",
+      "domain": "stowplan.jklein.dev/admin",
+      "destinations": [
+        {
+          "type": "public",
+          "uri": "stowplan.jklein.dev/admin"
+        },
+        {
+          "type": "public",
+          "uri": "stowplan.jklein.dev/admin/*"
+        },
+        {
+          "type": "public",
+          "uri": "stowplan.jklein.dev/api/admin"
+        },
+        {
+          "type": "public",
+          "uri": "stowplan.jklein.dev/api/admin/*"
+        }
+      ],
+      "session_duration": "2h",
+      "app_launcher_visible": false,
+      "auto_redirect_to_identity": true,
+      "allow_authenticate_via_warp": false,
+      "http_only_cookie_attribute": true,
+      "options_preflight_bypass": false,
+      "identity_providers": [
+        "admin-cloudflare"
+      ],
+      "policy_attachments": [
+        {
+          "policy": "admin-account-members",
+          "precedence": 1
+        }
+      ],
+      "adopt": {
+        "aliases": [
+          "Stowplan account identity"
+        ],
+        "fingerprints": [
+          {
+            "type": "self_hosted",
+            "destinations": [
+              {
+                "type": "public",
+                "uri": "stowplan.jklein.dev/admin"
+              },
+              {
+                "type": "public",
+                "uri": "stowplan.jklein.dev/admin/*"
+              },
+              {
+                "type": "public",
+                "uri": "stowplan.jklein.dev/api/admin"
+              },
+              {
+                "type": "public",
+                "uri": "stowplan.jklein.dev/api/admin/*"
+              }
+            ]
+          }
+        ],
+        "detachable_policy_fingerprints": [
+          {
+            "reusable": true,
+            "decision": "allow",
+            "include_selector_types": [
+              "email"
+            ],
+            "exclude": [],
+            "require": []
+          }
+        ]
+      }
+    }
+  ]
 }

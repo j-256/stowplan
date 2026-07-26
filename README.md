@@ -19,7 +19,8 @@ A mobile-first, local-first organizer for rooms, cabinets, drawers, boxes, bins,
 - Plans account for warmth, humidity, food safety, dimensions, grouping, access, distance, and whole-container moves.
 - Field-level history supports selected undo/reapply ("plucking") and batch undo/redo without overwriting newer same-field edits.
 - Blocked offline work remains inspectable and exportable; an explicit recovery flow can rebase unresolved commands or reset to an authorized server copy.
-- Google, GitHub, Cloudflare Access, short one-time guest URLs, opaque revocable sessions, workspace roles, and an audited admin panel are built in.
+- Public Google sign-in is protected by Managed Turnstile; Cloudflare Access remains an independent admin-only perimeter around database-authorized administration.
+- Short one-time guest URLs, opaque revocable sessions, bounded public resource allocation, workspace roles, and an audited admin panel are built in.
 - Production runs on Sites with a Sites-managed D1 binding. Direct Cloudflare Workers + D1, Node 24 + SQLite, and containers remain reproducible alternative composition roots.
 
 ## Quick start
@@ -34,7 +35,10 @@ Open the local URL and choose **Explore the kitchen demo**. Local organizing req
 
 ```bash
 npm run build:next
-AUTH_BASE_URL=http://localhost:3000 AUTH_DEV_ENABLED=true npm run start:node
+AUTH_BASE_URL=http://localhost:3000 \
+AUTH_DEV_ENABLED=true \
+AUTH_IDENTITY_DIGEST_KEY=stowplan-local-identity-digest-key-not-for-production \
+npm run start:node
 ```
 
 See the [getting-started guide](https://j-256.github.io/stowplan/guide/getting-started) and [deployment matrix](https://j-256.github.io/stowplan/deploy/).

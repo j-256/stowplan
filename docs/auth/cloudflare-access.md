@@ -1,58 +1,63 @@
-# Cloudflare Access
+# Cloudflare Access administrator perimeter
 
-Cloudflare Access can be an identity provider and a second gate for `/admin`.
+Cloudflare Access is an independent administrator perimeter. It is not an ordinary Stowplan identity provider, signup admission list, global-role source, or workspace-role source. Public users sign in directly with Google, and Stowplan assigns a new account the database `user` role with no workspace membership.
 
-## Repository automation
+The production Access application protects exactly these roots and descendants:
 
-The checked-in configuration protects only the account identity exchange and administration surfaces. The rest of Stowplan remains public and local-first:
+```text
+/admin
+/admin/*
+/api/admin
+/api/admin/*
+```
 
-- `/account*`
-- `/api/auth/access*`
-- `/admin*`
-- `/api/admin/*`
+Account, Google OAuth, guest enrollment, sync, and snapshot paths remain outside Access. Exact roots and wildcard descendants are both present because a wildcard path does not protect its parent. Stowplan verifies the Access assertion again at the origin. A normal administrative request requires a valid app session, an active database global admin, the configured Access audience and issuer, and a normalized Access email matching one of the account's linked verified Google identities whenever any are linked. Only a legacy account with no linked Google identity may fall back to its canonical email. A linked Cloudflare Access identity never satisfies the direct sign-in or email-match safeguards.
 
-Validate locally, preview the remote diff, then apply it with an explicit email allowlist:
+Passing Access never creates an account, promotes a user, grants workspace membership, or bypasses workspace-scoped server authorization. The database `users.global_role` value is the only ongoing source of global-admin authority.
+
+## Desired state
+
+`cloudflare/access.json` converts the existing `Stowplan` self-hosted application in place. It selects the Cloudflare identity provider restricted to account members and attaches a Stowplan-owned reusable Allow policy using the Cloudflare Account Member selector. The application and policy sessions last two hours. The policy requires platform-biometric WebAuthn, while the read-only organization guard requires organization-wide MFA, a twenty-four-hour MFA session, and both biometrics and TOTP to remain enabled.
+
+There is no Access email allowlist, Access group, ordinary-account rule, One-time PIN dependency, Bypass policy, or Service Auth policy in the managed design.
+
+## Read-only checks
+
+Validate the checked-in model without credentials, then inspect a sanitized remote plan:
 
 ```bash
 bash scripts/cloudflare-access.sh check
-STOWPLAN_ACCESS_EMAILS=owner@example.com bash scripts/cloudflare-access.sh plan
-STOWPLAN_ACCESS_EMAILS=owner@example.com bash scripts/cloudflare-access.sh apply
+bash scripts/cloudflare-access.sh plan
 ```
 
-`check` needs no credentials, `plan` performs read-only API calls, and `apply` creates or updates the self-hosted application and its single Allow policy. The script discovers the account, One-time PIN identity provider, application ID, policy ID, audience, and team domain instead of committing opaque remote identifiers. You can also copy `cloudflare/access.json` to a private path, populate `policy.allowed_emails`, and pass it with `--config`.
+`plan` reads every paginated identity-provider, reusable-policy, and application result, then reads each application detail before calculating a safe full PUT payload. It validates pagination continuity and totals, one-to-one adoption, the organization MFA guard, reusable-resource ownership, explicit identity-provider selection, legacy `self_hosted_domains`, and overlap with every unmanaged public Access application. A new identity provider is refused when it would silently become available to an unmanaged application that uses Cloudflare's default-all provider behavior.
 
-The apply command prints shell exports for `AUTH_CLOUDFLARE_ACCESS_AUD` and `AUTH_CLOUDFLARE_ACCESS_TEAM_DOMAIN`. Add those names and values to the Sites runtime environment, set `AUTH_ADMIN_REQUIRE_ACCESS=true`, save a Sites version, and deploy that saved version. The values identify the Access application and organization; the email allowlist stays in Cloudflare and must not be added to the checked-in template.
+The plan prints logical resource keys and action names only. It does not print remote IDs, audiences, policy members, identity inventory, assertions, or credentials.
 
-The API token needs `Access: Apps and Policies Write` plus `Access: Organizations, Identity Providers, and Groups Read`. `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` are read from the environment. Re-running apply is idempotent. The script refuses to reconcile an application containing unexpected policies so it cannot silently preserve a broader access path.
+## Approved cutover and rollback
 
-## Dashboard path
-
-If automation is unavailable:
-
-1. Open Zero Trust, then Access, Applications, and Add application.
-2. Create one self-hosted application with all four paths above.
-3. Select One-time PIN and enable automatic identity-provider redirect.
-4. Create one Allow policy for the intended email identities.
-5. Copy the application audience (`AUD`) and note the team domain, such as `team-name.cloudflareaccess.com`.
-
-## CLI/API-assisted path
-
-For a direct Wrangler deployment, store Stowplan's verification values interactively:
+Apply requires an explicit cutover flag and a new private snapshot path outside the repository:
 
 ```bash
-npx wrangler secret put AUTH_CLOUDFLARE_ACCESS_AUD
-npx wrangler secret put AUTH_CLOUDFLARE_ACCESS_TEAM_DOMAIN
+bash scripts/cloudflare-access.sh apply \
+  --rollback-out /secure/stowplan-access-rollback.json \
+  --confirm-admin-cutover
 ```
 
-To make the application itself require the Access assertion for every admin API request, rather than relying only on the edge path policy, set:
+Before each remote write, the reconciler persists that resource as `pending`. A verified write becomes `applied`; an untouched resource remains `not_started`. If a write response is lost, rollback refuses the uncertain snapshot instead of guessing whether Cloudflare changed. The private mode-`0600` snapshot stores managed before-payloads and only IDs plus SHA-256 digests for linked legacy providers and policies. It never stores legacy policy contents or identity values.
+
+Rollback uses the unchanged desired-state file and the private snapshot:
 
 ```bash
-npx wrangler secret put AUTH_ADMIN_REQUIRE_ACCESS
-# enter: true
+bash scripts/cloudflare-access.sh rollback \
+  --snapshot /secure/stowplan-access-rollback.json \
+  --confirm-rollback
 ```
 
-When enabled, Stowplan requires all three conditions: an active app session, app-level `admin` scope, and a valid Access assertion whose email matches the app session. Leave it `false` when running outside Cloudflare or when the reverse proxy does not supply Access assertions.
+Rollback verifies every applied resource, rechecks the redacted legacy dependency digests, and repeats unmanaged public-path overlap checks before restoring an application. Each completed resource becomes `rolled_back`, so a later invocation can resume after a definite partial rollback. A `pending` apply mutation, changed dependency, new overlap, shared created resource, or other post-apply drift requires operator investigation.
 
-The repository automation uses the Cloudflare API and resolves installation-specific IDs at runtime. Terraform remains a compatible alternative for operators who already manage their Cloudflare account that way.
+See the [Cloudflare deployment runbook](/deploy/cloudflare#_5-admin-only-cloudflare-access) for the full migration order, origin environment values, token revocation, verification, and lockout-recovery procedure.
 
-Stowplan reads `Cf-Access-Jwt-Assertion`, fetches the team JWKS, and verifies signature, issuer, and audience. When an unauthenticated person opens Account behind Access, Stowplan exchanges the verified assertion for its own application session automatically. A valid Access assertion never bypasses Stowplan's own user status, app session, workspace role, or global admin role.
+## Temporary legacy exchange
+
+`POST /api/auth/access` is disabled unless `AUTH_ACCESS_MIGRATION_ENABLED=true`. During the bounded pre-cutover migration window, it may recover a two-hour session only for an already linked Cloudflare Access subject. It cannot create an account or link by email. Every such session records `cloudflare-access` provenance. Connect and verify Google for each required account, disable the exchange, use **Revoke pre-Google sessions** to revoke both marked Access migration sessions and legacy active sessions without provenance, and verify the admin inventory's `active pre-Google` count is zero before narrowing the Access application to the admin paths.

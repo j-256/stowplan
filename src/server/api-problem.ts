@@ -1,11 +1,14 @@
 export type ApiProblemCode =
+  | "ACCOUNT_BANNED"
   | "ACCOUNT_CONTEXT_CHANGED"
+  | "ACCOUNT_DELETION_BLOCKED"
   | "ACCESS_STALE"
   | "ADMIN_REQUIRED"
   | "AUTHENTICATION_REQUIRED"
   | "BODY_TOO_LARGE"
   | "CONFIRMATION_REQUIRED"
   | "CROSS_ORIGIN_DENIED"
+  | "CIRCUIT_PAUSED"
   | "FINAL_OWNER_REQUIRED"
   | "INTERNAL_ERROR"
   | "INVALID_REQUEST"
@@ -13,6 +16,7 @@ export type ApiProblemCode =
   | "NOT_FOUND_OR_INACCESSIBLE"
   | "OWNER_REQUIRED"
   | "QUOTA_EXCEEDED"
+  | "REAUTHENTICATION_REQUIRED"
   | "ROLE_UNCHANGED"
   | "STORAGE_UNAVAILABLE"
   | "WORKSPACE_BUSY"
@@ -61,6 +65,20 @@ export function apiProblemResponse(error: ApiProblem): Response {
       ...error.detail,
     } satisfies ApiProblemBody,
     { status: error.status },
+  );
+}
+
+export function apiProblemRetryAfter(
+  error: ApiProblem,
+  fallbackSeconds = 3_600,
+): string {
+  const value = error.detail.retryAfterSeconds;
+  return String(
+    typeof value === "number"
+      && Number.isSafeInteger(value)
+      && value > 0
+      ? value
+      : fallbackSeconds,
   );
 }
 

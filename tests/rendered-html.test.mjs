@@ -251,7 +251,9 @@ test("initializes OpenNext bindings for next dev and awaits runtime context fail
     );
   }
   const config = readFileSync(new URL("../next.config.ts", import.meta.url), "utf8");
-  assert.match(config, /initOpenNextCloudflareForDev\(\)/);
+  assert.match(config, /initOpenNextCloudflareForDev\(/);
+  assert.match(config, /STOWPLAN_WRANGLER_PERSIST_PATH/);
+  assert.match(config, /persist: \{ path: localPersistencePath \}/);
   const runtime = readFileSync(new URL("../src/server/runtime.ts", import.meta.url), "utf8");
   assert.match(runtime, /await getCloudflareContext\(\{ async: true \}\)/);
 });

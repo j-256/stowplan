@@ -20,6 +20,16 @@ import {
   accountContextHeaders,
   responseMatchesAccount,
 } from "../../src/shared/account-context";
+import {
+  SESSION_REVOCATION_SCOPE,
+} from "../../src/shared/authentication";
+import {
+  CIRCUIT_BREAKER_PAUSE_KIND,
+  CIRCUIT_BREAKER_STATE,
+  MAXIMUM_GOVERNANCE_LIMIT,
+  type CircuitBreaker,
+  type GovernanceLimit,
+} from "../../src/shared/governance-policy";
 
 type Row = Record<string, unknown>;
 
@@ -45,18 +55,26 @@ interface InventoryEntry {
 }
 
 interface AdminMutationPreconditions {
+  expectedAccountRevision?: number;
   expectedAccessRevision?: number;
   expectedMembershipRevision?: number;
 }
 
+interface AdminMutationFields {
+  pauseKind?: string;
+  reason?: string;
+}
+
 interface Overview {
   audit: Row[];
+  circuitBreakers?: CircuitBreaker[];
   databaseInventory?: {
     entries: InventoryEntry[];
     generatedAt: string;
   };
   deletions?: Row[];
   guestLinks: Row[];
+  governanceLimits?: GovernanceLimit[];
   identities: Row[];
   limits?: Record<ApiQuotaName, number>;
   listInfo?: Partial<Record<
@@ -112,13 +130,19 @@ const OVERVIEW_FIELD_BY_RESOURCE = Object.freeze({
 } satisfies Record<AdminResource, OverviewListField>);
 
 const INVENTORY_SECTION_BY_KEY = Object.freeze({
+  "account-deletion-receipts": "admin-deletions",
   "auth-audit-events": "admin-audit",
+  "circuit-breakers": "admin-circuits",
+  "creation-ledger": "admin-users",
   "guest-links": "admin-guest-links",
+  "governance-limits": "admin-governance-limits",
   identities: "admin-identities",
+  "identity-ban-digests": "admin-users",
   "migration-stream": "admin-migrations",
   "oauth-states": "admin-oauth-states",
   sessions: "admin-sessions",
   users: "admin-users",
+  "workspace-custody": "admin-workspaces",
   "workspace-deletions": "admin-deletions",
   "workspace-members": "admin-memberships",
   "workspace-snapshots": "admin-workspaces",
@@ -328,6 +352,7 @@ export default function AdminPage() {
     targetId: string,
     value?: string,
     preconditions: AdminMutationPreconditions = {},
+    fields: AdminMutationFields = {},
   ) => {
     const actionKey = `${action}:${targetId}`;
     if (pendingAction) return;
@@ -347,6 +372,7 @@ export default function AdminPage() {
           targetId,
           value,
           ...preconditions,
+          ...fields,
         }),
         headers: accountContextHeaders(expectedAccountId, {
           "content-type": "application/json",
@@ -358,6 +384,7 @@ export default function AdminPage() {
         error?: string;
         message?: string;
         revokedSessions?: number;
+        unusedGuestLinksRevoked?: number;
       } | null;
       if (!response.ok) {
         throw new Error(
@@ -369,11 +396,18 @@ export default function AdminPage() {
           "The signed-in account changed; the administrative change was not accepted",
         );
       }
-      if (body?.currentSessionRevoked) return true;
+      if (body?.currentSessionRevoked) {
+        window.location.assign("/account?returnTo=/admin");
+        return true;
+      }
       const refreshed = await load(query);
-      const resultMessage = body?.revokedSessions === undefined
+      const sessionMessage = body?.revokedSessions === undefined
         ? body?.message ?? "Administrative change saved"
         : `${body.message ?? "User disabled"}; revoked ${body.revokedSessions.toLocaleString()} active sessions`;
+      const resultMessage =
+        body?.unusedGuestLinksRevoked === undefined
+          ? sessionMessage
+          : `${sessionMessage}; revoked ${body.unusedGuestLinksRevoked.toLocaleString()} unused invite links`;
       setNotice(
         refreshed
           ? resultMessage
@@ -476,6 +510,8 @@ export default function AdminPage() {
     applySearch(draftQuery);
   };
   const limits = data?.limits ?? API_QUOTAS;
+  const circuitBreakers = data?.circuitBreakers ?? [];
+  const governanceLimits = data?.governanceLimits ?? [];
   const inventoryEntries = data?.databaseInventory?.entries ?? [];
   const workspaces = data?.workspaces ?? [];
   const deletions = data?.deletions ?? [];
@@ -580,6 +616,220 @@ export default function AdminPage() {
           <span><strong>{limits.auditEventsPerSnapshot}</strong><small>history audit events per workspace</small></span>
           <span><strong>{limits.commandReceiptsPerSnapshot}</strong><small>compacted command receipts per workspace</small></span>
           <span><strong>{formatBytes(limits.storedSnapshotBytes)}</strong><small>stored snapshot per workspace</small></span>
+        </div>
+      </section>
+      <section
+        aria-labelledby="admin-governance-limits-heading"
+        id="admin-governance-limits"
+        tabIndex={-1}
+      >
+        <h2 id="admin-governance-limits-heading">
+          Adjustable public limits <small>{governanceLimits.length}</small>
+        </h2>
+        <p className="admin-list-note">
+          The new-account daily fuse can be tuned without a deployment. Every change requires an operational reason and is audited. Never put a credential or other secret in the reason.
+        </p>
+        <div
+          aria-label="Adjustable public governance limits"
+          className="admin-table"
+          role="list"
+        >
+          {governanceLimits.map(limit => <div
+            aria-label={`Governance limit ${limit.key}`}
+            key={limit.key}
+            role="listitem"
+          >
+            <span>
+              <strong>{limit.key.replaceAll("_", " ")}</strong>
+              <small>
+                {limit.value.toLocaleString()} per day
+                {" · "}
+                hard maximum {MAXIMUM_GOVERNANCE_LIMIT[
+                  limit.key
+                ].toLocaleString()}
+              </small>
+              <small>
+                Updated {formatDate(limit.updatedAt)}
+                {" · "}
+                by {limit.updatedByUserId || "system"}
+              </small>
+            </span>
+            <button
+              disabled={Boolean(pendingAction)}
+              onClick={() => {
+                const proposed = window.prompt(
+                  `Set ${limit.key} to a non-negative daily count`,
+                  String(limit.value),
+                )?.trim();
+                if (proposed === undefined) return;
+                if (!/^(0|[1-9]\d*)$/u.test(proposed)) {
+                  setActionError(
+                    "The daily account limit must be a non-negative integer",
+                  );
+                  return;
+                }
+                const reason = window.prompt(
+                  "Why is this launch limit changing? Do not include secrets.",
+                )?.trim();
+                if (!reason) return;
+                void mutate(
+                  "governance.limit.set",
+                  limit.key,
+                  proposed,
+                  {},
+                  { reason },
+                );
+              }}
+              type="button"
+            >
+              Change daily fuse
+            </button>
+          </div>)}
+          {!governanceLimits.length && <p
+            className="admin-empty"
+            role="listitem"
+          >
+            Adjustable governance limits are unavailable
+          </p>}
+        </div>
+      </section>
+      <section
+        aria-labelledby="admin-circuits-heading"
+        id="admin-circuits"
+        tabIndex={-1}
+      >
+        <h2 id="admin-circuits-heading">
+          Public abuse circuit breakers <small>{circuitBreakers.length}</small>
+        </h2>
+        <p className="admin-list-note">
+          Security pauses reopen automatically after 30 minutes, or two hours after a retrigger. Capacity pauses stay latched until an administrator opens them.
+        </p>
+        <div
+          aria-label="Public abuse circuit breakers"
+          className="admin-table"
+          role="list"
+        >
+          {circuitBreakers.map(circuit => {
+            const paused =
+              circuit.effectiveState ===
+                CIRCUIT_BREAKER_STATE.PAUSED;
+            return <div
+              aria-label={`Circuit breaker ${circuit.scope}`}
+              key={circuit.scope}
+              role="listitem"
+            >
+              <span>
+                <strong>{circuit.scope.replaceAll("_", " ")}</strong>
+                <small>
+                  Stored state {circuit.state}
+                  {" · "}
+                  effective state {circuit.effectiveState}
+                  {" · "}
+                  {circuit.pauseKind}
+                </small>
+                {circuit.reason && <small>
+                  Reason: {circuit.reason}
+                </small>}
+                <small>
+                  Updated {formatDate(circuit.updatedAt)}
+                  {" · "}
+                  by {circuit.updatedByUserId || "system"}
+                  {" · "}
+                  trigger count {circuit.triggerCount}
+                  {circuit.resumeAt
+                    ? ` · scheduled reopen ${formatDate(circuit.resumeAt)}`
+                    : ""}
+                </small>
+              </span>
+              <b data-status={circuit.effectiveState}>
+                {circuit.effectiveState}
+              </b>
+              <span
+                aria-label={`Actions for ${circuit.scope}`}
+                className="admin-row-actions"
+                role="group"
+              >
+                {!paused
+                  ? <>
+                      <button
+                        className="danger"
+                        disabled={Boolean(pendingAction)}
+                        onClick={() => {
+                          const reason = window.prompt(
+                            `Why should ${circuit.scope} pause for a security response?`,
+                          )?.trim();
+                          if (!reason) return;
+                          void mutate(
+                            "circuit.set",
+                            circuit.scope,
+                            CIRCUIT_BREAKER_STATE.PAUSED,
+                            {},
+                            {
+                              pauseKind:
+                                CIRCUIT_BREAKER_PAUSE_KIND.SECURITY,
+                              reason,
+                            },
+                          );
+                        }}
+                        type="button"
+                      >
+                        Security pause
+                      </button>
+                      <button
+                        className="danger"
+                        disabled={Boolean(pendingAction)}
+                        onClick={() => {
+                          const reason = window.prompt(
+                            `Why should ${circuit.scope} pause for capacity protection?`,
+                          )?.trim();
+                          if (!reason) return;
+                          void mutate(
+                            "circuit.set",
+                            circuit.scope,
+                            CIRCUIT_BREAKER_STATE.PAUSED,
+                            {},
+                            {
+                              pauseKind:
+                                CIRCUIT_BREAKER_PAUSE_KIND.CAPACITY,
+                              reason,
+                            },
+                          );
+                        }}
+                        type="button"
+                      >
+                        Capacity pause
+                      </button>
+                    </>
+                  : <button
+                      disabled={Boolean(pendingAction)}
+                      onClick={() => {
+                        if (
+                          confirm(
+                            `Open ${circuit.scope} and allow this public operation again?`,
+                          )
+                        ) {
+                          void mutate(
+                            "circuit.set",
+                            circuit.scope,
+                            CIRCUIT_BREAKER_STATE.OPEN,
+                            {},
+                            { pauseKind: circuit.pauseKind },
+                          );
+                        }
+                      }}
+                      type="button"
+                    >
+                      Open circuit
+                    </button>}
+              </span>
+            </div>;
+          })}
+          {!circuitBreakers.length && <p
+            className="admin-empty"
+            role="listitem"
+          >
+            Circuit breaker state is unavailable
+          </p>}
         </div>
       </section>
       <section aria-labelledby="database-inventory-heading">
@@ -798,6 +1048,12 @@ export default function AdminPage() {
             const userId = stringValue(user.user_id);
             const role = stringValue(user.global_role);
             const status = stringValue(user.status);
+            const accountRevision =
+              numberValue(user.account_revision);
+            const deletedAt = stringValue(user.deleted_at);
+            const redactedAfterBan =
+              status === "disabled" &&
+              numberValue(user.retained_identity_ban_count) > 0;
             const userLabel = email || userId;
             return <div
               aria-label={`User ${userLabel}`}
@@ -814,8 +1070,17 @@ export default function AdminPage() {
                   {" · "}
                   {status}
                   {" · "}
+                  account revision {accountRevision}
+                  {" · "}
                   membership revision {numberValue(user.membership_revision)}
                 </small>
+                {stringValue(user.ban_reason) && <small>
+                  Enforcement reason: {stringValue(user.ban_reason)}
+                </small>}
+                {redactedAfterBan && <small>
+                  Identity redaction is permanent. This retained account
+                  cannot be enabled.
+                </small>}
                 <small>
                   {numberValue(user.owned_workspace_count)}/{limits.ownedWorkspacesPerUser} owned workspaces
                 </small>
@@ -825,41 +1090,136 @@ export default function AdminPage() {
                   updated {formatDate(user.updated_at)}
                   {" · "}
                   last server activity {formatDate(user.last_seen_at)}
+                  {deletedAt
+                    ? ` · deleted ${formatDate(deletedAt)}`
+                    : ""}
                 </small>
               </span>
-              <select
-                aria-label={`Role for ${userLabel}`}
-                disabled={Boolean(pendingAction)}
-                onChange={event =>
-                  void mutate("user.role", userId, event.target.value)}
-                value={role}
+              <span
+                aria-label={`Account actions for ${userLabel}`}
+                className="admin-row-actions"
+                role="group"
               >
-                <option>user</option>
-                <option>admin</option>
-              </select>
-              <button
-                aria-label={status === "active"
-                  ? `Disable and sign out ${userLabel}`
-                  : `Enable ${userLabel}`}
-                className={status === "active" ? "danger" : undefined}
-                disabled={Boolean(pendingAction)}
-                onClick={() => {
-                  const nextStatus =
-                    status === "active" ? "disabled" : "active";
-                  if (
-                    nextStatus === "active" ||
-                    confirm(
-                      `Disable ${userLabel} and revoke all of their active sessions? Re-enabling the account will not revive those sessions.`,
-                    )
-                  ) {
-                    void mutate("user.status", userId, nextStatus);
+                <select
+                  aria-label={`Role for ${userLabel}`}
+                  disabled={
+                    Boolean(pendingAction) ||
+                    Boolean(deletedAt) ||
+                    (role === "user" && status !== "active")
                   }
-                }}
-              >
-                {status === "active"
-                  ? "Disable and sign out"
-                  : "Enable"}
-              </button>
+                  onChange={event => {
+                    const nextRole = event.target.value;
+                    const message = nextRole === "admin"
+                      ? `Promote ${userLabel} to global administrator? This grants installation-wide administration only after the account also passes Cloudflare Access.`
+                      : `Demote ${userLabel} from global administrator and revoke all of their active sessions? Workspace memberships are unchanged.`;
+                    if (!confirm(message)) {
+                      event.target.value = role;
+                      return;
+                    }
+                    void mutate(
+                      "user.role",
+                      userId,
+                      nextRole,
+                      { expectedAccountRevision: accountRevision },
+                    );
+                  }}
+                  value={role}
+                >
+                  <option value="user">user</option>
+                  <option value="admin">admin</option>
+                </select>
+                {!deletedAt && <button
+                  aria-label={status === "active"
+                    ? `Disable and sign out ${userLabel}`
+                    : status === "banned"
+                      ? `Lift enforcement ban for ${userLabel}`
+                      : redactedAfterBan
+                        ? `Redacted account ${userLabel} cannot be enabled`
+                        : `Enable ${userLabel}`}
+                  className={status === "active" ? "danger" : undefined}
+                  disabled={
+                    Boolean(pendingAction) || redactedAfterBan
+                  }
+                  onClick={() => {
+                    if (status === "banned") {
+                      if (
+                        confirm(
+                          `Lift the identity enforcement ban for ${userLabel}? The redacted account stays disabled, and prior sessions or identities are not restored.`,
+                        )
+                      ) {
+                        void mutate(
+                          "user.ban.lift",
+                          userId,
+                          undefined,
+                          {
+                            expectedAccountRevision:
+                              accountRevision,
+                          },
+                        );
+                      }
+                      return;
+                    }
+                    const nextStatus =
+                      status === "active" ? "disabled" : "active";
+                    if (
+                      nextStatus === "active" ||
+                      confirm(
+                        `Disable ${userLabel} and revoke all of their active sessions and unused invite links? Re-enabling the account will not restore either.`,
+                      )
+                    ) {
+                      void mutate(
+                        "user.status",
+                        userId,
+                        nextStatus,
+                        {
+                          expectedAccountRevision:
+                            accountRevision,
+                        },
+                      );
+                    }
+                  }}
+                  type="button"
+                >
+                  {status === "active"
+                    ? "Disable and sign out"
+                    : status === "banned"
+                      ? "Lift enforcement ban"
+                      : redactedAfterBan
+                        ? "Redacted account cannot be enabled"
+                        : "Enable"}
+                </button>}
+                {!deletedAt && status !== "banned" && <button
+                  aria-label={`Ban ${userLabel}`}
+                  className="danger"
+                  disabled={Boolean(pendingAction)}
+                  onClick={() => {
+                    const reason = window.prompt(
+                      `Why should ${userLabel} be banned? This permanently redacts their sign-in identities and profile.`,
+                    )?.trim();
+                    if (!reason) return;
+                    if (
+                      !confirm(
+                        `Ban ${userLabel}, revoke their sessions and unused guest links, and retain only enforcement digests for their identities? This redaction cannot be reversed.`,
+                      )
+                    ) {
+                      return;
+                    }
+                    void mutate(
+                      "user.ban",
+                      userId,
+                      undefined,
+                      {
+                        expectedAccountRevision:
+                          accountRevision,
+                      },
+                      { reason },
+                    );
+                  }}
+                  type="button"
+                >
+                  Ban account
+                </button>}
+              </span>
             </div>;
           })}
           {!data.users.length && <p
@@ -1083,6 +1443,26 @@ export default function AdminPage() {
         <p className="admin-list-note">
           The session used to load this page is identified as the current browser session. Revoking it signs this browser out immediately.
         </p>
+        <button
+          className="danger"
+          disabled={Boolean(pendingAction)}
+          onClick={() => {
+            if (
+              !confirm(
+                "Revoke every active pre-Google session, including legacy unrecorded and temporary Cloudflare Access migration sessions? Do this after disabling the exchange and before making Account public. Any affected browser must sign in with Google.",
+              )
+            ) {
+              return;
+            }
+            void mutate(
+              "session.revoke-pre-google",
+              SESSION_REVOCATION_SCOPE.PRE_GOOGLE,
+            );
+          }}
+          type="button"
+        >
+          Revoke pre-Google sessions
+        </button>
         <div
           aria-label="Session records"
           className="admin-table"
@@ -1115,6 +1495,10 @@ export default function AdminPage() {
                   Session {sessionId}
                   {" · "}
                   user {stringValue(session.user_id)}
+                  {" · "}
+                  signed in via {stringValue(
+                    session.authentication_provider,
+                  ) || "legacy or unrecorded"}
                   {" · "}
                   {stringValue(session.global_role)}
                   {" · "}
@@ -1149,13 +1533,7 @@ export default function AdminPage() {
                     ? `Revoke your current browser session ${sessionId}? This signs you out immediately. Local workspace data stays on this device.`
                     : `Revoke session ${sessionId} for ${sessionUser}? That browser or device will be signed out and must sign in again.`;
                   if (!confirm(message)) return;
-                  void mutate("session.revoke", sessionId).then(saved => {
-                    if (saved && isCurrent) {
-                      window.location.assign(
-                        "/account?returnTo=/admin",
-                      );
-                    }
-                  });
+                  void mutate("session.revoke", sessionId);
                 }}
                 type="button"
               >

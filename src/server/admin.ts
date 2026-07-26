@@ -1,6 +1,30 @@
 import type { D1DatabaseLike } from "../adapters/d1-snapshot-store";
 import { newId, nowIso } from "../domain/factories";
 import { API_QUOTAS } from "../shared/api-quotas";
+import {
+  SESSION_AUTHENTICATION_PROVIDER,
+  SESSION_REVOCATION_SCOPE,
+} from "../shared/authentication";
+import {
+  CIRCUIT_BREAKER_PAUSE_KIND,
+  CIRCUIT_BREAKER_SCOPE,
+  CIRCUIT_BREAKER_STATE,
+  GOVERNANCE_LIMIT_KEY,
+  type CircuitBreakerPauseKind,
+  type CircuitBreakerScope,
+  type CircuitBreakerState,
+  type GovernanceLimitKey,
+} from "../shared/governance-policy";
+import {
+  banAccount,
+  changeAccountStatus,
+  changeGlobalRole,
+  liftAccountBan,
+  readCircuitBreakers,
+  readGovernanceLimits,
+  setCircuitBreaker,
+  setGovernanceLimit,
+} from "./account-governance";
 import { ApiProblem } from "./api-problem";
 import {
   safeAuditDetailJson,
@@ -27,11 +51,23 @@ type Db = {
 
 interface AdminMutationInput {
   action: string;
+  expectedAccountRevision?: number;
   expectedAccessRevision?: number;
   expectedMembershipRevision?: number;
+  pauseKind?: string;
+  reason?: string;
   targetId: string;
   value?: string;
 }
+
+interface AdminMutationOptions {
+  actorSessionId?: string;
+  identityDigestKey?: string;
+  signInProviderIds?: readonly string[];
+}
+
+const SECURITY_BREAKER_INITIAL_PAUSE_MS = 30 * 60 * 1_000;
+const SECURITY_BREAKER_RETRIGGER_PAUSE_MS = 2 * 60 * 60 * 1_000;
 
 const ADMIN_RESULT_LIMITS = Object.freeze({
   audit: 250,
@@ -107,6 +143,7 @@ function refuseAdminMutation(message: string): never {
 }
 
 type AdminExpectedRevision =
+  | "expectedAccountRevision"
   | "expectedAccessRevision"
   | "expectedMembershipRevision";
 
@@ -136,7 +173,10 @@ async function requireActiveAdminActor(
   const current = await db.prepare(
     `SELECT 1 AS authorized
      FROM users
-     WHERE user_id=? AND status='active' AND global_role='admin'`,
+     WHERE user_id=?
+       AND status='active'
+       AND deleted_at IS NULL
+       AND global_role='admin'`,
   ).bind(actor).first<{ authorized: number }>();
   if (!current) {
     throw new ApiProblem(
@@ -404,6 +444,12 @@ async function adminDatabaseInventory(
     guestLinks,
     oauthStates,
     auditEvents,
+    workspaceCustody,
+    creationLedger,
+    circuitBreakers,
+    governanceLimits,
+    identityBans,
+    accountDeletionReceipts,
     migrationStream,
     ledgerTables,
   ] = await Promise.all([
@@ -433,6 +479,10 @@ async function adminDatabaseInventory(
                 AS active_count,
               COALESCE(SUM(CASE WHEN status='disabled' THEN 1 ELSE 0 END),0)
                 AS disabled_count,
+              COALESCE(SUM(CASE WHEN status='banned' THEN 1 ELSE 0 END),0)
+                AS banned_count,
+              COALESCE(SUM(CASE WHEN deleted_at IS NOT NULL THEN 1 ELSE 0 END),0)
+                AS deleted_count,
               COALESCE(SUM(CASE WHEN global_role='admin' THEN 1 ELSE 0 END),0)
                 AS admin_count,
               MIN(created_at) AS oldest_created_at,
@@ -477,6 +527,17 @@ async function adminDatabaseInventory(
               ),0) AS expired_count,
               COALESCE(SUM(CASE WHEN revoked_at IS NOT NULL THEN 1 ELSE 0 END),0)
                 AS revoked_count,
+              COALESCE(SUM(
+                CASE
+                  WHEN (
+                    authentication_provider='cloudflare-access'
+                    OR authentication_provider IS NULL
+                  )
+                    AND revoked_at IS NULL
+                    AND expires_at>? THEN 1
+                  ELSE 0
+                END
+              ),0) AS active_pre_google_count,
               MIN(created_at) AS oldest_created_at,
               MAX(last_seen_at) AS latest_seen_at,
               MIN(
@@ -485,7 +546,7 @@ async function adminDatabaseInventory(
                 END
               ) AS next_expiry_at
        FROM sessions`,
-    ).bind(now, now, now).first<Record<string, unknown>>(),
+    ).bind(now, now, now, now).first<Record<string, unknown>>(),
     db.prepare(
       `SELECT COUNT(*) AS row_count,
               COALESCE(SUM(
@@ -558,6 +619,66 @@ async function adminDatabaseInventory(
               MIN(created_at) AS oldest_created_at,
               MAX(created_at) AS latest_created_at
        FROM auth_audit_events`,
+    ).first<Record<string, unknown>>(),
+    db.prepare(
+      `SELECT COUNT(*) AS row_count,
+              COUNT(DISTINCT custody.custodian_user_id)
+                AS custodian_count,
+              COALESCE(SUM(snapshot.stored_bytes),0)
+                AS total_bytes,
+              MIN(custody.created_at) AS oldest_created_at,
+              MAX(custody.updated_at) AS latest_updated_at
+       FROM workspace_custody custody
+       JOIN workspace_snapshots snapshot
+         ON snapshot.workspace_id=custody.workspace_id`,
+    ).first<Record<string, unknown>>(),
+    db.prepare(
+      `SELECT COUNT(*) AS row_count,
+              COALESCE(SUM(CASE WHEN resource='account' THEN 1 ELSE 0 END),0)
+                AS account_count,
+              COALESCE(SUM(CASE WHEN resource='workspace' THEN 1 ELSE 0 END),0)
+                AS workspace_count,
+              COALESCE(SUM(CASE WHEN resource='session' THEN 1 ELSE 0 END),0)
+                AS session_count,
+              COALESCE(SUM(CASE WHEN resource='guest_link' THEN 1 ELSE 0 END),0)
+                AS guest_link_count,
+              MIN(created_at) AS oldest_created_at,
+              MAX(created_at) AS latest_created_at
+       FROM creation_ledger`,
+    ).first<Record<string, unknown>>(),
+    db.prepare(
+      `SELECT COUNT(*) AS row_count,
+              COALESCE(SUM(CASE WHEN state='paused' THEN 1 ELSE 0 END),0)
+                AS paused_count,
+              COALESCE(SUM(CASE WHEN pause_kind='capacity' THEN 1 ELSE 0 END),0)
+                AS capacity_count,
+              COALESCE(SUM(CASE WHEN pause_kind='security' THEN 1 ELSE 0 END),0)
+                AS security_count,
+              MAX(updated_at) AS latest_updated_at
+       FROM circuit_breakers`,
+    ).first<Record<string, unknown>>(),
+    db.prepare(
+      `SELECT COUNT(*) AS row_count,
+              COALESCE(MAX(limit_value),0) AS maximum_value,
+              MAX(updated_at) AS latest_updated_at
+       FROM governance_limits`,
+    ).first<Record<string, unknown>>(),
+    db.prepare(
+      `SELECT COUNT(*) AS row_count,
+              COALESCE(SUM(CASE WHEN lifted_at IS NULL THEN 1 ELSE 0 END),0)
+                AS active_count,
+              COALESCE(SUM(CASE WHEN lifted_at IS NOT NULL THEN 1 ELSE 0 END),0)
+                AS lifted_count,
+              MIN(created_at) AS oldest_created_at,
+              MAX(created_at) AS latest_created_at,
+              MAX(lifted_at) AS latest_lifted_at
+       FROM identity_ban_digests`,
+    ).first<Record<string, unknown>>(),
+    db.prepare(
+      `SELECT COUNT(*) AS row_count,
+              MIN(deleted_at) AS oldest_deleted_at,
+              MAX(deleted_at) AS latest_deleted_at
+       FROM account_deletion_receipts`,
     ).first<Record<string, unknown>>(),
     db.prepare(
       `SELECT COUNT(*) AS row_count,
@@ -640,6 +761,8 @@ async function adminDatabaseInventory(
       metrics: [
         metric("active", "count", numberField(users, "active_count")),
         metric("disabled", "count", numberField(users, "disabled_count")),
+        metric("banned", "count", numberField(users, "banned_count")),
+        metric("deleted", "count", numberField(users, "deleted_count")),
         metric(
           "global administrators",
           "count",
@@ -732,6 +855,11 @@ async function adminDatabaseInventory(
         metric("active", "count", numberField(sessions, "active_count")),
         metric("expired", "count", numberField(sessions, "expired_count")),
         metric("revoked", "count", numberField(sessions, "revoked_count")),
+        metric(
+          "active pre-Google",
+          "count",
+          numberField(sessions, "active_pre_google_count"),
+        ),
         metric(
           "oldest creation",
           "date",
@@ -832,6 +960,169 @@ async function adminDatabaseInventory(
       table: "auth_audit_events",
     },
     {
+      key: "workspace-custody",
+      label: "Workspace custody",
+      metrics: [
+        metric(
+          "custodians",
+          "count",
+          numberField(workspaceCustody, "custodian_count"),
+        ),
+        metric(
+          "stored size",
+          "bytes",
+          numberField(workspaceCustody, "total_bytes"),
+        ),
+        metric(
+          "oldest creation",
+          "date",
+          textField(workspaceCustody, "oldest_created_at"),
+        ),
+        metric(
+          "latest update",
+          "date",
+          textField(workspaceCustody, "latest_updated_at"),
+        ),
+      ],
+      rowCount: numberField(workspaceCustody, "row_count"),
+      table: "workspace_custody",
+    },
+    {
+      key: "creation-ledger",
+      label: "Durable creation ledger",
+      metrics: [
+        metric(
+          "accounts",
+          "count",
+          numberField(creationLedger, "account_count"),
+        ),
+        metric(
+          "workspaces",
+          "count",
+          numberField(creationLedger, "workspace_count"),
+        ),
+        metric(
+          "sessions",
+          "count",
+          numberField(creationLedger, "session_count"),
+        ),
+        metric(
+          "guest links",
+          "count",
+          numberField(creationLedger, "guest_link_count"),
+        ),
+        metric(
+          "oldest creation",
+          "date",
+          textField(creationLedger, "oldest_created_at"),
+        ),
+        metric(
+          "latest creation",
+          "date",
+          textField(creationLedger, "latest_created_at"),
+        ),
+      ],
+      rowCount: numberField(creationLedger, "row_count"),
+      table: "creation_ledger",
+    },
+    {
+      key: "circuit-breakers",
+      label: "Public abuse circuit breakers",
+      metrics: [
+        metric(
+          "stored paused",
+          "count",
+          numberField(circuitBreakers, "paused_count"),
+        ),
+        metric(
+          "capacity policy",
+          "count",
+          numberField(circuitBreakers, "capacity_count"),
+        ),
+        metric(
+          "security policy",
+          "count",
+          numberField(circuitBreakers, "security_count"),
+        ),
+        metric(
+          "latest update",
+          "date",
+          textField(circuitBreakers, "latest_updated_at"),
+        ),
+      ],
+      rowCount: numberField(circuitBreakers, "row_count"),
+      table: "circuit_breakers",
+    },
+    {
+      key: "governance-limits",
+      label: "Adjustable governance limits",
+      metrics: [
+        metric(
+          "largest value",
+          "count",
+          numberField(governanceLimits, "maximum_value"),
+        ),
+        metric(
+          "latest update",
+          "date",
+          textField(governanceLimits, "latest_updated_at"),
+        ),
+      ],
+      rowCount: numberField(governanceLimits, "row_count"),
+      table: "governance_limits",
+    },
+    {
+      key: "identity-ban-digests",
+      label: "Identity enforcement digests",
+      metrics: [
+        metric(
+          "active",
+          "count",
+          numberField(identityBans, "active_count"),
+        ),
+        metric(
+          "lifted",
+          "count",
+          numberField(identityBans, "lifted_count"),
+        ),
+        metric(
+          "oldest creation",
+          "date",
+          textField(identityBans, "oldest_created_at"),
+        ),
+        metric(
+          "latest creation",
+          "date",
+          textField(identityBans, "latest_created_at"),
+        ),
+        metric(
+          "latest lift",
+          "date",
+          textField(identityBans, "latest_lifted_at"),
+        ),
+      ],
+      rowCount: numberField(identityBans, "row_count"),
+      table: "identity_ban_digests",
+    },
+    {
+      key: "account-deletion-receipts",
+      label: "Account deletion receipts",
+      metrics: [
+        metric(
+          "oldest deletion",
+          "date",
+          textField(accountDeletionReceipts, "oldest_deleted_at"),
+        ),
+        metric(
+          "latest deletion",
+          "date",
+          textField(accountDeletionReceipts, "latest_deleted_at"),
+        ),
+      ],
+      rowCount: numberField(accountDeletionReceipts, "row_count"),
+      table: "account_deletion_receipts",
+    },
+    {
       key: "migration-stream",
       label: "Migration stream marker",
       metrics: [
@@ -894,12 +1185,32 @@ export async function adminOverview(
   const usersValues = pattern ? [pattern, pattern, pattern] : [];
   const usersStatement = db.prepare(
     `SELECT u.user_id,u.email,u.display_name,u.global_role,u.status,
-            u.membership_revision,u.created_at,u.updated_at,u.last_seen_at,
+            u.account_revision,u.membership_revision,u.created_at,
+            u.updated_at,u.last_seen_at,u.deleted_at,
             (
               SELECT COUNT(*)
               FROM workspace_members owned
               WHERE owned.user_id=u.user_id AND owned.role='owner'
-            ) AS owned_workspace_count
+            ) AS owned_workspace_count,
+            (
+              SELECT COUNT(*)
+              FROM identity_ban_digests ban
+              WHERE ban.source_user_id=u.user_id
+                AND ban.lifted_at IS NULL
+            ) AS active_identity_ban_count,
+            (
+              SELECT COUNT(*)
+              FROM identity_ban_digests ban
+              WHERE ban.source_user_id=u.user_id
+            ) AS retained_identity_ban_count,
+            (
+              SELECT ban.reason
+              FROM identity_ban_digests ban
+              WHERE ban.source_user_id=u.user_id
+                AND ban.lifted_at IS NULL
+              ORDER BY ban.created_at DESC,ban.identity_digest
+              LIMIT 1
+            ) AS ban_reason
      FROM users u
      ${usersSearch}
      ORDER BY u.created_at DESC,u.user_id DESC
@@ -986,6 +1297,8 @@ export async function adminOverview(
     oauthStatesResult,
     migrationRecords,
     databaseInventory,
+    circuitBreakers,
+    governanceLimitRows,
   ] = await Promise.all([
     bindSearch(usersStatement, usersValues)
       .all<Record<string, unknown>>(),
@@ -1029,6 +1342,7 @@ export async function adminOverview(
     db.prepare(
       `SELECT s.session_id,s.user_id,u.email,s.created_at,s.expires_at,
               s.last_seen_at,s.revoked_at,s.user_agent,s.ip_prefix,
+              s.authentication_provider,
               u.display_name,u.global_role,u.status,
               u.membership_revision,
               CASE WHEN s.session_id=? THEN 1 ELSE 0 END
@@ -1266,6 +1580,8 @@ export async function adminOverview(
       offset("migrations"),
     ),
     adminDatabaseInventory(db, now),
+    readCircuitBreakers(database),
+    readGovernanceLimits(database),
   ]);
   const users = page(usersResult.results, "users", offset("users"));
   const identities = page(
@@ -1313,9 +1629,11 @@ export async function adminOverview(
   );
   return {
     audit: auditEvents.rows,
+    circuitBreakers,
     databaseInventory,
     deletions: deletions.rows,
     guestLinks: guestLinks.rows,
+    governanceLimits: governanceLimitRows,
     identities: identities.rows,
     limits: API_QUOTAS,
     listInfo: {
@@ -1407,88 +1725,6 @@ function membershipTarget(targetId: string) {
     refuseAdminMutation("Invalid membership target");
   }
   return { workspaceId, userId };
-}
-
-async function explainUserRoleRefusal(
-  db: Db,
-  targetId: string,
-  role: string,
-): Promise<never> {
-  const target = await db.prepare(
-    "SELECT global_role,status FROM users WHERE user_id=?",
-  ).bind(targetId).first<{ global_role: string; status: string }>();
-  if (!target) refuseAdminMutation("User was not found");
-  if (target.global_role === role) {
-    refuseAdminMutation(`User already has the ${role} role`);
-  }
-  if (
-    role === "user" &&
-    target.global_role === "admin" &&
-    target.status === "active"
-  ) {
-    refuseAdminMutation(
-      "The last active administrator cannot be removed or disabled",
-    );
-  }
-  refuseAdminMutation("User role could not be updated");
-}
-
-async function explainUserStatusRefusal(
-  db: Db,
-  targetId: string,
-  status: string,
-): Promise<never> {
-  const target = await db.prepare(
-    "SELECT global_role,status FROM users WHERE user_id=?",
-  ).bind(targetId).first<{ global_role: string; status: string }>();
-  if (!target) refuseAdminMutation("User was not found");
-  if (target.status === status) {
-    refuseAdminMutation(`User is already ${status}`);
-  }
-  if (
-    status === "disabled" &&
-    target.global_role === "admin" &&
-    target.status === "active"
-  ) {
-    const activeAdmins = await db.prepare(
-      `SELECT COUNT(*) AS count
-       FROM users
-       WHERE global_role='admin' AND status='active'`,
-    ).first<{ count: number }>();
-    if ((activeAdmins?.count ?? 0) <= 1) {
-      refuseAdminMutation(
-        "The last active administrator cannot be removed or disabled",
-      );
-    }
-  }
-  if (status === "disabled" && target.status === "active") {
-    const finalOwnedWorkspace = await db.prepare(
-      `SELECT owned.workspace_id
-       FROM workspace_members owned
-       WHERE owned.user_id=?
-         AND owned.role='owner'
-         AND NOT EXISTS (
-           SELECT 1 FROM workspace_deletions deleted
-           WHERE deleted.workspace_id=owned.workspace_id
-         )
-         AND NOT EXISTS (
-           SELECT 1
-           FROM workspace_members other
-           JOIN users other_user ON other_user.user_id=other.user_id
-           WHERE other.workspace_id=owned.workspace_id
-             AND other.user_id<>owned.user_id
-             AND other.role='owner'
-             AND other_user.status='active'
-         )
-       LIMIT 1`,
-    ).bind(targetId).first<{ workspace_id: string }>();
-    if (finalOwnedWorkspace) {
-      refuseAdminMutation(
-        "A user who is the final active workspace owner cannot be disabled",
-      );
-    }
-  }
-  refuseAdminMutation("User status could not be updated");
 }
 
 interface AdminMemberMutationState {
@@ -1645,50 +1881,31 @@ export async function adminMutation(
   database: D1DatabaseLike,
   actor: string,
   input: AdminMutationInput,
+  options: AdminMutationOptions = {},
 ) {
   const db = database as unknown as Db;
   await requireActiveAdminActor(db, actor);
   const now = nowIso();
+  let currentSessionRevoked: boolean | undefined;
   let message = "Administrative change saved";
   let revokedSessions: number | undefined;
+  let unusedGuestLinksRevoked: number | undefined;
   switch (input.action) {
     case "user.role": {
       if (!["admin", "user"].includes(input.value ?? "")) {
         refuseAdminMutation("Invalid role");
       }
       const role = input.value as "admin" | "user";
-      const result = await runAuditedMutation(
-        db,
-        actor,
-        input,
-        db.prepare(
-          `UPDATE users
-           SET global_role=?,updated_at=?
-           WHERE user_id=?
-             AND global_role<>?
-             AND NOT (
-               ?='user'
-               AND global_role='admin'
-               AND status='active'
-               AND (
-                 SELECT COUNT(*)
-                 FROM users
-                 WHERE global_role='admin' AND status='active'
-               )<=1
-             )
-             AND EXISTS (
-               SELECT 1
-               FROM users admin_actor
-               WHERE admin_actor.user_id=?
-                 AND admin_actor.status='active'
-                 AND admin_actor.global_role='admin'
-             )`,
-        ).bind(role, now, input.targetId, role, role, actor),
-      );
-      if (changes(result) !== 1) {
-        await requireActiveAdminActor(db, actor);
-        await explainUserRoleRefusal(db, input.targetId, role);
-      }
+      const result = await changeGlobalRole(database, {
+        actorUserId: actor,
+        expectedAccountRevision: requiredAdminRevision(
+          input,
+          "expectedAccountRevision",
+        ),
+        role,
+        targetUserId: input.targetId,
+      });
+      revokedSessions = result.revokedSessions;
       message = `User role changed to ${role}`;
       break;
     }
@@ -1697,118 +1914,173 @@ export async function adminMutation(
         refuseAdminMutation("Invalid status");
       }
       const status = input.value as "active" | "disabled";
-      const mutation = db.prepare(
-        `UPDATE users
-         SET status=?,updated_at=?
-         WHERE user_id=?
-           AND status<>?
-           AND NOT (
-             ?='disabled'
-             AND global_role='admin'
-             AND status='active'
-             AND (
-               SELECT COUNT(*)
-               FROM users
-               WHERE global_role='admin' AND status='active'
-             )<=1
-           )
-           AND NOT (
-             ?='disabled'
-             AND status='active'
-             AND EXISTS (
-               SELECT 1
-               FROM workspace_members owned
-               WHERE owned.user_id=users.user_id
-                 AND owned.role='owner'
-                 AND NOT EXISTS (
-                   SELECT 1
-                   FROM workspace_deletions deleted
-                   WHERE deleted.workspace_id=owned.workspace_id
-                 )
-                 AND NOT EXISTS (
-                   SELECT 1
-                   FROM workspace_members other
-                   JOIN users other_user
-                     ON other_user.user_id=other.user_id
-                   WHERE other.workspace_id=owned.workspace_id
-                     AND other.user_id<>owned.user_id
-                     AND other.role='owner'
-                     AND other_user.status='active'
-                   )
-             )
-           )
-           AND EXISTS (
-             SELECT 1
-             FROM users admin_actor
-             WHERE admin_actor.user_id=?
-               AND admin_actor.status='active'
-               AND admin_actor.global_role='admin'
-           )`,
-      ).bind(
-        status,
-        now,
-        input.targetId,
-        status,
-        status,
-        status,
-        actor,
-      );
-      let auditResult: RunResult;
-      if (status === "disabled") {
-        const results = await db.batch([
-          mutation,
-          db.prepare(
-            `INSERT INTO auth_audit_events(
-               event_id,actor_user_id,action,target_type,target_id,
-               detail_json,created_at
-             )
-             SELECT ?,?,?,?,?,?,?
-             WHERE changes()=1`,
-          ).bind(
-            newId("aud"),
-            actor,
-            input.action,
-            "user",
-            input.targetId,
-            safeAuditDetailJson("user.status", { value: status }),
-            now,
-          ),
-          db.prepare(
-            `UPDATE sessions
-             SET revoked_at=?
-             WHERE user_id=?
-               AND revoked_at IS NULL
-               AND expires_at>?
-               AND changes()=1`,
-          ).bind(now, input.targetId, now),
-        ]);
-        const nextAuditResult = results[1];
-        const sessionResult = results[2];
-        if (!results[0] || !nextAuditResult || !sessionResult) {
-          throw new Error(
-            "Administrative user disable did not return complete results",
-          );
-        }
-        auditResult = nextAuditResult;
-        revokedSessions = changes(sessionResult);
-      } else {
-        auditResult = await runAuditedMutation(
-          db,
-          actor,
+      const result = await changeAccountStatus(database, {
+        actorUserId: actor,
+        expectedAccountRevision: requiredAdminRevision(
           input,
-          mutation,
-        );
-      }
-      if (changes(auditResult) !== 1) {
-        await requireActiveAdminActor(db, actor);
-        await explainUserStatusRefusal(db, input.targetId, status);
+          "expectedAccountRevision",
+        ),
+        status,
+        targetUserId: input.targetId,
+      });
+      if (status === "disabled") {
+        revokedSessions = result.revokedSessions;
+        unusedGuestLinksRevoked =
+          result.unusedGuestLinksRevoked;
       }
       message = status === "disabled"
         ? "User disabled"
         : "User enabled";
       break;
     }
+    case "user.ban": {
+      if (!options.identityDigestKey) {
+        throw new ApiProblem(
+          "STORAGE_UNAVAILABLE",
+          "Identity enforcement is not configured",
+          503,
+        );
+      }
+      const result = await banAccount(database, {
+        actorUserId: actor,
+        digestKey: options.identityDigestKey,
+        expectedAccountRevision: requiredAdminRevision(
+          input,
+          "expectedAccountRevision",
+        ),
+        reason: input.reason ?? "",
+        targetUserId: input.targetId,
+      });
+      revokedSessions = result.revokedSessions;
+      message = "Account banned and sign-in identities redacted";
+      break;
+    }
+    case "user.ban.lift": {
+      await liftAccountBan(database, {
+        actorUserId: actor,
+        expectedAccountRevision: requiredAdminRevision(
+          input,
+          "expectedAccountRevision",
+        ),
+        targetUserId: input.targetId,
+      });
+      message = "Account ban lifted; the account remains disabled";
+      break;
+    }
+    case "circuit.set": {
+      if (
+        !Object.values(CIRCUIT_BREAKER_SCOPE)
+          .includes(input.targetId as CircuitBreakerScope)
+      ) {
+        refuseAdminMutation("Invalid circuit scope");
+      }
+      if (
+        !Object.values(CIRCUIT_BREAKER_STATE)
+          .includes(input.value as CircuitBreakerState)
+      ) {
+        refuseAdminMutation("Invalid circuit state");
+      }
+      if (
+        !Object.values(CIRCUIT_BREAKER_PAUSE_KIND)
+          .includes(input.pauseKind as CircuitBreakerPauseKind)
+      ) {
+        refuseAdminMutation("Invalid circuit pause kind");
+      }
+      const scope = input.targetId as CircuitBreakerScope;
+      const state = input.value as CircuitBreakerState;
+      const pauseKind =
+        input.pauseKind as CircuitBreakerPauseKind;
+      let resumeAt: string | null = null;
+      if (
+        state === CIRCUIT_BREAKER_STATE.PAUSED
+        && pauseKind === CIRCUIT_BREAKER_PAUSE_KIND.SECURITY
+      ) {
+        const current = (await readCircuitBreakers(database))
+          .find(candidate => candidate.scope === scope);
+        const duration = (current?.triggerCount ?? 0) > 0
+          ? SECURITY_BREAKER_RETRIGGER_PAUSE_MS
+          : SECURITY_BREAKER_INITIAL_PAUSE_MS;
+        resumeAt = new Date(Date.now() + duration).toISOString();
+      }
+      const result = await setCircuitBreaker(database, {
+        actorUserId: actor,
+        pauseKind,
+        reason: state === CIRCUIT_BREAKER_STATE.PAUSED
+          ? input.reason ?? null
+          : null,
+        resumeAt,
+        scope,
+        state,
+      });
+      message = result.state === CIRCUIT_BREAKER_STATE.OPEN
+        ? `${scope} circuit opened`
+        : `${scope} circuit paused`;
+      break;
+    }
+    case "governance.limit.set": {
+      if (
+        !Object.values(GOVERNANCE_LIMIT_KEY)
+          .includes(input.targetId as GovernanceLimitKey)
+      ) {
+        refuseAdminMutation("Invalid governance limit");
+      }
+      if (
+        input.value === undefined ||
+        !/^(0|[1-9]\d*)$/u.test(input.value)
+      ) {
+        refuseAdminMutation(
+          "Governance limit value must be a non-negative integer",
+        );
+      }
+      const value = Number(input.value);
+      if (!Number.isSafeInteger(value)) {
+        refuseAdminMutation(
+          "Governance limit value must be a non-negative safe integer",
+        );
+      }
+      const result = await setGovernanceLimit(database, {
+        actorUserId: actor,
+        key: input.targetId as GovernanceLimitKey,
+        reason: input.reason ?? "",
+        value,
+      });
+      message =
+        `${result.key} limit changed to ${result.value.toLocaleString()}`;
+      break;
+    }
     case "identity.unlink": {
+      const signInProviderIds = options.signInProviderIds
+        ? [...new Set(
+            options.signInProviderIds
+              .map(providerId => providerId.trim())
+              .filter(Boolean),
+          )]
+        : null;
+      const remainingIdentityGuard = signInProviderIds
+        ? signInProviderIds.length > 0
+          ? `AND EXISTS (
+               SELECT 1
+               FROM identities remaining
+               WHERE remaining.user_id=(
+                 SELECT user_id
+                 FROM identities
+                 WHERE identity_id=?
+               )
+                 AND remaining.identity_id<>?
+                 AND remaining.provider IN (${
+                   signInProviderIds.map(() => "?").join(",")
+                 })
+             )`
+          : "AND 0=1"
+        : `AND (
+             SELECT COUNT(*)
+             FROM identities
+             WHERE user_id=(
+               SELECT user_id
+               FROM identities
+               WHERE identity_id=?
+             )
+           )>1`;
       const result = await runAuditedMutation(
         db,
         actor,
@@ -1816,23 +2088,28 @@ export async function adminMutation(
         db.prepare(
           `DELETE FROM identities
            WHERE identity_id=?
-             AND (
-               SELECT COUNT(*)
-                 FROM identities
-                 WHERE user_id=(
-                   SELECT user_id
-                   FROM identities
-                   WHERE identity_id=?
-                 )
-             )>1
+             ${remainingIdentityGuard}
              AND EXISTS (
                SELECT 1
                FROM users admin_actor
                WHERE admin_actor.user_id=?
                  AND admin_actor.status='active'
+                 AND admin_actor.deleted_at IS NULL
                  AND admin_actor.global_role='admin'
              )`,
-        ).bind(input.targetId, input.targetId, actor),
+        ).bind(
+          input.targetId,
+          ...(signInProviderIds === null
+            ? [input.targetId]
+            : signInProviderIds.length > 0
+              ? [
+                  input.targetId,
+                  input.targetId,
+                  ...signInProviderIds,
+                ]
+              : []),
+          actor,
+        ),
       );
       if (changes(result) !== 1) {
         await requireActiveAdminActor(db, actor);
@@ -1841,7 +2118,7 @@ export async function adminMutation(
         ).bind(input.targetId).first<{ user_id: string }>();
         if (!identity) refuseAdminMutation("Identity was not found");
         refuseAdminMutation(
-          "A user must retain at least one sign-in identity",
+          "A user must retain at least one configured direct sign-in identity",
         );
       }
       message = "Sign-in identity unlinked";
@@ -1928,6 +2205,7 @@ export async function adminMutation(
                FROM users admin_actor
                WHERE admin_actor.user_id=?
                  AND admin_actor.status='active'
+                 AND admin_actor.deleted_at IS NULL
                  AND admin_actor.global_role='admin'
              )`,
         ).bind(
@@ -2016,6 +2294,7 @@ export async function adminMutation(
                FROM users admin_actor
                WHERE admin_actor.user_id=?
                  AND admin_actor.status='active'
+                 AND admin_actor.deleted_at IS NULL
                  AND admin_actor.global_role='admin'
              )`,
         ).bind(
@@ -2056,6 +2335,7 @@ export async function adminMutation(
                FROM users admin_actor
                WHERE admin_actor.user_id=?
                  AND admin_actor.status='active'
+                 AND admin_actor.deleted_at IS NULL
                  AND admin_actor.global_role='admin'
              )`,
         ).bind(now, input.targetId, now, actor),
@@ -2077,6 +2357,73 @@ export async function adminMutation(
         refuseAdminMutation("Expired sessions cannot be revoked");
       }
       message = "Session revoked";
+      break;
+    }
+    case "session.revoke-pre-google": {
+      if (input.targetId !== SESSION_REVOCATION_SCOPE.PRE_GOOGLE) {
+        refuseAdminMutation(
+          "Only pre-Google sessions can be revoked in bulk",
+        );
+      }
+      currentSessionRevoked = options.actorSessionId
+        ? Boolean(await db.prepare(
+            `SELECT 1 AS active
+             FROM sessions
+             WHERE session_id=?
+               AND (
+                 authentication_provider=?
+                 OR authentication_provider IS NULL
+               )
+               AND revoked_at IS NULL
+               AND expires_at>?`,
+          ).bind(
+            options.actorSessionId,
+            SESSION_AUTHENTICATION_PROVIDER.ACCESS_MIGRATION,
+            now,
+          ).first<{ active: number }>())
+        : false;
+      const [mutationResult, auditResult] = await db.batch([
+        db.prepare(
+          `UPDATE sessions
+           SET revoked_at=?
+           WHERE (
+               authentication_provider=?
+               OR authentication_provider IS NULL
+             )
+             AND revoked_at IS NULL
+             AND expires_at>?
+             AND EXISTS (
+               SELECT 1
+               FROM users admin_actor
+               WHERE admin_actor.user_id=?
+                 AND admin_actor.status='active'
+                 AND admin_actor.deleted_at IS NULL
+                 AND admin_actor.global_role='admin'
+             )`,
+        ).bind(
+          now,
+          SESSION_AUTHENTICATION_PROVIDER.ACCESS_MIGRATION,
+          now,
+          actor,
+        ),
+        db.prepare(
+          `INSERT INTO auth_audit_events(
+             event_id,actor_user_id,action,target_type,target_id,
+             detail_json,created_at
+           )
+           SELECT ?,?,'session.revoke-pre-google','session',?,'{}',?
+           WHERE changes()>0`,
+        ).bind(newId("aud"), actor, input.targetId, now),
+      ]);
+      revokedSessions = changes(mutationResult);
+      if (revokedSessions < 1 || changes(auditResult) !== 1) {
+        currentSessionRevoked = false;
+        await requireActiveAdminActor(db, actor);
+        refuseAdminMutation(
+          "No active pre-Google sessions remain",
+        );
+      }
+      message = "Pre-Google sessions revoked";
       break;
     }
     case "guest.revoke": {
@@ -2101,6 +2448,7 @@ export async function adminMutation(
                FROM users admin_actor
                WHERE admin_actor.user_id=?
                  AND admin_actor.status='active'
+                 AND admin_actor.deleted_at IS NULL
                  AND admin_actor.global_role='admin'
              )`,
         ).bind(now, input.targetId, now, actor),
@@ -2191,6 +2539,7 @@ export async function adminMutation(
                FROM users admin_actor
                WHERE admin_actor.user_id=?
                  AND admin_actor.status='active'
+                 AND admin_actor.deleted_at IS NULL
                  AND admin_actor.global_role='admin'
              )`,
         ).bind(
@@ -2242,7 +2591,13 @@ export async function adminMutation(
       refuseAdminMutation("Unsupported admin action");
   }
   return {
+    ...(currentSessionRevoked === undefined
+      ? {}
+      : { currentSessionRevoked }),
     message,
     ...(revokedSessions === undefined ? {} : { revokedSessions }),
+    ...(unusedGuestLinksRevoked === undefined
+      ? {}
+      : { unusedGuestLinksRevoked }),
   };
 }

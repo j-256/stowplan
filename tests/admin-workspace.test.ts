@@ -26,6 +26,7 @@ import {
   numberedMigrationDatabase,
   sqliteD1Database,
 } from "./helpers/sqlite-d1";
+import { TEST_AUTH_ENV } from "./helpers/auth";
 
 function sitesDatabase() {
   const sqlite = new DatabaseSync(":memory:");
@@ -50,15 +51,31 @@ function raceBeforeFirstBatch(
   };
 }
 
+async function createAdmin(
+  database: D1DatabaseLike,
+  profile: Parameters<typeof createOrLinkUser>[2],
+) {
+  const user = await createOrLinkUser(
+    database,
+    TEST_AUTH_ENV,
+    profile,
+  );
+  await database.prepare(
+    `UPDATE users
+     SET global_role='admin'
+     WHERE user_id=?`,
+  ).bind(user.userId).run();
+  return { ...user, globalRole: "admin" as const };
+}
+
 async function fixture(
   schema: "numbered" | "sites" = "numbered",
 ) {
   const storage = schema === "sites"
     ? sitesDatabase()
     : numberedMigrationDatabase();
-  const admin = await createOrLinkUser(
+  const admin = await createAdmin(
     storage.database,
-    { AUTH_ADMIN_EMAILS: "godmode-admin@example.test" },
     {
       displayName: "Godmode administrator",
       email: "godmode-admin@example.test",
@@ -66,7 +83,7 @@ async function fixture(
       subject: `godmode-admin-${schema}`,
     },
   );
-  const owner = await createOrLinkUser(storage.database, {}, {
+  const owner = await createOrLinkUser(storage.database, TEST_AUTH_ENV, {
     displayName: "Workspace owner",
     email: "workspace-owner@example.test",
     provider: "test",
@@ -227,9 +244,8 @@ describe("global admin workspace control", () => {
 
   it("rechecks active admin authority while recording an inspection", async () => {
     const current = await fixture();
-    await createOrLinkUser(
+    await createAdmin(
       current.database,
-      { AUTH_ADMIN_EMAILS: "backup-inspection-admin@example.test" },
       {
         displayName: "Backup inspection administrator",
         email: "backup-inspection-admin@example.test",
@@ -320,11 +336,17 @@ describe("global admin workspace control", () => {
       current.admin.userId,
       current.state.workspace.id,
     )).toEqual({ count: 1 });
+    const ownerAccount = current.sqlite.prepare(
+      `SELECT account_revision
+       FROM users
+       WHERE user_id=?`,
+    ).get(current.owner.userId) as { account_revision: number };
     await expect(adminMutation(
       current.database,
       current.admin.userId,
       {
         action: "user.status",
+        expectedAccountRevision: ownerAccount.account_revision,
         targetId: current.owner.userId,
         value: "disabled",
       },
@@ -356,12 +378,16 @@ describe("global admin workspace control", () => {
 
   it("refuses custody when access changes after its preflight", async () => {
     const current = await fixture();
-    const racingMember = await createOrLinkUser(current.database, {}, {
+    const racingMember = await createOrLinkUser(
+      current.database,
+      TEST_AUTH_ENV,
+      {
       displayName: "Racing workspace member",
       email: "racing-workspace-member@example.test",
       provider: "test",
       subject: "racing-workspace-member",
-    });
+      },
+    );
     const before = current.sqlite.prepare(
       `SELECT access_revision
        FROM workspace_snapshots
@@ -560,12 +586,16 @@ describe("global admin workspace control", () => {
     "deletes an unjoined workspace transactionally in the %s schema",
     async (schema) => {
     const current = await fixture(schema);
-    const member = await createOrLinkUser(current.database, {}, {
+    const member = await createOrLinkUser(
+      current.database,
+      TEST_AUTH_ENV,
+      {
       displayName: "Workspace member",
       email: "workspace-member@example.test",
       provider: "test",
       subject: "workspace-member",
-    });
+      },
+    );
     await current.database.prepare(
       `INSERT INTO workspace_members(
          workspace_id,user_id,role,created_at
@@ -667,12 +697,16 @@ describe("global admin workspace control", () => {
     async (revisionKind) => {
       const current = await fixture();
       const racingMember = revisionKind === "access"
-        ? await createOrLinkUser(current.database, {}, {
-            displayName: "Deletion race member",
-            email: "deletion-race-member@example.test",
-            provider: "test",
-            subject: "deletion-race-member",
-          })
+        ? await createOrLinkUser(
+            current.database,
+            TEST_AUTH_ENV,
+            {
+              displayName: "Deletion race member",
+              email: "deletion-race-member@example.test",
+              provider: "test",
+              subject: "deletion-race-member",
+            },
+          )
         : null;
       await createGuestLink(
         current.database,

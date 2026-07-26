@@ -3,15 +3,22 @@ import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 
 // Makes getCloudflareContext() and local Wrangler bindings available to
 // `next dev`. OpenNext treats this as a no-op for production builds
-initOpenNextCloudflareForDev();
+const localPersistencePath =
+  process.env.STOWPLAN_WRANGLER_PERSIST_PATH;
+initOpenNextCloudflareForDev(
+  localPersistencePath
+    ? { persist: { path: localPersistencePath } }
+    : undefined,
+);
 
 const contentSecurityPolicy = [
   "default-src 'self'",
-  `script-src 'self' 'unsafe-inline'${process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : ""}`,
+  `script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com${process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : ""}`,
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "font-src 'self' data:",
   "connect-src 'self'",
+  "frame-src https://challenges.cloudflare.com",
   "worker-src 'self' blob:",
   "manifest-src 'self'",
   "object-src 'none'",

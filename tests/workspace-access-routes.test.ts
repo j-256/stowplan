@@ -7,6 +7,9 @@ import {
 } from "../app/api/workspaces/[workspaceId]/guest-links/route";
 import { PATCH as patchMember } from "../app/api/workspaces/[workspaceId]/members/[userId]/route";
 import { D1SnapshotStore } from "../src/adapters/d1-snapshot-store";
+import {
+  GUEST_INVITATION_RETURN_TO_MAX_CHARACTERS,
+} from "../src/domain/app-url";
 import { createEmptyState } from "../src/domain/factories";
 import {
   claimWorkspace,
@@ -16,6 +19,7 @@ import {
 import type { RuntimeEnv } from "../src/server/runtime";
 import { WORKSPACE_ACCESS_REQUEST_MAX_BYTES } from "../src/server/request-body";
 import { ACCOUNT_CONTEXT_HEADER } from "../src/shared/account-context";
+import { TEST_AUTH_ENV } from "./helpers/auth";
 import { numberedMigrationDatabase } from "./helpers/sqlite-d1";
 
 const runtimeGlobal = globalThis as typeof globalThis & {
@@ -29,10 +33,11 @@ afterEach(() => {
 async function routeFixture() {
   const { database, sqlite } = numberedMigrationDatabase();
   runtimeGlobal.__STOWPLAN_ENV = {
+    ...TEST_AUTH_ENV,
     AUTH_BASE_URL: "https://stowplan.test",
     DB: database,
   };
-  const owner = await createOrLinkUser(database, {}, {
+  const owner = await createOrLinkUser(database, TEST_AUTH_ENV, {
     displayName: "Route owner",
     email: "route-owner@example.test",
     provider: "test",
@@ -51,7 +56,7 @@ async function routeFixture() {
     new Request("https://stowplan.test/sign-in"),
   );
   return {
-    cookie: `stowplan_session=${session.raw}`,
+    cookie: `__Host-stowplan_session=${session.raw}`,
     database,
     owner,
     sqlite,
@@ -118,12 +123,16 @@ describe("workspace access routes", () => {
 
   it("origin-protects mutations before changing membership", async () => {
     const fixture = await routeFixture();
-    const target = await createOrLinkUser(fixture.database, {}, {
+    const target = await createOrLinkUser(
+      fixture.database,
+      TEST_AUTH_ENV,
+      {
       displayName: "Target",
       email: "route-target@example.test",
       provider: "test",
       subject: "route-target",
-    });
+      },
+    );
     await fixture.database.prepare(
       `INSERT INTO workspace_members(workspace_id,user_id,role,created_at)
        VALUES(?,?,'viewer',?)`,
@@ -210,6 +219,57 @@ describe("workspace access routes", () => {
     expect(fixture.sqlite.prepare(
       "SELECT COUNT(*) AS count FROM guest_links",
     ).get()).toEqual({ count: 0 });
+  });
+
+  it("rejects an overlong canonical return path without durable writes", async () => {
+    const fixture = await routeFixture();
+    const revision = fixture.sqlite.prepare(
+      `SELECT access_revision FROM workspace_snapshots
+       WHERE workspace_id=?`,
+    ).get(fixture.state.workspace.id) as { access_revision: number };
+    const returnTo =
+      `/workspaces/${fixture.state.workspace.id}/inventory/items/${
+        "i".repeat(GUEST_INVITATION_RETURN_TO_MAX_CHARACTERS + 1)
+      }`;
+    const response = await postGuestLink(
+      jsonRequest(
+        `/api/workspaces/${fixture.state.workspace.id}/guest-links`,
+        fixture.cookie,
+        fixture.owner.userId,
+        "POST",
+        {
+          expectedAccessRevision: revision.access_revision,
+          expiresInHours: 24,
+          returnTo,
+          role: "viewer",
+        },
+      ),
+      {
+        params: Promise.resolve({
+          workspaceId: fixture.state.workspace.id,
+        }),
+      },
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    await expect(response.json()).resolves.toEqual({
+      code: "INVALID_REQUEST",
+      error:
+        `returnTo must resolve to a valid workspace path no longer than ${GUEST_INVITATION_RETURN_TO_MAX_CHARACTERS} characters`,
+    });
+    expect(fixture.sqlite.prepare(
+      `SELECT
+         (SELECT COUNT(*) FROM guest_links) AS guest_links,
+         (SELECT COUNT(*) FROM auth_audit_events
+          WHERE action='guest.create') AS audit_events,
+         (SELECT COUNT(*) FROM creation_ledger
+          WHERE resource='guest_link') AS ledger_events`,
+    ).get()).toEqual({
+      audit_events: 0,
+      guest_links: 0,
+      ledger_events: 0,
+    });
   });
 
   it("origin-protects server deletion without changing durable data", async () => {
@@ -452,6 +512,8 @@ describe("workspace access routes", () => {
 
   it("returns a raw guest URL only from creation and never from listing", async () => {
     const fixture = await routeFixture();
+    const returnTo =
+      `/workspaces/${fixture.state.workspace.id}/settings`;
     const revision = fixture.sqlite.prepare(
       `SELECT access_revision FROM workspace_snapshots
        WHERE workspace_id=?`,
@@ -465,6 +527,7 @@ describe("workspace access routes", () => {
         {
           expectedAccessRevision: revision.access_revision,
           expiresInHours: 36,
+          returnTo,
           role: "viewer",
         },
       ),
@@ -489,6 +552,8 @@ describe("workspace access routes", () => {
     const rawToken = new URLSearchParams(
       invitation.hash.slice(1),
     ).get("token");
+    expect(new URLSearchParams(invitation.hash.slice(1)).get("returnTo"))
+      .toBe(returnTo);
     expect(rawToken).toBeTruthy();
     expect(invitation.href.slice(0, invitation.href.indexOf("#")))
       .not.toContain(rawToken);

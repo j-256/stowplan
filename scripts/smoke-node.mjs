@@ -16,6 +16,8 @@ const WORKSPACE_NAME = "Smoke workspace";
 const RESTORED_WORKSPACE_NAME = "Restored smoke workspace";
 const WORKSPACE_RETURN_TO = `/workspaces/${WORKSPACE_ID}/inventory`;
 const ACCOUNT_CONTEXT_HEADER = "x-stowplan-account-id";
+const LOCAL_IDENTITY_DIGEST_KEY =
+  "stowplan-local-identity-digest-key-not-for-production";
 
 async function availablePort() {
   const server = createServer();
@@ -179,9 +181,9 @@ const child = spawn(process.execPath, ["scripts/node-server.mjs"], {
   cwd: process.cwd(),
   env: {
     ...process.env,
-    AUTH_ADMIN_EMAILS: "owner@example.test",
     AUTH_BASE_URL: origin,
     AUTH_DEV_ENABLED: "true",
+    AUTH_IDENTITY_DIGEST_KEY: LOCAL_IDENTITY_DIGEST_KEY,
     HOST: "127.0.0.1",
     NODE_ENV: "production",
     PORT: String(port),
@@ -227,7 +229,7 @@ try {
   });
   await assertStatus(login, 200);
   const cookie = (login.headers.get("set-cookie") ?? "").split(";")[0];
-  assert.match(cookie, /^stowplan_session=/);
+  assert.match(cookie, /^__Host-stowplan_session=/);
   const sessionHeaders = { cookie };
 
   const me = await fetch(`${origin}/api/auth/me`, { headers: sessionHeaders });
@@ -434,7 +436,7 @@ try {
   const viewerCookie = (
     viewerLogin.headers.get("set-cookie") ?? ""
   ).split(";")[0];
-  assert.match(viewerCookie, /^stowplan_session=/);
+  assert.match(viewerCookie, /^__Host-stowplan_session=/);
   const viewerMe = await fetch(`${origin}/api/auth/me`, {
     headers: { cookie: viewerCookie },
   });

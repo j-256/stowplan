@@ -3,6 +3,8 @@ const MAXIMUM_AUDIT_IDENTIFIER_LENGTH = 512;
 const MAXIMUM_AUDIT_TIMESTAMP_LENGTH = 64;
 
 type AuditDetailRule =
+  | { kind: "boolean" }
+  | { kind: "digest" }
   | { kind: "enum"; values: readonly string[] }
   | { kind: "integer" }
   | { kind: "nullable-text"; maximumLength: number }
@@ -35,6 +37,56 @@ function schema(
 }
 
 const AUDIT_DETAIL_SCHEMAS = Object.freeze({
+  "account.delete": schema({}),
+  "admin.bootstrap": schema({}),
+  "admin.recover": schema({
+    emailMatched: {
+      kind: "boolean",
+    },
+    principalDigest: {
+      kind: "digest",
+    },
+    reason: {
+      kind: "text",
+      maximumLength: 500,
+    },
+    recoveryMode: {
+      kind: "enum",
+      values: Object.freeze(["access", "app-session"]),
+    },
+  }),
+  "circuit.set": schema({
+    pauseKind: {
+      kind: "enum",
+      values: Object.freeze(["capacity", "security"]),
+    },
+    resumeAt: NULLABLE_TIMESTAMP_RULE,
+    scope: {
+      kind: "enum",
+      values: Object.freeze([
+        "guest_links",
+        "guest_redemptions",
+        "new_accounts",
+        "new_workspaces",
+        "snapshot_growth",
+      ]),
+    },
+    state: {
+      kind: "enum",
+      values: Object.freeze(["open", "paused"]),
+    },
+  }),
+  "governance.limit.set": schema({
+    key: {
+      kind: "enum",
+      values: Object.freeze(["new_accounts_per_day"]),
+    },
+    reason: {
+      kind: "text",
+      maximumLength: 500,
+    },
+    value: INTEGER_RULE,
+  }),
   "guest.create": schema({
     expiresAt: TIMESTAMP_RULE,
     role: WORKSPACE_ROLE_RULE,
@@ -91,12 +143,14 @@ const AUDIT_DETAIL_SCHEMAS = Object.freeze({
     workspaceId: IDENTIFIER_RULE,
   }),
   "session.issue": schema({}),
+  "session.reauthenticate": schema({}),
   "session.revoke": schema({
     source: {
       kind: "enum",
       values: Object.freeze(["account", "logout"]),
     },
   }),
+  "session.revoke-pre-google": schema({}),
   "snapshot.restore": schema({
     fromRevision: INTEGER_RULE,
     items: INTEGER_RULE,
@@ -110,6 +164,8 @@ const AUDIT_DETAIL_SCHEMAS = Object.freeze({
       values: Object.freeze(["admin", "user"]),
     },
   }),
+  "user.ban": schema({}),
+  "user.ban.lift": schema({}),
   "user.status": schema({
     value: {
       kind: "enum",
@@ -160,6 +216,15 @@ function safeFieldValue(
   value: unknown,
   rule: AuditDetailRule,
 ): unknown {
+  if (rule.kind === "boolean") {
+    return typeof value === "boolean" ? value : REDACTED_AUDIT_VALUE;
+  }
+  if (rule.kind === "digest") {
+    return typeof value === "string" &&
+        /^v1:[0-9a-f]{64}$/u.test(value)
+      ? value
+      : REDACTED_AUDIT_VALUE;
+  }
   if (rule.kind === "integer") {
     return typeof value === "number" &&
         Number.isSafeInteger(value) &&

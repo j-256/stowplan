@@ -1,16 +1,31 @@
 import {
   createOrLinkUser,
+  developmentAuthenticationAllowed,
+  identityEnforcementConfigured,
   isTrustedMutation,
   issueSession,
   sessionCookie,
 } from "../../../../src/server/auth";
-import { privateJson } from "../../../../src/server/api-problem";
+import {
+  apiProblemRetryAfter,
+  ApiProblem,
+  privateJson,
+} from "../../../../src/server/api-problem";
+import {
+  bootstrapGlobalAdmin,
+} from "../../../../src/server/account-governance";
 import {
   CONTROL_REQUEST_MAX_BYTES,
   readJsonRequest,
   RequestBodyTooLargeError,
 } from "../../../../src/server/request-body";
 import { runtimeEnv } from "../../../../src/server/runtime";
+import {
+  SESSION_AUTHENTICATION_PROVIDER,
+} from "../../../../src/shared/authentication";
+
+const SYNTHETIC_DEVELOPMENT_EMAIL_PATTERN =
+  /^[^@\s]+@example\.test$/;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" &&
@@ -38,13 +53,22 @@ export async function POST(request: Request) {
         { status: 503 },
       );
     }
-    if (env.AUTH_DEV_ENABLED !== "true") {
+    if (!developmentAuthenticationAllowed(env, request.url)) {
       return privateJson(
         {
           code: "AUTHENTICATION_UNAVAILABLE",
           error: "Development authentication is disabled",
         },
         { status: 404 },
+      );
+    }
+    if (!identityEnforcementConfigured(env)) {
+      return privateJson(
+        {
+          code: "AUTHENTICATION_UNAVAILABLE",
+          error: "Development authentication is not configured",
+        },
+        { status: 503 },
       );
     }
     const contentType = request.headers.get("content-type") ?? "";
@@ -86,16 +110,16 @@ export async function POST(request: Request) {
       );
     }
     const email = body.email.trim().toLowerCase();
-    if (!email) {
+    if (!SYNTHETIC_DEVELOPMENT_EMAIL_PATTERN.test(email)) {
       return privateJson(
         {
           code: "INVALID_REQUEST",
-          error: "Email is required",
+          error: "Development email must use the @example.test domain",
         },
         { status: 400 },
       );
     }
-    const user = await createOrLinkUser(
+    let user = await createOrLinkUser(
       env.DB,
       env,
       {
@@ -105,7 +129,28 @@ export async function POST(request: Request) {
         displayName: body.name?.trim() || email,
       },
     );
-    const session = await issueSession(env.DB, env, user, request);
+    if (email === "owner@example.test") {
+      const bootstrap = await bootstrapGlobalAdmin(
+        env.DB,
+        user.userId,
+      );
+      if (
+        bootstrap.status === "promoted"
+        || bootstrap.status === "already-admin"
+      ) {
+        user = { ...user, globalRole: "admin" };
+      }
+    }
+    const session = await issueSession(
+      env.DB,
+      env,
+      user,
+      request,
+      {
+        authenticationProvider:
+          SESSION_AUTHENTICATION_PROVIDER.DEVELOPMENT,
+      },
+    );
     return privateJson(
       { user },
       {
@@ -132,6 +177,40 @@ export async function POST(request: Request) {
         },
         { status: 400 },
       );
+    }
+    if (error instanceof ApiProblem) {
+      if (error.code === "ACCOUNT_BANNED") {
+        return privateJson(
+          {
+            code: "ACCOUNT_BANNED",
+            error: "This account cannot sign in",
+          },
+          { status: 403 },
+        );
+      }
+      if (error.code === "CIRCUIT_PAUSED") {
+        return privateJson(
+          {
+            code: "CIRCUIT_PAUSED",
+            error: "New sign-ins are temporarily unavailable",
+          },
+          { status: 503 },
+        );
+      }
+      if (error.code === "QUOTA_EXCEEDED") {
+        return privateJson(
+          {
+            code: "QUOTA_EXCEEDED",
+            error: "Sign-in capacity is temporarily unavailable; try again later",
+          },
+          {
+            headers: {
+              "retry-after": apiProblemRetryAfter(error),
+            },
+            status: 429,
+          },
+        );
+      }
     }
     return privateJson(
       {

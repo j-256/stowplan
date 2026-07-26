@@ -1,6 +1,7 @@
 import type {
   D1DatabaseLike,
   D1QueryResultLike,
+  D1ResultLike,
 } from "../adapters/d1-snapshot-store";
 import { newId, nowIso } from "../domain/factories";
 import type { WorkspaceRole } from "../domain/workspace-access";
@@ -9,6 +10,14 @@ import type {
   WorkspaceState,
 } from "../domain/types";
 import { API_QUOTAS } from "../shared/api-quotas";
+import {
+  serializedJsonBytes,
+} from "./quotas";
+import {
+  membershipAdmissionRefusal,
+  snapshotGrowthRefusal,
+  workspaceAllocationRefusal,
+} from "./account-governance";
 import { safeAuditDetailJson } from "./audit-detail";
 
 export type WorkspaceInitializationStatus =
@@ -79,7 +88,21 @@ export async function initializeOwnedWorkspace(
 ): Promise<WorkspaceInitializationResult> {
   const now = nowIso();
   const workspaceId = state.workspace.id;
-  const results = await database.batch([
+  const allocationRefusal = await workspaceAllocationRefusal(
+    database,
+    userId,
+    serializedJsonBytes(state),
+    new Date(now),
+  );
+  if (allocationRefusal) throw allocationRefusal;
+  const membershipRefusal = await membershipAdmissionRefusal(
+    database,
+    userId,
+  );
+  if (membershipRefusal) throw membershipRefusal;
+  let results: D1ResultLike[];
+  try {
+    results = await database.batch([
     database.prepare(
       `INSERT INTO workspace_snapshots(
          workspace_id, revision, access_revision, state_json,
@@ -101,9 +124,8 @@ export async function initializeOwnedWorkspace(
          )
          AND (
            SELECT COUNT(*)
-           FROM workspace_members owned
-           WHERE owned.user_id = caller.user_id
-             AND owned.role = 'owner'
+           FROM workspace_custody custody
+           WHERE custody.custodian_user_id = caller.user_id
          ) < ?`,
     ).bind(
       workspaceId,
@@ -116,6 +138,13 @@ export async function initializeOwnedWorkspace(
       workspaceId,
       API_QUOTAS.ownedWorkspacesPerUser,
     ),
+    database.prepare(
+      `INSERT INTO workspace_custody(
+         workspace_id, custodian_user_id, created_at, updated_at
+       )
+       SELECT ?, ?, ?, ?
+       WHERE changes() = 1`,
+    ).bind(workspaceId, userId, now, now),
     database.prepare(
       `INSERT INTO workspace_members(
          workspace_id, user_id, role, created_at
@@ -159,10 +188,25 @@ export async function initializeOwnedWorkspace(
          ON snapshots.workspace_id = ?
        WHERE caller.user_id = ?`,
     ).bind(workspaceId, userId, workspaceId, userId),
-  ]);
+    ]);
+  } catch (error) {
+    const racedAllocationRefusal = await workspaceAllocationRefusal(
+      database,
+      userId,
+      serializedJsonBytes(state),
+      new Date(now),
+    );
+    if (racedAllocationRefusal) throw racedAllocationRefusal;
+    const racedMembershipRefusal = await membershipAdmissionRefusal(
+      database,
+      userId,
+    );
+    if (racedMembershipRefusal) throw racedMembershipRefusal;
+    throw error;
+  }
 
   const row = (
-    results[3] as D1QueryResultLike<InitializationRow> | undefined
+    results[4] as D1QueryResultLike<InitializationRow> | undefined
   )?.results?.[0];
   if (!row) {
     return {
@@ -172,7 +216,7 @@ export async function initializeOwnedWorkspace(
       status: "inactive",
     };
   }
-  if (changes(results[2]) === 1) {
+  if (changes(results[3]) === 1) {
     return {
       accessRevision: row.access_revision,
       membershipRevision: row.membership_revision,
@@ -214,8 +258,17 @@ export async function restoreOwnedWorkspace(
 ): Promise<WorkspaceRestoreResult> {
   const now = nowIso();
   const workspaceId = state.workspace.id;
-  const [restoreResult, auditResult, contextResult] =
-    await database.batch([
+  const snapshotBytes = serializedJsonBytes(state);
+  const growthRefusal = await snapshotGrowthRefusal(
+    database,
+    workspaceId,
+    snapshotBytes,
+    new Date(now),
+  );
+  if (growthRefusal) throw growthRefusal;
+  let results: D1ResultLike[];
+  try {
+    results = await database.batch([
       database.prepare(
         `UPDATE workspace_snapshots
          SET revision = ?, state_json = ?, updated_at = ?
@@ -307,6 +360,17 @@ export async function restoreOwnedWorkspace(
          WHERE caller.user_id = ?`,
       ).bind(workspaceId, workspaceId, userId),
     ]);
+  } catch (error) {
+    const racedGrowthRefusal = await snapshotGrowthRefusal(
+      database,
+      workspaceId,
+      snapshotBytes,
+      new Date(now),
+    );
+    if (racedGrowthRefusal) throw racedGrowthRefusal;
+    throw error;
+  }
+  const [restoreResult, auditResult, contextResult] = results;
   const row = (
     contextResult as D1QueryResultLike<RestoreRow> | undefined
   )?.results?.[0];
