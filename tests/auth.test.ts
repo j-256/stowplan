@@ -1915,7 +1915,7 @@ describe("authentication",()=>{
        WHERE workspace_id = ? AND consumed_at IS NOT NULL`,
     ).get(state.workspace.id)).toEqual({ count: 1 });
   });
-  it("optionally requires a matching Cloudflare Access assertion for admin", async () => {
+  it("requires a global admin role and optionally matching Access assertion", async () => {
     const { database: db, sqlite } = numberedMigrationDatabase();
     const baseEnv = TEST_AUTH_ENV;
     const user = await createOrLinkUser(db, baseEnv, {
@@ -1924,6 +1924,25 @@ describe("authentication",()=>{
       provider: "test",
       subject: "owner",
     });
+    const ordinarySession = await issueSession(
+      db,
+      baseEnv,
+      user,
+      new Request("https://example.test"),
+    );
+    const ordinaryRequest = new Request("https://example.test/admin", {
+      headers: {
+        cookie: `__Host-stowplan_session=${ordinarySession.raw}`,
+      },
+    });
+    await expect(authorizeAdmin(
+      db,
+      baseEnv,
+      ordinaryRequest,
+    )).rejects.toMatchObject({
+      message: "Global administrator access is required",
+      status: 403,
+    } satisfies Partial<AuthorizationError>);
     sqlite.prepare(
       "UPDATE users SET global_role='admin' WHERE user_id=?",
     ).run(user.userId);

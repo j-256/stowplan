@@ -4488,6 +4488,22 @@ test("keeps server administration searchable and responsive", async ({
   await expect(page.getByRole("heading", {
     name: "Stowplan administration",
   })).toBeVisible();
+  const sectionNavigation = page.getByRole("navigation", {
+    name: "Administration sections",
+  });
+  for (const [label, section] of [
+    ["Users", "admin-users"],
+    ["Workspace roles", "admin-memberships"],
+    ["Workspaces", "admin-workspaces"],
+    ["Sessions", "admin-sessions"],
+    ["Invite links", "admin-guest-links"],
+    ["Audit", "admin-audit"],
+  ]) {
+    await expect(sectionNavigation.getByRole("link", {
+      exact: true,
+      name: label,
+    })).toHaveAttribute("href", `#${section}`);
+  }
   await expect(page.getByRole("link", {
     name: "Open member settings",
   })).toHaveAttribute(
@@ -4612,6 +4628,12 @@ test("keeps server administration searchable and responsive", async ({
   await expect.poll(() => currentSessionConfirmation).toContain(
     "This signs you out immediately",
   );
+  await sectionNavigation.getByRole("link", {
+    exact: true,
+    name: "Users",
+  }).click();
+  await expect(page).toHaveURL(/\/admin#admin-users$/u);
+  await expect(page.locator("#admin-users")).toBeFocused();
 });
 
 test("keeps the newest admin search response", async ({

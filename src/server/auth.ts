@@ -1162,7 +1162,10 @@ export async function authorizeAdmin(
     throw new AuthorizationError("Authentication required", 401);
   }
   if (user.globalRole !== "admin") {
-    throw new AuthorizationError("Admin scope required", 403);
+    throw new AuthorizationError(
+      "Global administrator access is required",
+      403,
+    );
   }
   return user;
 }

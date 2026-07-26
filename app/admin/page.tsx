@@ -129,6 +129,15 @@ const OVERVIEW_FIELD_BY_RESOURCE = Object.freeze({
   workspaces: "workspaces",
 } satisfies Record<AdminResource, OverviewListField>);
 
+const ADMIN_SECTION_LINKS = Object.freeze([
+  { href: "#admin-users", label: "Users" },
+  { href: "#admin-memberships", label: "Workspace roles" },
+  { href: "#admin-workspaces", label: "Workspaces" },
+  { href: "#admin-sessions", label: "Sessions" },
+  { href: "#admin-guest-links", label: "Invite links" },
+  { href: "#admin-audit", label: "Audit" },
+]);
+
 const INVENTORY_SECTION_BY_KEY = Object.freeze({
   "account-deletion-receipts": "admin-deletions",
   "auth-audit-events": "admin-audit",
@@ -573,6 +582,18 @@ export default function AdminPage() {
         Refresh
       </button>
     </form>
+    {data && <nav
+      aria-label="Administration sections"
+      className="admin-section-nav"
+    >
+      <strong>Jump to</strong>
+      {ADMIN_SECTION_LINKS.map(link => <a
+        href={link.href}
+        key={link.href}
+      >
+        {link.label}
+      </a>)}
+    </nav>}
     {query && <p className="admin-filter-note">
       Filtered by <strong>{query}</strong>
       <button
