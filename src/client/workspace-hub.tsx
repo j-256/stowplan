@@ -100,6 +100,7 @@ export function WorkspaceHub({
   const [workspaceName, setWorkspaceName] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [removeCard, setRemoveCard] = useState<WorkspaceHubCard | null>(null);
+  const [resetCard, setResetCard] = useState<WorkspaceHubCard | null>(null);
   const [alert, setAlert] = useState("");
   const filtered = useMemo(
     () => cards.filter((card) => workspaceHubCardMatches(card, query)),
@@ -118,13 +119,15 @@ export function WorkspaceHub({
     id: string,
     action: () => Promise<void>,
     fallback: string,
-  ) => {
+  ): Promise<boolean> => {
     setAlert("");
     setBusyId(id);
     try {
       await action();
+      return true;
     } catch (error) {
       setAlert(error instanceof Error ? error.message : fallback);
+      return false;
     } finally {
       setBusyId(null);
     }
@@ -146,6 +149,17 @@ export function WorkspaceHub({
       "Could not remove this device copy",
     );
     setRemoveCard(null);
+  };
+
+  const confirmDemoReset = async () => {
+    if (!resetCard || !onResetDemo) return;
+    if (await run(
+      "reset-demo",
+      onResetDemo,
+      "Could not reset the kitchen demo",
+    )) {
+      setResetCard(null);
+    }
   };
 
   return <main className={styles.hub}>
@@ -297,17 +311,16 @@ export function WorkspaceHub({
                 Review sync issues
               </button>}
             {current &&
-              card.capabilities.write &&
+              (
+                card.access.kind === "device-only" ||
+                card.capabilities.delete
+              ) &&
               card.id.startsWith("ws_demo") &&
               onResetDemo &&
               <button
                 className="danger"
                 disabled={busyId === "reset-demo"}
-                onClick={() => void run(
-                  "reset-demo",
-                  onResetDemo,
-                  "Could not reset the kitchen demo",
-                )}
+                onClick={() => setResetCard(card)}
                 type="button"
               >
                 Reset kitchen demo
@@ -376,6 +389,41 @@ export function WorkspaceHub({
           type="button"
         >
           Remove device copy
+        </button>
+      </div>
+    </ModalDialog>
+
+    <ModalDialog
+      description={resetCard
+        ? resetCard.access.kind === "server"
+          ? "This permanently deletes this demo's server instance, removes its memberships and invite links, and discards its device changes and queued backup commands. A fresh private demo instance will open on this device. Other workspaces are not affected."
+          : "This permanently discards this demo's device changes and queued backup commands. A fresh private demo instance will open on this device. Other workspaces are not affected."
+        : undefined}
+      destructive
+      onClose={() => setResetCard(null)}
+      open={Boolean(resetCard)}
+      title="Reset the kitchen demo?"
+    >
+      <div className={styles.dialogActions}>
+        <button
+          data-dialog-initial-focus
+          disabled={busyId === "reset-demo"}
+          onClick={() => setResetCard(null)}
+          type="button"
+        >
+          Cancel
+        </button>
+        <button
+          className="danger"
+          disabled={busyId === "reset-demo"}
+          onClick={() => void confirmDemoReset()}
+          type="button"
+        >
+          {busyId === "reset-demo"
+            ? "Resetting..."
+            : resetCard?.access.kind === "server"
+              ? "Delete old demo and reset"
+              : "Reset demo"}
         </button>
       </div>
     </ModalDialog>

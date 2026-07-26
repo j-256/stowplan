@@ -65,9 +65,14 @@ import type {
   WorkspaceState,
 } from "../domain/types";
 import {
+  normalizeWorkspaceAccessState,
   workspaceReadOnlyReason,
   type WorkspaceAccessStatus,
 } from "../domain/workspace-access";
+import {
+  accountContextHeaders,
+  responseMatchesAccount,
+} from "../shared/account-context";
 import { nextCaptureLocation } from "./capture-order";
 import {
   parseAppUrl,
@@ -91,6 +96,7 @@ import {
 } from "./preference-storage";
 import { ResizablePanels } from "./resizable-panels";
 import { ReadOnlyWorkspace } from "./read-only-workspace";
+import { parseAuthorizedRecoverySnapshot } from "./recovery-permissions";
 import { DEVICE_ONLY_BACKUP_ERROR, StowplanProvider, useStowplan, WorkspaceOpenError } from "./store";
 import { WorkspaceHub } from "./workspace-hub";
 import { WorkspaceAccessController } from "./workspace-access-controller";
@@ -634,6 +640,18 @@ function countLabel(
   plural = `${singular}s`,
 ): string {
   return `${count} ${count === 1 ? singular : plural}`;
+}
+function responseError(
+  value: unknown,
+  fallback: string,
+): string {
+  return value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      "error" in value &&
+      typeof value.error === "string"
+    ? value.error
+    : fallback;
 }
 function backupPresentation({
   accessStatus,
@@ -1690,17 +1708,142 @@ function Application() {
     setSelected(null);
   };
   const resetDemo = async () => {
-    if (
-      !state?.workspace.id.startsWith("ws_demo") ||
-      !confirm(
-        "Reset the kitchen demo? Every change and queued backup belonging to this demo will be discarded. Your other workspaces are not affected.",
-      )
-    ) {
+    if (!state?.workspace.id.startsWith("ws_demo")) return;
+    const resetWorkspaceId = state.workspace.id;
+    const next = createDemoState(newId("ws_demo"));
+    if (authorization?.kind !== "server") {
+      await replace(next);
+      enter(next, "push");
+      showFeedback("Fresh private demo created", "success");
       return;
     }
-    const next = createDemoState(newId("ws_demo"));
-    await replace(next);
+    if (
+      !accountId ||
+      authorization.status !== "active" ||
+      !authorization.capabilities.delete
+    ) {
+      throw new Error(
+        "Workspace owner access is required to reset a backed-up demo",
+      );
+    }
+    if (!online) {
+      throw new Error(
+        "Reconnect before resetting this backed-up demo",
+      );
+    }
+    const resetAccountId = accountId;
+    const serverResponse = await fetch(
+      `/api/snapshot?workspaceId=${encodeURIComponent(resetWorkspaceId)}`,
+      {
+        cache: "no-store",
+        headers: accountContextHeaders(resetAccountId),
+      },
+    );
+    const serverBody = await serverResponse.json().catch(() => null) as unknown;
+    if (!serverResponse.ok) {
+      throw new Error(responseError(
+        serverBody,
+        "Could not review the backed-up demo before resetting it",
+      ));
+    }
+    if (!responseMatchesAccount(serverResponse, resetAccountId)) {
+      throw new Error(
+        "The signed-in account changed before the demo reset",
+      );
+    }
+    const serverSnapshot = parseAuthorizedRecoverySnapshot(
+      serverBody,
+      resetWorkspaceId,
+      resetAccountId,
+    );
+    if (
+      serverSnapshot.authorization.role !== "owner" ||
+      !serverSnapshot.authorization.capabilities.delete
+    ) {
+      throw new Error(
+        "Workspace owner access is required to reset a backed-up demo",
+      );
+    }
+    const deleteResponse = await fetch(
+      `/api/workspaces/${encodeURIComponent(resetWorkspaceId)}`,
+      {
+        body: JSON.stringify({
+          confirmationName: serverSnapshot.state.workspace.name,
+          expectedAccessRevision:
+            serverSnapshot.authorization.accessRevision,
+          expectedMembershipRevision:
+            serverSnapshot.authorization.membershipRevision,
+          expectedRevision: serverSnapshot.state.workspace.revision,
+        }),
+        headers: accountContextHeaders(resetAccountId, {
+          "content-type": "application/json",
+        }),
+        method: "DELETE",
+      },
+    );
+    const deletion = await deleteResponse.json().catch(() => null) as unknown;
+    if (!deleteResponse.ok) {
+      throw new Error(responseError(
+        deletion,
+        "The backed-up demo could not be deleted",
+      ));
+    }
+    if (!responseMatchesAccount(deleteResponse, resetAccountId)) {
+      throw new Error(
+        "The signed-in account changed while the demo was being reset",
+      );
+    }
+    if (
+      !deletion ||
+      typeof deletion !== "object" ||
+      Array.isArray(deletion) ||
+      !("deleted" in deletion) ||
+      deletion.deleted !== true ||
+      !("deletedAt" in deletion) ||
+      typeof deletion.deletedAt !== "string" ||
+      !("finalAccessRevision" in deletion) ||
+      !Number.isSafeInteger(deletion.finalAccessRevision) ||
+      !("workspaceId" in deletion) ||
+      deletion.workspaceId !== resetWorkspaceId
+    ) {
+      throw new Error(
+        "The server returned an invalid demo deletion confirmation",
+      );
+    }
+    await setWorkspaceAccess(
+      resetWorkspaceId,
+      normalizeWorkspaceAccessState({
+        accountId: resetAccountId,
+        accessRevision: deletion.finalAccessRevision,
+        checkedAt: deletion.deletedAt,
+        kind: "server",
+        membershipRevision:
+          serverSnapshot.authorization.membershipRevision + 1,
+        role: serverSnapshot.authorization.role,
+        status: "deleted",
+      }),
+      {
+        ...serverSnapshot.workspace,
+        accountId: resetAccountId,
+      },
+    );
+    await initialize(next);
+    let retainedRecoveryCopy = false;
+    try {
+      await removeWorkspace(
+        resetWorkspaceId,
+        localUpdatedAt ?? undefined,
+      );
+    } catch {
+      retainedRecoveryCopy = true;
+    }
     enter(next, "push");
+    showFeedback(
+      retainedRecoveryCopy
+        ? "Fresh demo created. The deleted server copy changed on this device, so its read-only recovery copy remains in Workspaces."
+        : "Old demo deleted and fresh private demo created",
+      retainedRecoveryCopy ? "info" : "success",
+    );
   };
   const openWorkspaceMenu = () => {
     cancelWorkspaceOpen();

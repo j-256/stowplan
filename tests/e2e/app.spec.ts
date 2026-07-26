@@ -1600,8 +1600,19 @@ test("resets the active demo from the main menu", async ({ page }) => {
   await page.getByLabel("What is it?").fill("Temporary demo item");
   await page.getByRole("button", { name: "Save & add next" }).click();
   await page.getByLabel("Workspaces and backup status").click();
-  page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Reset kitchen demo" }).click();
+  const reset = page.getByRole("dialog", {
+    name: "Reset the kitchen demo?",
+  });
+  await expect(reset).toContainText(
+    "A fresh private demo instance will open on this device.",
+  );
+  await expect(reset.getByRole("button", {
+    name: "Cancel",
+  })).toBeFocused();
+  await reset.getByRole("button", {
+    name: "Reset demo",
+  }).click();
   await expect(page.getByRole("heading", { name: "Capture" })).toBeVisible();
   await expect(page.getByText("Temporary demo item", { exact: true })).toHaveCount(0);
   const after = await localReplica(page) as { state: { workspace: { id: string } } };

@@ -1800,6 +1800,113 @@ test(
 );
 
 test(
+  "retires a backed-up demo before opening a fresh private instance",
+  async ({ context, page, safeBeta }, testInfo) => {
+    skipUnlessProject(testInfo, [PHONE_PROJECT, DESKTOP_PROJECT]);
+    const owner = await safeBeta.signIn(
+      context,
+      "isolated demo reset owner",
+    );
+    await page.reload();
+    await page.getByRole("button", {
+      name: "Open kitchen demo",
+    }).click();
+    await page.getByRole("button", {
+      name: "Reopen capture",
+    }).click();
+    await page.getByLabel("Qty").fill("1");
+    await page.getByLabel("What is it?").fill(
+      `Temporary demo item ${safeBeta.namespace}`,
+    );
+    const initialBackup = page.waitForResponse((response) =>
+      syncRequestHasCommands(response.request())
+    );
+    await page.getByRole("button", {
+      name: "Save & add next",
+    }).click();
+    expect((await initialBackup).ok()).toBe(true);
+    await expect.poll(async () =>
+      (await readActiveReplica(page))?.outbox.length
+    ).toBe(0);
+    const backedUp = await readActiveReplica(page);
+    const oldWorkspaceId = backedUp?.state.workspace.id ?? "";
+    expect(oldWorkspaceId).toMatch(/^ws_demo/u);
+    expect(backedUp?.authorization?.status).toBe("active");
+    expect(backedUp?.authorization?.role).toBe("owner");
+    const invite = await safeBeta.createInvite(
+      context,
+      oldWorkspaceId,
+      "viewer",
+    );
+
+    await page.getByLabel("Workspaces and backup status").click();
+    await cardFor(page, backedUp!.state.workspace.name).getByRole("button", {
+      name: "Reset kitchen demo",
+    }).click();
+    const reset = page.getByRole("dialog", {
+      name: "Reset the kitchen demo?",
+    });
+    await expect(reset).toContainText(
+      "permanently deletes this demo's server instance",
+    );
+    await expect(reset).toContainText(
+      "removes its memberships and invite links",
+    );
+    const serverDeletion = page.waitForResponse((response) =>
+      response.request().method() === "DELETE" &&
+      new URL(response.url()).pathname ===
+        `/api/workspaces/${encodeURIComponent(oldWorkspaceId)}`
+    );
+    await reset.getByRole("button", {
+      name: "Delete old demo and reset",
+    }).click();
+    expect((await serverDeletion).ok()).toBe(true);
+    await expect(page.getByRole("heading", {
+      exact: true,
+      name: "Capture",
+    })).toBeVisible();
+    await expect(page.getByText(
+      "Old demo deleted and fresh private demo created",
+      { exact: true },
+    )).toBeVisible();
+
+    const fresh = await readActiveReplica(page);
+    const freshWorkspaceId = fresh?.state.workspace.id ?? "";
+    expect(freshWorkspaceId).toMatch(/^ws_demo/u);
+    expect(freshWorkspaceId).not.toBe(oldWorkspaceId);
+    expect(
+      Object.hasOwn(await readLocalReplicas(page), oldWorkspaceId),
+    ).toBe(false);
+    expect((await context.request.get(
+      `${safeBeta.origin}/api/snapshot?workspaceId=${encodeURIComponent(
+        oldWorkspaceId,
+      )}`,
+    )).status()).toBe(404);
+
+    const invitation = new URL(invite.oneTimeUrl);
+    const fragment = new URLSearchParams(invitation.hash.slice(1));
+    const retiredInvite = await context.request.post(
+      `${safeBeta.origin}/api/auth/guest`,
+      {
+        data: {
+          expectedAccountId: owner.userId,
+          returnTo: fragment.get("returnTo") ?? "/workspaces",
+          token: fragment.get("token") ?? "",
+        },
+        headers: {
+          [ACCOUNT_CONTEXT_HEADER]: owner.userId,
+          origin: safeBeta.origin,
+        },
+      },
+    );
+    expect(retiredInvite.status()).toBe(409);
+
+    await page.getByLabel("Workspaces and backup status").click();
+    await expect(cardFor(page, fresh!.state.workspace.name)).toHaveCount(1);
+  },
+);
+
+test(
   "deletes the server workspace without silently deleting the local replica",
   async ({ browser, context, page, safeBeta }, testInfo) => {
     skipUnlessProject(testInfo, [
