@@ -1057,7 +1057,8 @@ test("aligns header controls and immediately toggles the applied system theme", 
   })).toBeVisible();
 
   const mobileSettings = page.getByRole("link", { name: "Open settings" });
-  if (await mobileSettings.isVisible()) {
+  if ((page.viewportSize()?.width ?? 0) <= 760) {
+    await expect(mobileSettings).toBeVisible();
     await mobileSettings.click();
   } else {
     await page.locator(".nav:visible", { hasText: "Settings" }).click();

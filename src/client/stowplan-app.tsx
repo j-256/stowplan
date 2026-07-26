@@ -2036,7 +2036,9 @@ function Application() {
     pending,
     syncing,
   });
-  const backupReviewPath = syncStatus.state === "blocked"
+  const backupRecoveryNeeded =
+    syncStatus.state === "blocked" && signedIn;
+  const backupReviewPath = backupRecoveryNeeded
     ? "/recovery"
     : WORKSPACE_LIST_PATH;
   const syncTitle = syncStatus.terminal
@@ -2045,7 +2047,7 @@ function Application() {
       (lastSyncedAt
         ? `Last successful backup: ${formatTimestamp(lastSyncedAt)}`
         : "This workspace has not been backed up online yet.");
-  const syncLinkTitle = syncStatus.state === "blocked"
+  const syncLinkTitle = backupRecoveryNeeded
     ? `${syncTitle} Open Sync & recovery.`
     : `${syncTitle} Review all workspace backup statuses.`;
   const readOnlyReason = authorization
@@ -2095,7 +2097,14 @@ function Application() {
       {syncIssue && <section className="sync-error-banner" role="alert">
         <AlertCircle />
         <span><strong>Backup needs attention</strong><small>{syncIssue}</small></span>
-        <a href="/recovery">Review backup</a>
+        <a
+          href={backupReviewPath}
+          onClick={backupReviewPath === WORKSPACE_LIST_PATH
+            ? (event) => followAppLink(event, openWorkspaceMenu)
+            : undefined}
+        >
+          Review backup
+        </a>
       </section>}
       {readOnlyReason && <section
         className="workspace-read-only-banner"
