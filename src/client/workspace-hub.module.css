@@ -40,11 +40,20 @@
 
 .alert,
 .notice {
+  align-items: center;
   border: 1px solid var(--line);
   border-radius: 0.7rem;
-  display: block;
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: minmax(0, 1fr) 34px;
   margin: 1rem 0;
-  padding: 0.85rem 1rem;
+  padding: 0.75rem 0.75rem 0.75rem 1rem;
+}
+
+.alert > span,
+.notice > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .alert {

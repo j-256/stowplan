@@ -1,5 +1,6 @@
 "use client";
 
+import { X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   WORKSPACE_LIST_PATH,
@@ -82,6 +83,32 @@ function removalWarning(card: WorkspaceHubCard): string | null {
   return "Server access is unavailable. Export this retained device copy first if you need to keep it.";
 }
 
+function HubMessage({
+  children,
+  className,
+  dismissLabel,
+  onDismiss,
+  role,
+}: {
+  children: React.ReactNode;
+  className: string;
+  dismissLabel: string;
+  onDismiss: () => void;
+  role: "alert" | "status";
+}) {
+  return <output className={className} role={role}>
+    <span>{children}</span>
+    <button
+      aria-label={dismissLabel}
+      className="icon small"
+      onClick={onDismiss}
+      type="button"
+    >
+      <X />
+    </button>
+  </output>;
+}
+
 export function WorkspaceHub({
   accountState,
   backupConfigured,
@@ -109,6 +136,14 @@ export function WorkspaceHub({
   const [removeCard, setRemoveCard] = useState<WorkspaceHubCard | null>(null);
   const [resetCard, setResetCard] = useState<WorkspaceHubCard | null>(null);
   const [alert, setAlert] = useState("");
+  const [
+    dismissedCatalogError,
+    setDismissedCatalogError,
+  ] = useState<string | null>(null);
+  const [
+    dismissedOnlineNotice,
+    setDismissedOnlineNotice,
+  ] = useState<string | null>(null);
   const filtered = useMemo(
     () => cards.filter((card) => workspaceHubCardMatches(card, query)),
     [cards, query],
@@ -168,6 +203,16 @@ export function WorkspaceHub({
       setResetCard(null);
     }
   };
+  const onlineNotice = backupConfigured === false
+    ? "device-only"
+    : backupConfigured && !signedIn
+      ? cards.some((card) =>
+          card.access.kind === "server" &&
+          card.access.status === "active"
+        )
+        ? "remote-backup-paused"
+        : "optional-online"
+      : null;
 
   return <main className={styles.hub}>
     <header>
@@ -200,17 +245,54 @@ export function WorkspaceHub({
       </div>
     </header>
 
-    {alert && <output className={styles.alert} role="alert">{alert}</output>}
-    {catalogError && <output className={styles.alert} role="alert">
+    {alert && <HubMessage
+      className={styles.alert}
+      dismissLabel="Dismiss workspace error message"
+      onDismiss={() => setAlert("")}
+      role="alert"
+    >
+      {alert}
+    </HubMessage>}
+    {catalogError && catalogError !== dismissedCatalogError && <HubMessage
+      className={styles.alert}
+      dismissLabel="Dismiss server workspace error message"
+      onDismiss={() => setDismissedCatalogError(catalogError)}
+      role="alert"
+    >
       {catalogError}
-    </output>}
-    {backupConfigured === false && <p className={styles.notice}>
-      This deployment is device-only. Local workspaces remain available.
-    </p>}
-    {backupConfigured && !signedIn && <p className={styles.notice}>
-      Sign in to discover server workspaces on this device.{" "}
-      <a href="/account?returnTo=%2Fworkspaces">Open Account</a>
-    </p>}
+    </HubMessage>}
+    {onlineNotice === "device-only" &&
+      onlineNotice !== dismissedOnlineNotice &&
+      <HubMessage
+        className={styles.notice}
+        dismissLabel="Dismiss device-only message"
+        onDismiss={() => setDismissedOnlineNotice(onlineNotice)}
+        role="status"
+      >
+        This deployment is device-only. Local workspaces remain available.
+      </HubMessage>}
+    {onlineNotice === "optional-online" &&
+      onlineNotice !== dismissedOnlineNotice &&
+      <HubMessage
+        className={styles.notice}
+        dismissLabel="Dismiss optional online features message"
+        onDismiss={() => setDismissedOnlineNotice(onlineNotice)}
+        role="status"
+      >
+        <span>Remote backup and collaboration are optional. Sign in whenever you want to use them; local work stays on this device.</span>{" "}
+        <a href="/account?returnTo=%2Fworkspaces">Open Account</a>
+      </HubMessage>}
+    {onlineNotice === "remote-backup-paused" &&
+      onlineNotice !== dismissedOnlineNotice &&
+      <HubMessage
+        className={styles.alert}
+        dismissLabel="Dismiss paused backup message"
+        onDismiss={() => setDismissedOnlineNotice(onlineNotice)}
+        role="alert"
+      >
+        <span><strong>Remote backup paused.</strong> Your Stowplan session ended. Sign in again to resume remote backup and collaboration; local work remains safe on this device.</span>{" "}
+        <a href="/account?returnTo=%2Fworkspaces">Sign in again</a>
+      </HubMessage>}
 
     <section className={styles.toolbar} aria-label="Workspace tools">
       <label>

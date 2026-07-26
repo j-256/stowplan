@@ -285,7 +285,7 @@ export function AccountMenu({
               </p>
             : <>
                 <p className="account-menu-status">
-                  Sign in to back up workspaces and collaborate.
+                  Remote backup and collaboration are optional. Sign in to use them.
                 </p>
                 <a href={href} onClick={() => setOpen(false)}>
                   <LogIn aria-hidden="true" />

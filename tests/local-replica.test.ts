@@ -17,6 +17,7 @@ import {
   mutateReplica,
   mutateWorkspaceReplica,
   mutateWorkspaceReplicaIfWritable,
+  normalizeLocalReplica,
   readActiveServerWorkspaceCatalogAccount,
   readReplica,
   readServerWorkspaceCatalog,
@@ -96,6 +97,18 @@ describe("local replica", () => {
     expect(restored?.authorization?.capabilities.write).toBe(true);
     expect(restored?.serverSummary).toBeNull();
     expect(restored?.state.schemaVersion).toBe(1);
+  });
+  it("clears a legacy sign-in failure from device-only replicas", () => {
+    const state = createEmptyState("Local workspace");
+    const replica = normalizeLocalReplica({
+      lastSyncError: "Sign in to back up this workspace.",
+      outbox: [],
+      state,
+      updatedAt: state.workspace.updatedAt,
+    });
+
+    expect(replica.lastSyncError).toBeNull();
+    expect(replica.authorization?.kind).toBe("device-only");
   });
   it("enumerates workspace records once and ignores a stale active alias", async () => {
     const canonical = createEmptyState("Canonical");

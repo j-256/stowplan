@@ -2,6 +2,8 @@
 
 Authentication is provider-neutral at the application boundary. A provider returns a stable subject, verified email, and display name. Stowplan uses the provider and subject as the authority for an identity, then issues its own opaque session. An email match never links a new provider identity automatically.
 
+The Stowplan session lifetime is configured independently from Google's web session and any Cloudflare Access session. A provider or perimeter session can therefore remain active after the Stowplan session ends, or end while local Stowplan data remains available on the device.
+
 Supported adapters:
 
 | Adapter | Purpose | Production status |

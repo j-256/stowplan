@@ -1357,6 +1357,13 @@ test(
         hasText: "Backup needs attention",
       });
       await expect(backupAlert).toBeVisible();
+      const accessMessage = page.locator(".workspace-read-only-banner");
+      await expect(accessMessage).toContainText("Viewer access");
+      await accessMessage.getByRole("button", {
+        name: "Dismiss workspace access message",
+      }).click();
+      await expect(accessMessage).toBeHidden();
+      await expect(backupAlert).toBeVisible();
       await backupAlert.getByRole("link", {
         name: "Review backup",
       }).click();

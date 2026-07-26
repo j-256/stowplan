@@ -2,6 +2,10 @@
 
 Stowplan keeps a durable replica on each device while the server controls who may read, edit, or manage a shared workspace. The workspace home screen brings those two sources together without treating either one as disposable.
 
+Remote backup and collaboration are optional. A signed-out device-only workspace is normal: Stowplan labels pending work as saved on that device and may show a dismissible invitation to sign in for online features, but it does not present the absence of an online account as a backup failure.
+
+If a workspace was server-backed and its Stowplan session ends, a prominent **Remote backup paused** message explains that local work remains safe and offers **Sign in again**. Dismissing that message removes only the large notice; the compact workspace status continues to show that remote backup is paused. Server failures and refused changes remain prominent and direct the user to recovery.
+
 ## Find and open a workspace
 
 Choose the house icon from an open workspace, or choose **Settings → Workspaces and backup status**. After sign-in, the home screen lists every active server membership the account may use as well as every workspace stored on the device. A fresh browser can therefore find a shared workspace without a saved link or known workspace ID.

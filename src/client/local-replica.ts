@@ -14,6 +14,7 @@ import {
   type WorkspaceAccessState,
 } from "../domain/workspace-access";
 import { API_QUOTAS } from "../shared/api-quotas";
+import { isSignInBackupError } from "./backup-presentation";
 
 const DATABASE = "stowplan-v1";
 const STORE = "records";
@@ -232,6 +233,12 @@ export function normalizeLocalReplica(replica: LocalReplica): LocalReplica {
           replica.serverSummary.updatedAt,
       )
     : normalizeWorkspaceAccessState(replica.authorization);
+  if (
+    replica.authorization.kind === "device-only" &&
+    isSignInBackupError(replica.lastSyncError)
+  ) {
+    replica.lastSyncError = null;
+  }
   const itemById = new Map(replica.state.items.map((item) => [item.id, item]));
   const inferredItemOrders = new Map(
     replica.state.items.map((item) => [item.id, item.order]),

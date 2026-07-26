@@ -80,6 +80,9 @@ Run the visual and interaction checks in iPhone Safari portrait and landscape, i
 - [ ] Take the device offline and relaunch installed mode
 - [ ] Confirm that application assets load and every workspace with a local replica can open
 - [ ] Confirm that an already discovered server-only card remains visible and presents the keyboard-accessible **Open when online** action
+- [ ] While signed out, edit a device-only workspace and confirm that the compact status says the change is saved on this device without showing a backup-failure alert
+- [ ] End the Stowplan session for an active server-backed workspace and confirm that **Remote backup paused** remains prominent, explains that local work is safe, and offers **Sign in again**
+- [ ] Show backup and workspace-access notices together, dismiss each independently, and confirm that the compact backup status remains after the large backup notice closes
 - [ ] Make an offline editor change and confirm that it remains durable across reload without being called backed up
 - [ ] Restore connectivity and confirm that reconciliation preserves pending and blocked commands, does not regress a newer local summary, and does not switch the active workspace
 - [ ] Confirm that API data does not appear as a stale service-worker response after role or membership changes

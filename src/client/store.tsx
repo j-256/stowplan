@@ -74,8 +74,12 @@ import {
   normalizeAuthenticatedAccount,
   type AuthenticatedAccount,
 } from "./account-state";
+import {
+  DEVICE_ONLY_BACKUP_ERROR,
+  SIGN_IN_BACKUP_ERROR,
+} from "./backup-presentation";
 
-export const DEVICE_ONLY_BACKUP_ERROR = "Server backup is not configured for this deployment.";
+export { DEVICE_ONLY_BACKUP_ERROR } from "./backup-presentation";
 
 export class WorkspaceOpenError extends Error {
   readonly status: number;
@@ -98,7 +102,6 @@ const BACKUP_UNAVAILABLE_API_ERROR = "Durable storage is not configured";
 const BACKUP_UNAVAILABLE_SESSION_KEY = "stowplan-backup-unavailable-at";
 const BACKUP_RETRY_INTERVAL_MS = 5 * 60 * 1_000;
 const MAXIMUM_CONCURRENT_RECONCILIATIONS = 2;
-const SIGN_IN_BACKUP_ERROR = "Sign in to back up this workspace.";
 
 class RetryableSyncError extends Error {
   constructor(
@@ -908,17 +911,23 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
           backupAccess === "unavailable" ||
           backupConfigured === false
         ) return;
-        if (backupAccess === "signed-out") {
-          await recordSyncAttempt(workspaceId, SIGN_IN_BACKUP_ERROR);
-          return;
-        }
         const value = await readWorkspaceReplica(workspaceId);
         if (!value || !navigator.onLine) return;
-        const requestAccountId = accountIdRef.current;
-        if (!requestAccountId) return;
         const storedAuthorization = normalizeWorkspaceAccessState(
           value.authorization,
         );
+        if (backupAccess === "signed-out") {
+          if (
+            storedAuthorization.kind === "server" &&
+            storedAuthorization.status === "active" &&
+            value.lastSyncError !== SIGN_IN_BACKUP_ERROR
+          ) {
+            await recordSyncAttempt(workspaceId, SIGN_IN_BACKUP_ERROR);
+          }
+          return;
+        }
+        const requestAccountId = accountIdRef.current;
+        if (!requestAccountId) return;
         if (
           storedAuthorization.kind === "server" &&
           !workspaceAccountIdsMatch(

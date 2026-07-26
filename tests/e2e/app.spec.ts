@@ -986,6 +986,12 @@ test("keeps preferences usable when browser storage is unavailable", async ({ pa
     .getByRole("button", { name: "Stacked" })
     .click();
   await expect(capture).toHaveAttribute("data-panel-layout", "stacked");
+  await page.getByRole("button", {
+    name: "Dismiss preference storage message",
+  }).click();
+  await expect(page.getByText("Preferences are session-only")).toBeHidden();
+  await page.getByRole("button", { name: "Expand sidebar" }).click();
+  await expect(page.getByText("Preferences are session-only")).toBeHidden();
   expect(pageErrors).toEqual([]);
 });
 
@@ -4026,6 +4032,129 @@ test("presents unavailable backup as device storage without crushing workspace t
   }
 });
 
+test("treats signed-out local backup as optional and dismisses its account hint", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "desktop-chromium",
+    "One desktop project covers optional backup messaging",
+  );
+  await page.route("**/api/auth/me", (route) => route.fulfill({
+    body: JSON.stringify({ configured: true, user: null }),
+    contentType: "application/json",
+    status: 200,
+  }));
+  await page.reload();
+
+  await page.getByLabel("New device workspace").fill("Private device work");
+  await page.getByRole("button", { exact: true, name: "Create" }).click();
+  await page.getByLabel("Friendly name").fill("Hall closet");
+  await page.getByRole("button", { name: "Add first space" }).click();
+
+  await expect(page.locator(".sync:visible")).toContainText(
+    "1 change saved on this device",
+  );
+  await expect(page.getByRole("alert").filter({
+    hasText: /Backup needs attention|Remote backup paused/u,
+  })).toHaveCount(0);
+
+  await page.getByLabel("Workspaces and backup status").click();
+  const optionalNotice = page.getByText(
+    "Remote backup and collaboration are optional. Sign in whenever you want to use them; local work stays on this device.",
+    { exact: true },
+  );
+  await expect(optionalNotice).toBeVisible();
+  await page.getByRole("button", {
+    name: "Dismiss optional online features message",
+  }).click();
+  await expect(optionalNotice).toBeHidden();
+});
+
+test("makes an ended session loud only for a server-backed workspace", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "desktop-chromium",
+    "One desktop project covers interrupted backup messaging",
+  );
+  let signedIn = true;
+  await page.route("**/api/auth/me", (route) => route.fulfill({
+    body: JSON.stringify({
+      configured: true,
+      user: signedIn ? { userId: MOCK_ACCOUNT_ID } : null,
+    }),
+    contentType: "application/json",
+    headers: signedIn ? MOCK_ACCOUNT_HEADERS : undefined,
+    status: 200,
+  }));
+  await page.route("**/api/workspaces?*", (route) => route.fulfill({
+    body: JSON.stringify({
+      membershipRevision: 1,
+      page: { hasMore: false, nextCursor: null },
+      workspaces: [],
+    }),
+    contentType: "application/json",
+    headers: MOCK_ACCOUNT_HEADERS,
+    status: 200,
+  }));
+  await page.route("**/api/sync", async (route) => {
+    const body = route.request().postDataJSON() as {
+      commands: { id: string }[];
+      snapshot: {
+        workspace: {
+          id: string;
+          name: string;
+          revision: number;
+          updatedAt: string;
+        };
+      };
+    };
+    await route.fulfill({
+      body: JSON.stringify(mockOwnerSyncResponse(
+        body.snapshot,
+        body.commands,
+      )),
+      contentType: "application/json",
+      headers: MOCK_ACCOUNT_HEADERS,
+      status: 200,
+    });
+  });
+  await page.reload();
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
+  await expect(page.locator(".sync:visible")).toContainText("Backed up online");
+
+  signedIn = false;
+  await page.reload();
+
+  const alert = page.getByRole("alert").filter({
+    hasText: "Remote backup paused",
+  });
+  await expect(alert).toContainText(
+    "Sign in again to resume remote backup and collaboration",
+  );
+  await expect(alert.getByRole("link", {
+    name: "Sign in again",
+  })).toHaveAttribute("href", /\/account\?/u);
+  await alert.getByRole("button", {
+    name: "Dismiss backup message",
+  }).click();
+  await expect(alert).toBeHidden();
+  await expect(page.locator(".sync:visible")).toContainText(
+    "Remote backup paused",
+  );
+  await page.getByLabel("Workspaces and backup status").click();
+  const hubAlert = page.getByRole("alert").filter({
+    hasText: "Remote backup paused",
+  });
+  await expect(hubAlert).toContainText(
+    "local work remains safe on this device",
+  );
+  await hubAlert.getByRole("button", {
+    name: "Dismiss paused backup message",
+  }).click();
+  await expect(hubAlert).toBeHidden();
+});
+
 test("does not label the active workspace as backing up while another workspace syncs", async ({
   page,
 }, testInfo) => {
@@ -4170,14 +4299,13 @@ test("surfaces a background backup failure on mobile", async ({ page }, testInfo
     .filter({ hasText: "Backup needs attention" });
   await expect(alert).toContainText("Backup service unavailable");
   await expect(alert).toBeVisible();
-  await alert.getByRole("link", { name: "Review backup" }).click();
-  await expect(page).toHaveURL(/\/recovery$/);
-  await expect(page.getByRole("heading", {
-    name: "Sync & recovery",
-  })).toBeVisible();
-  await expect(page.getByText(
-    "This export includes the current workspace plus pending or blocked commands and their errors. Export it before any reset.",
-  )).toBeVisible();
+  await alert.getByRole("button", {
+    name: "Dismiss backup message",
+  }).click();
+  await expect(alert).toBeHidden();
+  await expect(page.locator(".mobile-sync-status")).toContainText(
+    /changes? not backed up/u,
+  );
 });
 
 test("keeps redacted post-ban accounts disabled in administration", async ({

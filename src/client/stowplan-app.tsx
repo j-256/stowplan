@@ -68,7 +68,6 @@ import type {
 import {
   normalizeWorkspaceAccessState,
   workspaceReadOnlyReason,
-  type WorkspaceAccessStatus,
 } from "../domain/workspace-access";
 import {
   accountContextHeaders,
@@ -96,10 +95,15 @@ import {
   writePreference,
 } from "./preference-storage";
 import { AccountMenu } from "./account-menu";
+import {
+  backupNotice,
+  backupPresentation,
+  type BackupPresentation,
+} from "./backup-presentation";
 import { ResizablePanels } from "./resizable-panels";
 import { ReadOnlyWorkspace } from "./read-only-workspace";
 import { parseAuthorizedRecoverySnapshot } from "./recovery-permissions";
-import { DEVICE_ONLY_BACKUP_ERROR, StowplanProvider, useStowplan, WorkspaceOpenError } from "./store";
+import { StowplanProvider, useStowplan, WorkspaceOpenError } from "./store";
 import { WorkspaceHub } from "./workspace-hub";
 import { WorkspaceAccessController } from "./workspace-access-controller";
 
@@ -135,13 +139,6 @@ type FeedbackDetail = {
   message: string;
   tone: "error" | "info" | "success";
 };
-type BackupPresentation = {
-  deviceOnly?: boolean;
-  label: string;
-  offline?: boolean;
-  state: "blocked" | "local" | "pending" | "synced";
-  terminal?: boolean;
-};
 type PendingHierarchyChange = {
   command: LocationHierarchyCommand;
   completedParentIds: string[];
@@ -160,14 +157,6 @@ const CONTAINER_REVIEW_KIND = Object.freeze({
   EMPTY: "empty",
   KNOWN_EMPTY: "known-empty",
 } as const);
-const TERMINAL_BACKUP_LABELS: Readonly<
-  Partial<Record<WorkspaceAccessStatus, string>>
-> = Object.freeze({
-  deleted: "Server copy deleted",
-  left: "Membership left",
-  revoked: "Access removed",
-  unknown: "Server access unavailable",
-});
 type ContainerReview = {
   items: {
     id: string;
@@ -655,76 +644,6 @@ function responseError(
     ? value.error
     : fallback;
 }
-function backupPresentation({
-  accessStatus,
-  backupConfigured,
-  blocked,
-  lastSyncError,
-  lastSyncedAt,
-  online,
-  pending,
-  syncing,
-}: {
-  accessStatus?: WorkspaceAccessStatus;
-  backupConfigured?: boolean | null;
-  blocked: number;
-  lastSyncError: string | null;
-  lastSyncedAt: string | null;
-  online?: boolean;
-  pending: number;
-  syncing?: boolean;
-}): BackupPresentation {
-  if (blocked) {
-    return {
-      label: `${blocked} change${blocked === 1 ? " needs" : "s need"} review`,
-      state: "blocked",
-    };
-  }
-  const terminalLabel = accessStatus
-    ? TERMINAL_BACKUP_LABELS[accessStatus]
-    : undefined;
-  if (terminalLabel) {
-    return {
-      deviceOnly: true,
-      label: terminalLabel,
-      state: "local",
-      terminal: true,
-    };
-  }
-  const deviceOnly = backupConfigured === false ||
-    lastSyncError === DEVICE_ONLY_BACKUP_ERROR;
-  if (deviceOnly) {
-    return {
-      deviceOnly: true,
-      label: pending
-        ? `${pending} change${pending === 1 ? "" : "s"} saved on device`
-        : "Device only",
-      state: pending ? "pending" : "local",
-    };
-  }
-  if (syncing) return { label: "Backing up…", state: "pending" };
-  if (lastSyncError) {
-    return {
-      label: pending
-        ? `${pending} change${pending === 1 ? "" : "s"} not backed up`
-        : "Backup failed",
-      state: "blocked",
-    };
-  }
-  if (pending) {
-    return {
-      label: `${pending} change${pending === 1 ? "" : "s"} pending upload`,
-      state: "pending",
-    };
-  }
-  if (online === false) {
-    return { label: "Working offline", offline: true, state: "local" };
-  }
-  if (lastSyncedAt) {
-    return { label: "Backed up online", state: "synced" };
-  }
-  return { label: "Device only", state: "local" };
-}
 function BackupStatusIcon({
   presentation,
 }: {
@@ -742,6 +661,29 @@ function BackupStatusIcon({
             ? CheckCircle2
             : HardDrive;
   return <Icon />;
+}
+function DismissibleWorkspaceNotice({
+  message,
+  onDismiss,
+  onboarding = false,
+}: {
+  message: string;
+  onDismiss: () => void;
+  onboarding?: boolean;
+}) {
+  return <output
+    className={`workspace-notice${onboarding ? " onboarding-notice" : ""}`}
+  >
+    <span>{message}</span>
+    <button
+      aria-label="Dismiss workspace message"
+      className="icon small"
+      onClick={onDismiss}
+      type="button"
+    >
+      <X />
+    </button>
+  </output>;
 }
 function stateWorkspacePath(
   state: WorkspaceState,
@@ -1290,9 +1232,21 @@ function Application() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarReady, setSidebarReady] = useState(false);
   const [workspaceNotice, setWorkspaceNotice] = useState("");
+  const [
+    dismissedBackupMessageKey,
+    setDismissedBackupMessageKey,
+  ] = useState<string | null>(null);
+  const [
+    dismissedAccessMessageKey,
+    setDismissedAccessMessageKey,
+  ] = useState<string | null>(null);
   const [jumpPaletteOpen, setJumpPaletteOpen] = useState(false);
   const [feedback, setFeedback] = useState<FeedbackDetail | null>(null);
   const [preferencesSessionOnly, setPreferencesSessionOnly] = useState(false);
+  const [
+    preferenceStorageMessageDismissed,
+    setPreferenceStorageMessageDismissed,
+  ] = useState(false);
   const [guidanceTarget, setGuidanceTarget] = useState<GuidanceTarget | null>(null);
   const [routeStatus, setRouteStatus] = useState<"blocked" | "loading" | "ready">("loading");
   const routeRequest = useRef(0);
@@ -1893,10 +1847,20 @@ function Application() {
     signedIn={signedIn}
   />;
   if (!state) {
-    return <>{workspaceHub}{workspaceNotice && <output className="workspace-notice onboarding-notice">{workspaceNotice}</output>}</>;
+    return <>{workspaceHub}{workspaceNotice &&
+      <DismissibleWorkspaceNotice
+        message={workspaceNotice}
+        onDismiss={() => setWorkspaceNotice("")}
+        onboarding
+      />}</>;
   }
   if (showWelcome) {
-    return <>{workspaceHub}{workspaceNotice && <output className="workspace-notice onboarding-notice">{workspaceNotice}</output>}</>;
+    return <>{workspaceHub}{workspaceNotice &&
+      <DismissibleWorkspaceNotice
+        message={workspaceNotice}
+        onDismiss={() => setWorkspaceNotice("")}
+        onboarding
+      />}</>;
   }
   const tabPath = (nextView: View) => stateWorkspacePath(state, {
     locationId:
@@ -1907,9 +1871,6 @@ function Application() {
           : null,
     view: nextView,
   });
-  const syncIssue = lastSyncError === DEVICE_ONLY_BACKUP_ERROR
-    ? null
-    : lastSyncError;
   const selectView = (nextView: View) => {
     setGuidanceTarget(null);
     setInventoryItemId(null);
@@ -2032,35 +1993,75 @@ function Application() {
   const themeToggleLabel = appliedTheme === "dark"
     ? "Dark theme active. Switch to light theme"
     : "Light theme active. Switch to dark theme";
-  const syncStatus = backupPresentation({
+  const serverBacked = authorization?.kind === "server";
+  const backupOptions = {
     accessStatus: authorization?.kind === "server"
       ? authorization.status
       : undefined,
+    authenticationReady,
     backupConfigured,
     blocked,
     lastSyncError,
     lastSyncedAt,
     online,
     pending,
+    serverBacked,
+    signedIn,
     syncing,
-  });
+  };
+  const syncStatus = backupPresentation(backupOptions);
+  const backupMessage = backupNotice(backupOptions);
+  const backupMessageKey = backupMessage
+    ? [
+        state.workspace.id,
+        backupMessage.title,
+        backupMessage.message,
+        lastSyncedAt ?? "never",
+      ].join(":")
+    : null;
+  const showBackupMessage = Boolean(
+    backupMessageKey &&
+    backupMessageKey !== dismissedBackupMessageKey,
+  );
   const backupRecoveryNeeded =
     syncStatus.state === "blocked" && signedIn;
-  const backupReviewPath = backupRecoveryNeeded
-    ? "/recovery"
-    : WORKSPACE_LIST_PATH;
+  const accountReviewPath =
+    `/account?workspace=${encodeURIComponent(state.workspace.id)}&returnTo=${
+      encodeURIComponent(canonicalPath ?? tabPath(view))
+    }`;
+  const backupReviewPath = backupMessage?.action === "account"
+    ? accountReviewPath
+    : backupMessage?.action === "recovery" || backupRecoveryNeeded
+      ? "/recovery"
+      : WORKSPACE_LIST_PATH;
   const syncTitle = syncStatus.terminal
     ? `${syncStatus.label}. This retained device copy is not backed up online.`
-    : lastSyncError ??
+    : backupMessage?.message ??
       (lastSyncedAt
         ? `Last successful backup: ${formatTimestamp(lastSyncedAt)}`
         : "This workspace has not been backed up online yet.");
-  const syncLinkTitle = backupRecoveryNeeded
-    ? `${syncTitle} Open Sync & recovery.`
-    : `${syncTitle} Review all workspace backup statuses.`;
+  const syncLinkTitle = backupMessage?.action === "account"
+    ? `${syncTitle} Open Account.`
+    : backupMessage?.action === "recovery" || backupRecoveryNeeded
+      ? `${syncTitle} Open Sync & recovery.`
+      : `${syncTitle} Review all workspace backup statuses.`;
   const readOnlyReason = authorization
     ? workspaceReadOnlyReason(authorization)
     : null;
+  const accessMessageKey = readOnlyReason
+    ? [
+        state.workspace.id,
+        authorization?.kind,
+        authorization?.status,
+        authorization?.role,
+        authorization?.accessRevision,
+        readOnlyReason,
+      ].join(":")
+    : null;
+  const showAccessMessage = Boolean(
+    accessMessageKey &&
+    accessMessageKey !== dismissedAccessMessageKey,
+  );
   const readOnly = Boolean(readOnlyReason);
   return <div className="app-shell" data-sidebar-collapsed={sidebarCollapsed}>
     <aside aria-label="Workspace navigation">
@@ -2155,7 +2156,7 @@ function Application() {
           />
         </div>
       </header>
-      {!syncIssue && <a
+      {!showBackupMessage && <a
         className="mobile-sync-status"
         href={backupReviewPath}
         onClick={backupReviewPath === WORKSPACE_LIST_PATH
@@ -2166,19 +2167,35 @@ function Application() {
         <span>{syncStatus.label}</span>
         <ChevronRight />
       </a>}
-      {syncIssue && <section className="sync-error-banner" role="alert">
+      {showBackupMessage && backupMessage && <section
+        className="sync-error-banner"
+        role="alert"
+      >
         <AlertCircle />
-        <span><strong>Backup needs attention</strong><small>{syncIssue}</small></span>
+        <span>
+          <strong>{backupMessage.title}</strong>
+          <small>{backupMessage.message}</small>
+        </span>
         <a
           href={backupReviewPath}
           onClick={backupReviewPath === WORKSPACE_LIST_PATH
             ? (event) => followAppLink(event, openWorkspaceMenu)
             : undefined}
         >
-          Review backup
+          {backupMessage.action === "account"
+            ? "Sign in again"
+            : "Review backup"}
         </a>
+        <button
+          aria-label="Dismiss backup message"
+          className="icon small"
+          onClick={() => setDismissedBackupMessageKey(backupMessageKey)}
+          type="button"
+        >
+          <X />
+        </button>
       </section>}
-      {readOnlyReason && <section
+      {showAccessMessage && readOnlyReason && <section
         className="workspace-read-only-banner"
         role={authorization?.status === "active" ? "status" : "alert"}
       >
@@ -2190,12 +2207,34 @@ function Application() {
             : "Read-only workspace"}</strong>
           <small>{readOnlyReason} You can browse, search, inspect, and export.</small>
         </span>
+        <button
+          aria-label="Dismiss workspace access message"
+          className="icon small"
+          onClick={() => setDismissedAccessMessageKey(accessMessageKey)}
+          type="button"
+        >
+          <X />
+        </button>
       </section>}
-      {preferencesSessionOnly && <section className="preference-storage-banner" role="status">
+      {preferencesSessionOnly &&
+        !preferenceStorageMessageDismissed &&
+        <section className="preference-storage-banner" role="status">
         <Info />
         <span><strong>Preferences are session-only</strong><small>Theme, sidebar, and panel choices will reset after reload because browser preference storage is unavailable.</small></span>
+        <button
+          aria-label="Dismiss preference storage message"
+          className="icon small"
+          onClick={() => setPreferenceStorageMessageDismissed(true)}
+          type="button"
+        >
+          <X />
+        </button>
       </section>}
-      {workspaceNotice && <output className="workspace-notice">{workspaceNotice}</output>}
+      {workspaceNotice &&
+        <DismissibleWorkspaceNotice
+          message={workspaceNotice}
+          onDismiss={() => setWorkspaceNotice("")}
+        />}
       {readOnly && view !== "access" && <ReadOnlyWorkspace
         inventoryItemId={validInventoryItemId}
         inventoryLocationId={validInventoryLocationId}
