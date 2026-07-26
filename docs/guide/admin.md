@@ -1,6 +1,6 @@
 # Administration
 
-`/admin` is the installation-wide, server-enforced control plane. It is separate from workspace-owner self-service, and client-side navigation is not the security boundary.
+`/admin` is the installation-wide, server-enforced control plane. A global admin can open it from **Administration** in the desktop workspace sidebar or from the top-right user menu on any screen size. The admin page keeps that user menu visible for account and sign-out actions. It is separate from workspace-owner self-service, and client-side navigation is not the security boundary.
 
 Workspace owners manage routine member roles, ownership transfer, removal, and viewer/editor enrollment links from the workspace access surface without global admin scope. Editors and viewers cannot use that surface to manage access, and the final owner must transfer ownership or delete the server workspace instead of leaving. Workspace-owner operations stay under `/api/workspaces/*`; `/api/admin/*` is reserved for the global control plane.
 

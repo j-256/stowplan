@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { AccountMenu } from "../../src/client/account-menu";
 import { ModalDialog } from "../../src/client/modal-dialog";
 import { workspacePath } from "../../src/domain/app-url";
 import {
@@ -553,7 +554,10 @@ export default function AdminPage() {
         <p className="eyebrow">Server-enforced control plane</p>
         <h1>Stowplan administration</h1>
       </div>
-      <Link href="/">Back to organizer</Link>
+      <div className="admin-header-actions">
+        <Link href="/">Back to organizer</Link>
+        <AccountMenu returnTo="/admin" />
+      </div>
     </header>
     <form className="admin-toolbar" onSubmit={submitSearch}>
       <label>

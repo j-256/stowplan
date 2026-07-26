@@ -12,6 +12,9 @@ import {
 import {
   clearActiveServerWorkspaceCatalogAccount,
 } from "../../src/client/local-replica";
+import {
+  broadcastAccountChange,
+} from "../../src/client/account-channel";
 import { AccountDeletion } from "../../src/client/account-deletion";
 import { AccountSessions } from "../../src/client/account-sessions";
 import { GoogleSignIn } from "../../src/client/google-sign-in";
@@ -48,7 +51,6 @@ const INITIAL_NAVIGATION: NavigationState = {
   workspace: null,
 };
 const MAX_RETURN_TO_DECODE_PASSES = 4;
-const WORKSPACE_CHANNEL_NAME = "stowplan-workspaces-v1";
 const RETURN_TO_ORIGIN = "https://stowplan.invalid";
 const SERVER_NAVIGATION_HREF = "";
 
@@ -173,13 +175,6 @@ function takeInvitationReturnTo(): string | null {
   } catch {
     return null;
   }
-}
-
-function broadcastAccountChange(): void {
-  if (typeof BroadcastChannel === "undefined") return;
-  const channel = new BroadcastChannel(WORKSPACE_CHANNEL_NAME);
-  channel.postMessage({ type: "account-changed" });
-  channel.close();
 }
 
 export default function Account() {

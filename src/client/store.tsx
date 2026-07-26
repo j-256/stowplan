@@ -66,6 +66,14 @@ import {
   accountContextHeaders,
   responseMatchesAccount,
 } from "../shared/account-context";
+import {
+  ACCOUNT_CHANGE_MESSAGE_TYPE,
+  WORKSPACE_CHANNEL_NAME,
+} from "./account-channel";
+import {
+  normalizeAuthenticatedAccount,
+  type AuthenticatedAccount,
+} from "./account-state";
 
 export const DEVICE_ONLY_BACKUP_ERROR = "Server backup is not configured for this deployment.";
 
@@ -281,6 +289,7 @@ function forgetBackupUnavailable(): void {
 }
 
 interface StoreValue {
+  account: AuthenticatedAccount | null;
   accountId: string | null;
   authenticationReady: boolean;
   authorization: WorkspaceAccessState | null;
@@ -330,6 +339,7 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
   const [workspaceStatusRevision, setWorkspaceStatusRevision] = useState(0);
   const [backupConfigured, setBackupConfigured] = useState<boolean | null>(null);
   const [backupAccess, setBackupAccess] = useState<BackupAccess>("idle");
+  const [account, setAccount] = useState<AuthenticatedAccount | null>(null);
   const [accountId, setAccountId] = useState<string | null>(null);
   const [authenticationReady, setAuthenticationReady] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
@@ -404,12 +414,13 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
     void fetch("/api/auth/me", { cache: "no-store" }).then(async (response) => {
       const body = await response.json() as {
         configured?: boolean;
-        user?: { userId?: string } | null;
+        user?: unknown;
       };
       if (!response.ok) throw new Error("Could not check server backup access");
       if (!active) return;
       if (!body.configured) {
         rememberBackupUnavailable();
+        setAccount(null);
         setBackupConfigured(false);
         setBackupAccess("unavailable");
         setSignedIn(false);
@@ -418,12 +429,18 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
       }
       forgetBackupUnavailable();
       setBackupConfigured(true);
-      if (body.user?.userId) {
-        accountIdRef.current = body.user.userId;
-        await setActiveServerWorkspaceCatalogAccount(body.user.userId);
-        const cached = await readServerWorkspaceCatalog(body.user.userId);
+      const authenticatedAccount = normalizeAuthenticatedAccount(body.user);
+      if (authenticatedAccount) {
+        accountIdRef.current = authenticatedAccount.userId;
+        await setActiveServerWorkspaceCatalogAccount(
+          authenticatedAccount.userId,
+        );
+        const cached = await readServerWorkspaceCatalog(
+          authenticatedAccount.userId,
+        );
         if (!active) return;
-        setAccountId(body.user.userId);
+        setAccount(authenticatedAccount);
+        setAccountId(authenticatedAccount.userId);
         setCatalog(cached);
         setSignedIn(true);
         setBackupAccess("available");
@@ -433,6 +450,7 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
         await clearActiveServerWorkspaceCatalogAccount()
           .catch(() => undefined);
         if (!active) return;
+        setAccount(null);
         setAccountId(null);
         setCatalog(null);
         setSignedIn(false);
@@ -723,6 +741,7 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
           requestAuthenticationRefresh();
         }
         if (response.status === 401) {
+          setAccount(null);
           setSignedIn(false);
           setBackupAccess("signed-out");
         }
@@ -1145,14 +1164,14 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
   );
   useEffect(() => {
     if (typeof BroadcastChannel === "undefined") return;
-    const channel = new BroadcastChannel("stowplan-workspaces-v1");
+    const channel = new BroadcastChannel(WORKSPACE_CHANNEL_NAME);
     workspaceChannel.current = channel;
     channel.onmessage = (event: MessageEvent<unknown>) => {
       const message = event.data;
       if (!message || typeof message !== "object") return;
       if (
         "type" in message &&
-        message.type === "account-changed"
+        message.type === ACCOUNT_CHANGE_MESSAGE_TYPE
       ) {
         requestAuthenticationRefresh();
         return;
@@ -1623,6 +1642,7 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
     [accountId, catalog?.entries, localWorkspaces, online],
   );
   const value: StoreValue = {
+    account,
     accountId,
     authenticationReady,
     authorization: replica

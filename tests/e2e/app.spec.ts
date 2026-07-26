@@ -4,6 +4,10 @@ import {
   roleBoundGuestInvitationToken,
   workspacePath,
 } from "../../src/domain/app-url";
+import {
+  ACCOUNT_CHANGE_MESSAGE_TYPE,
+  WORKSPACE_CHANNEL_NAME,
+} from "../../src/client/account-channel";
 
 const MAX_FACING_CONTENT_GAP = 54;
 const MAX_PANEL_GUTTER = 16;
@@ -985,6 +989,177 @@ test("keeps preferences usable when browser storage is unavailable", async ({ pa
   expect(pageErrors).toEqual([]);
 });
 
+test("keeps account and administration controls easy to find", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    !["desktop-chromium", "mobile-chromium"].includes(testInfo.project.name),
+    "Portrait phone and wide desktop cover both account navigation layouts",
+  );
+  let globalRole: "admin" | "user" = "user";
+  let signedIn = true;
+  let signOutRequests = 0;
+  await page.route("**/api/auth/me", route => route.fulfill({
+    body: JSON.stringify({
+      configured: true,
+      user: signedIn
+        ? {
+            displayName: "Bob",
+            email: "bob@example.test",
+            globalRole,
+            userId: MOCK_ACCOUNT_ID,
+          }
+        : null,
+    }),
+    contentType: "application/json",
+    headers: signedIn ? MOCK_ACCOUNT_HEADERS : {},
+    status: 200,
+  }));
+  await page.route("**/api/workspaces?*", route => route.fulfill({
+    body: JSON.stringify({
+      membershipRevision: 1,
+      page: { hasMore: false, nextCursor: null },
+      workspaces: [],
+    }),
+    contentType: "application/json",
+    headers: MOCK_ACCOUNT_HEADERS,
+    status: 200,
+  }));
+  await page.route("**/api/sync", async route => {
+    const body = route.request().postDataJSON() as {
+      commands: { id: string }[];
+      snapshot: {
+        workspace: {
+          id: string;
+          name: string;
+          revision: number;
+          updatedAt: string;
+        };
+      };
+    };
+    await route.fulfill({
+      body: JSON.stringify(mockOwnerSyncResponse(
+        body.snapshot,
+        body.commands,
+      )),
+      contentType: "application/json",
+      headers: MOCK_ACCOUNT_HEADERS,
+      status: 200,
+    });
+  });
+  await page.route("**/api/auth/logout", route => {
+    signOutRequests += 1;
+    signedIn = false;
+    return route.fulfill({
+      body: JSON.stringify({ ok: true }),
+      contentType: "application/json",
+      status: 200,
+    });
+  });
+  await page.evaluate(() => sessionStorage.clear());
+  await page.reload();
+
+  const accountTrigger = page.getByRole("button", {
+    name: "Open user menu for Bob",
+  });
+  await expect(accountTrigger).toBeVisible();
+  await accountTrigger.click();
+  const userMenu = page.getByRole("dialog", { name: "User menu" });
+  await expect(userMenu).toContainText("Bob");
+  await expect(userMenu).toContainText("bob@example.test");
+  await expect(userMenu.getByRole("link", {
+    name: "Account and sessions",
+  })).toHaveAttribute("href", "/account?returnTo=%2Fworkspaces");
+  await expect(userMenu.getByRole("link", {
+    name: "Administration",
+  })).toHaveCount(0);
+  const accessibility = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa"])
+    .analyze();
+  expect(
+    accessibility.violations.filter(
+      violation =>
+        violation.impact === "critical" ||
+        violation.impact === "serious",
+    ),
+  ).toEqual([]);
+  await page.keyboard.press("Escape");
+  await expect(userMenu).toBeHidden();
+  await expect(accountTrigger).toBeFocused();
+
+  globalRole = "admin";
+  await page.evaluate(({ channelName, messageType }) => {
+    const channel = new BroadcastChannel(channelName);
+    channel.postMessage({ type: messageType });
+    channel.close();
+  }, {
+    channelName: WORKSPACE_CHANNEL_NAME,
+    messageType: ACCOUNT_CHANGE_MESSAGE_TYPE,
+  });
+  await expect(page.locator('[data-account-role="admin"]')).toBeVisible();
+  await accountTrigger.click();
+  await expect(userMenu.getByRole("link", {
+    name: "Administration",
+  })).toHaveAttribute("href", "/admin");
+  await page.keyboard.press("Escape");
+
+  await page.getByRole("button", {
+    name: "Open kitchen demo",
+  }).click();
+  await expect(page.getByRole("heading", {
+    exact: true,
+    name: "Capture",
+  })).toBeVisible();
+  await expect(page.getByRole("button", {
+    name: "Open user menu for Bob",
+  })).toBeVisible();
+  const desktop = (page.viewportSize()?.width ?? 0) > 760;
+  const sidebarAdministration = page.locator(
+    '.app-shell > aside a[href="/admin"]',
+  );
+  if (desktop) {
+    await expect(sidebarAdministration).toBeVisible();
+    await expect(sidebarAdministration).toContainText("Administration");
+  } else {
+    await expect(sidebarAdministration).toBeHidden();
+    await expect(page.locator(".bottom").getByRole("link", {
+      exact: true,
+      name: "Settings",
+    })).toBeVisible();
+    await expect(page.getByRole("link", {
+      name: "Open settings",
+    })).toHaveCount(0);
+  }
+  const dimensions = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+  }));
+  expect(dimensions.scrollWidth).toBeLessThanOrEqual(
+    dimensions.clientWidth + 1,
+  );
+
+  await page.getByRole("button", {
+    name: "Open user menu for Bob",
+  }).click();
+  await page.getByRole("dialog", {
+    name: "User menu",
+  }).getByRole("button", {
+    name: "Sign out",
+  }).click();
+  await expect.poll(() => signOutRequests).toBe(1);
+  const signedOutTrigger = page.getByRole("button", {
+    name: "Open user menu to sign in",
+  });
+  await expect(signedOutTrigger).toBeVisible();
+  await signedOutTrigger.click();
+  await expect(page.getByRole("dialog", {
+    name: "User menu",
+  }).getByRole("link", {
+    name: "Sign in or connect",
+  })).toBeVisible();
+  await expect(page.locator('[data-account-role="admin"]')).toHaveCount(0);
+});
+
 test("aligns header controls and immediately toggles the applied system theme", async ({
   page,
 }, testInfo) => {
@@ -1013,30 +1188,39 @@ test("aligns header controls and immediately toggles the applied system theme", 
     name: "Search and jump, Command or Control K",
   });
   const home = page.getByRole("link", { name: "Workspaces and backup status" });
-  const settings = page.getByRole("link", { name: "Open settings" });
   const share = page.getByRole("button", { name: "Share this view" });
+  const account = page.getByRole("button", {
+    name: /Open user menu/,
+  });
   const controlBounds = await Promise.all(
-    [search, home, share, darkToggle].map((control) => control.boundingBox()),
+    [search, home, share, darkToggle, account].map(
+      (control) => control.boundingBox(),
+    ),
   );
   if (controlBounds.some((bounds) => bounds === null)) {
     throw new Error("Header controls are not visible");
   }
-  const [searchBounds, homeBounds, shareBounds, themeBounds] = controlBounds as
+  const [
+    searchBounds,
+    homeBounds,
+    shareBounds,
+    themeBounds,
+    accountBounds,
+  ] = controlBounds as
     Exclude<(typeof controlBounds)[number], null>[];
   expect(homeBounds.width).toBe(44);
   expect(shareBounds.width).toBe(homeBounds.width);
   expect(themeBounds.width).toBe(homeBounds.width);
+  expect(accountBounds.width).toBe(homeBounds.width);
   for (const bounds of controlBounds) expect(bounds?.height).toBe(44);
   if ((page.viewportSize()?.width ?? 0) <= 980) {
     expect(searchBounds.width).toBe(homeBounds.width);
   } else {
     expect(searchBounds.width).toBeGreaterThan(homeBounds.width);
   }
-  if ((page.viewportSize()?.width ?? 0) <= 760) {
-    await expect(settings).toBeVisible();
-  } else {
-    await expect(settings).toBeHidden();
-  }
+  await expect(page.getByRole("link", {
+    name: "Open settings",
+  })).toHaveCount(0);
 
   expect(await darkToggle.evaluate((button: HTMLButtonElement) => {
     button.click();
@@ -1056,13 +1240,7 @@ test("aligns header controls and immediately toggles the applied system theme", 
     name: "Light theme active. Switch to dark theme",
   })).toBeVisible();
 
-  const mobileSettings = page.getByRole("link", { name: "Open settings" });
-  if ((page.viewportSize()?.width ?? 0) <= 760) {
-    await expect(mobileSettings).toBeVisible();
-    await mobileSettings.click();
-  } else {
-    await page.locator(".nav:visible", { hasText: "Settings" }).click();
-  }
+  await page.locator(".nav:visible", { hasText: "Settings" }).click();
   const themeChoices = page.locator(".settings .segments");
   await themeChoices.getByRole("button", { name: "system" }).click();
   await expect(root).toHaveAttribute("data-theme", "dark");
@@ -3718,7 +3896,7 @@ test("shows workspace backup state and removes only the device copy", async ({ p
   }).click();
   await expect(card).toHaveCount(0);
   await expect(page.getByText(
-    "No workspaces match this search.",
+    "No workspaces yet. Create one above or open the kitchen demo.",
     { exact: true },
   )).toBeVisible();
 });
@@ -3806,6 +3984,20 @@ test("presents unavailable backup as device storage without crushing workspace t
   await expect(page.getByText(
     "This deployment is device-only. Local workspaces remain available.",
   )).toBeVisible();
+  const unavailableAccount = page.getByRole("button", {
+    name: "Open user menu; online accounts unavailable",
+  });
+  await unavailableAccount.click();
+  const unavailableMenu = page.getByRole("dialog", {
+    name: "User menu",
+  });
+  await expect(unavailableMenu).toContainText(
+    "Online accounts and backup are unavailable in this deployment.",
+  );
+  await expect(unavailableMenu.getByRole("link", {
+    name: "Sign in or connect",
+  })).toHaveCount(0);
+  await page.keyboard.press("Escape");
   const card = page.getByRole("article").filter({
     has: page.getByRole("heading", {
       exact: true,
@@ -4587,6 +4779,10 @@ test("keeps server administration searchable and responsive", async ({
   await page.keyboard.press("Tab");
   await expect(page.getByRole("link", {
     name: "Back to organizer",
+  })).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("button", {
+    name: /Open user menu/,
   })).toBeFocused();
   await page.keyboard.press("Tab");
   const search = page.getByLabel("Search server records");

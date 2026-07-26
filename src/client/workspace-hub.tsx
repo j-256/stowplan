@@ -2,8 +2,13 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  WORKSPACE_LIST_PATH,
   workspacePath,
 } from "../domain/app-url";
+import {
+  AccountMenu,
+  type AccountMenuState,
+} from "./account-menu";
 import {
   workspaceHubCardMatches,
   type WorkspaceHubCard,
@@ -24,6 +29,7 @@ const CARD_STATE_COPY = Object.freeze({
 });
 
 interface WorkspaceHubProps {
+  accountState: AccountMenuState;
   backupConfigured: boolean | null;
   cards: readonly WorkspaceHubCard[];
   catalogError: string | null;
@@ -77,6 +83,7 @@ function removalWarning(card: WorkspaceHubCard): string | null {
 }
 
 export function WorkspaceHub({
+  accountState,
   backupConfigured,
   cards,
   catalogError,
@@ -185,6 +192,11 @@ export function WorkspaceHub({
         >
           {catalogLoading ? "Refreshing..." : "Refresh server list"}
         </button>
+        <AccountMenu
+          accountState={accountState}
+          className={styles.accountAction}
+          returnTo={WORKSPACE_LIST_PATH}
+        />
       </div>
     </header>
 
@@ -339,7 +351,9 @@ export function WorkspaceHub({
       {filtered.length === 0 && <p className={styles.empty}>
         {cards.length === 0 && catalogLoading
           ? "Loading workspaces..."
-          : "No workspaces match this search."}
+          : cards.length === 0
+            ? "No workspaces yet. Create one above or open the kitchen demo."
+            : "No workspaces match this search."}
       </p>}
     </section>
 

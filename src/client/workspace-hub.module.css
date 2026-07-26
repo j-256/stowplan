@@ -34,6 +34,10 @@
   justify-content: flex-end;
 }
 
+.accountAction {
+  margin-left: auto;
+}
+
 .alert,
 .notice {
   border: 1px solid var(--line);
@@ -232,7 +236,17 @@
 
   .headerActions {
     display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
     width: 100%;
+  }
+
+  .accountAction {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .headerActions > button {
+    grid-column: 1 / -1;
   }
 
   .toolbar {

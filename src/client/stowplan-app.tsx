@@ -36,6 +36,7 @@ import {
   Search,
   Settings,
   Share2,
+  ShieldCheck,
   Sun,
   Trash2,
   Undo2,
@@ -94,6 +95,7 @@ import {
   readPreference,
   writePreference,
 } from "./preference-storage";
+import { AccountMenu } from "./account-menu";
 import { ResizablePanels } from "./resizable-panels";
 import { ReadOnlyWorkspace } from "./read-only-workspace";
 import { parseAuthorizedRecoverySnapshot } from "./recovery-permissions";
@@ -1249,6 +1251,7 @@ export function StowplanApp() {
 
 function Application() {
   const {
+    account,
     accountId,
     authenticationReady,
     authorization,
@@ -1862,6 +1865,11 @@ function Application() {
     return <div className="loading">Opening the requested workspace view…</div>;
   }
   const workspaceHub = <WorkspaceHub
+    accountState={{
+      configured: backupConfigured,
+      ready: authenticationReady,
+      user: account,
+    }}
     backupConfigured={backupConfigured}
     cards={hubCards}
     catalogError={catalogError}
@@ -2057,7 +2065,17 @@ function Application() {
   return <div className="app-shell" data-sidebar-collapsed={sidebarCollapsed}>
     <aside aria-label="Workspace navigation">
       <Brand />
-      <nav>{nav.map((entry) => <Nav key={entry.id} {...entry} active={entry.id === view} href={tabPath(entry.id)} select={() => selectView(entry.id)} />)}</nav>
+      <nav>
+        {nav.map((entry) => <Nav key={entry.id} {...entry} active={entry.id === view} href={tabPath(entry.id)} select={() => selectView(entry.id)} />)}
+        {account?.globalRole === "admin" && <a
+          className="nav"
+          href="/admin"
+          title="Administration"
+        >
+          <ShieldCheck aria-hidden="true" />
+          <span>Administration</span>
+        </a>}
+      </nav>
       <button
         className="sidebar-toggle"
         type="button"
@@ -2082,7 +2100,61 @@ function Application() {
       </a>
     </aside>
     <main>
-      <header><div><p className="eyebrow">{state.workspace.name}</p><h1>{view === "access" ? "Workspace access" : nav.find((entry) => entry.id === view)?.label}</h1></div><div className="header-actions"><button className="jump-trigger" aria-label="Search and jump, Command or Control K" onClick={() => setJumpPaletteOpen(true)}><Search /><span>Search</span><kbd>⌘ / Ctrl K</kbd></button><a className="icon" href={WORKSPACE_LIST_PATH} aria-label="Workspaces and backup status" onClick={(event) => followAppLink(event, openWorkspaceMenu)}><Home /></a><a className="icon mobile-settings" data-active={view === "settings"} aria-label="Open settings" href={tabPath("settings")} onClick={(event) => followAppLink(event, () => selectView("settings"))}><Settings /></a><button className="icon" aria-label="Share this view" onClick={() => void shareCurrentView()}><Share2 /></button><button className="icon" aria-label={themeToggleLabel} title={themeToggleLabel} onClick={() => selectTheme(appliedTheme === "dark" ? "light" : "dark")}>{appliedTheme === "dark" ? <Moon /> : <Sun />}</button></div></header>
+      <header>
+        <div>
+          <p className="eyebrow">{state.workspace.name}</p>
+          <h1>
+            {view === "access"
+              ? "Workspace access"
+              : nav.find((entry) => entry.id === view)?.label}
+          </h1>
+        </div>
+        <div className="header-actions">
+          <button
+            aria-label="Search and jump, Command or Control K"
+            className="jump-trigger"
+            onClick={() => setJumpPaletteOpen(true)}
+          >
+            <Search />
+            <span>Search</span>
+            <kbd>⌘ / Ctrl K</kbd>
+          </button>
+          <a
+            aria-label="Workspaces and backup status"
+            className="icon"
+            href={WORKSPACE_LIST_PATH}
+            onClick={(event) => followAppLink(event, openWorkspaceMenu)}
+          >
+            <Home />
+          </a>
+          <button
+            aria-label="Share this view"
+            className="icon"
+            onClick={() => void shareCurrentView()}
+          >
+            <Share2 />
+          </button>
+          <button
+            aria-label={themeToggleLabel}
+            className="icon"
+            onClick={() => selectTheme(
+              appliedTheme === "dark" ? "light" : "dark",
+            )}
+            title={themeToggleLabel}
+          >
+            {appliedTheme === "dark" ? <Moon /> : <Sun />}
+          </button>
+          <AccountMenu
+            accountState={{
+              configured: backupConfigured,
+              ready: authenticationReady,
+              user: account,
+            }}
+            returnTo={canonicalPath ?? WORKSPACE_LIST_PATH}
+            workspaceId={state.workspace.id}
+          />
+        </div>
+      </header>
       {!syncIssue && <a
         className="mobile-sync-status"
         href={backupReviewPath}
@@ -2201,7 +2273,7 @@ function Application() {
       openView={selectView}
       state={state}
     />}
-    <nav className="bottom">{nav.filter((entry) => entry.id !== "settings").map((entry) => <Nav key={entry.id} {...entry} active={entry.id === view} href={tabPath(entry.id)} select={() => selectView(entry.id)} />)}</nav>
+    <nav className="bottom">{nav.map((entry) => <Nav key={entry.id} {...entry} active={entry.id === view} href={tabPath(entry.id)} select={() => selectView(entry.id)} />)}</nav>
   </div>;
 }
 
