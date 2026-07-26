@@ -50,6 +50,13 @@
   padding-inline-start: 1.2rem;
 }
 
+.blockers a {
+  color: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
 .review label {
   display: grid;
   gap: 0.4rem;

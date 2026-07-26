@@ -1,18 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
+import { workspacePath } from "../domain/app-url";
 import {
   ACCOUNT_CONTEXT_HEADER,
   accountContextHeaders,
 } from "../shared/account-context";
+import type {
+  AccountDeletionBlocker,
+} from "../shared/governance-policy";
 import { GoogleSignIn } from "./google-sign-in";
 import styles from "./account-deletion.module.css";
-
-interface AccountDeletionBlocker {
-  code: string;
-  workspaceId?: string;
-}
 
 interface AccountDeletionPreparation {
   accountRevision: number;
@@ -68,7 +67,25 @@ function accountChanged(
     : responseAccountId !== accountId;
 }
 
-function blockerText(blocker: AccountDeletionBlocker): string {
+function blockerWorkspace(
+  blocker: AccountDeletionBlocker,
+): ReactNode {
+  const label = blocker.workspaceName?.trim() ||
+    "the affected workspace";
+  return blocker.workspaceId
+    ? <Link href={workspacePath({
+        view: "access",
+        workspaceId: blocker.workspaceId,
+        workspaceLabel: blocker.workspaceName ?? null,
+      })}>
+        {label}
+      </Link>
+    : label;
+}
+
+function blockerContent(
+  blocker: AccountDeletionBlocker,
+): ReactNode {
   if (blocker.code === "FINAL_ADMIN") {
     return "This is the last active global administrator. Promote and verify another administrator before demoting this account.";
   }
@@ -76,14 +93,10 @@ function blockerText(blocker: AccountDeletionBlocker): string {
     return "Demote this account from global administrator before deleting it.";
   }
   if (blocker.code === "FINAL_WORKSPACE_OWNER") {
-    return `Transfer or delete workspace ${
-      blocker.workspaceId ?? "with final ownership"
-    } before deleting the account.`;
+    return <>Transfer or delete {blockerWorkspace(blocker)} before deleting the account.</>;
   }
   if (blocker.code === "CUSTODY_TRANSFER_UNAVAILABLE") {
-    return `Workspace ${
-      blocker.workspaceId ?? "custody"
-    } has no eligible co-owner with server capacity.`;
+    return <>{blockerWorkspace(blocker)} has no eligible co-owner with server capacity. Add or promote a co-owner, then review again.</>;
   }
   if (blocker.code === "ACCOUNT_INACTIVE") {
     return "Only an active account can use self-service deletion.";
@@ -240,7 +253,7 @@ export function AccountDeletion({
             <ul>
               {preparation.blockers.map((blocker, index) =>
                 <li key={`${blocker.code}:${blocker.workspaceId ?? index}`}>
-                  {blockerText(blocker)}
+                  {blockerContent(blocker)}
                 </li>
               )}
             </ul>

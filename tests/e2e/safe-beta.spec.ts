@@ -1561,6 +1561,10 @@ test(
       const retained = await readActiveReplica(page);
       expect(retained?.authorization?.status).toBe("revoked");
       expect(retained?.authorization?.role).toBeNull();
+      await expect(page.locator(".sync")).toContainText("Access removed");
+      await expect(page.locator(".sync")).not.toContainText(
+        "Backed up online",
+      );
 
       await page.goto(workspacePath({
         view: "settings",
@@ -1768,6 +1772,10 @@ test(
       await expect(page.getByRole("heading", {
         name: "Server membership ended",
       })).toBeVisible();
+      await expect(page.locator(".sync")).toContainText("Membership left");
+      await expect(page.locator(".sync")).not.toContainText(
+        "Backed up online",
+      );
 
       const local = await readActiveReplica(page);
       expect(local?.authorization?.status).toBe("left");
@@ -1886,6 +1894,9 @@ test(
     await expect(page.getByRole("heading", {
       name: "Server workspace deleted",
     })).toBeVisible();
+    await expect(page.locator(".sync")).not.toContainText(
+      "Backed up online",
+    );
     await page.goto("/workspaces");
     const retainedCard = cardFor(page, workspace.summary.name);
     await expect(retainedCard).toContainText("Server deleted");

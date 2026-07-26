@@ -678,6 +678,7 @@ describe("account governance", () => {
     expect(preparation.blockers).toContainEqual({
       code: "FINAL_WORKSPACE_OWNER",
       workspaceId: state.workspace.id,
+      workspaceName: state.workspace.name,
     });
     await expect(executeAccountDeletion(database, {
       confirmation: "DELETE",

@@ -64,7 +64,10 @@ import type {
   ThemePreference,
   WorkspaceState,
 } from "../domain/types";
-import { workspaceReadOnlyReason } from "../domain/workspace-access";
+import {
+  workspaceReadOnlyReason,
+  type WorkspaceAccessStatus,
+} from "../domain/workspace-access";
 import { nextCaptureLocation } from "./capture-order";
 import {
   parseAppUrl,
@@ -129,6 +132,7 @@ type BackupPresentation = {
   label: string;
   offline?: boolean;
   state: "blocked" | "local" | "pending" | "synced";
+  terminal?: boolean;
 };
 type PendingHierarchyChange = {
   command: LocationHierarchyCommand;
@@ -148,6 +152,14 @@ const CONTAINER_REVIEW_KIND = Object.freeze({
   EMPTY: "empty",
   KNOWN_EMPTY: "known-empty",
 } as const);
+const TERMINAL_BACKUP_LABELS: Readonly<
+  Partial<Record<WorkspaceAccessStatus, string>>
+> = Object.freeze({
+  deleted: "Server copy deleted",
+  left: "Membership left",
+  revoked: "Access removed",
+  unknown: "Server access unavailable",
+});
 type ContainerReview = {
   items: {
     id: string;
@@ -624,6 +636,7 @@ function countLabel(
   return `${count} ${count === 1 ? singular : plural}`;
 }
 function backupPresentation({
+  accessStatus,
   backupConfigured,
   blocked,
   lastSyncError,
@@ -632,6 +645,7 @@ function backupPresentation({
   pending,
   syncing,
 }: {
+  accessStatus?: WorkspaceAccessStatus;
   backupConfigured?: boolean | null;
   blocked: number;
   lastSyncError: string | null;
@@ -644,6 +658,17 @@ function backupPresentation({
     return {
       label: `${blocked} change${blocked === 1 ? " needs" : "s need"} review`,
       state: "blocked",
+    };
+  }
+  const terminalLabel = accessStatus
+    ? TERMINAL_BACKUP_LABELS[accessStatus]
+    : undefined;
+  if (terminalLabel) {
+    return {
+      deviceOnly: true,
+      label: terminalLabel,
+      state: "local",
+      terminal: true,
     };
   }
   const deviceOnly = backupConfigured === false ||
@@ -1857,6 +1882,9 @@ function Application() {
     ? "Dark theme active. Switch to light theme"
     : "Light theme active. Switch to dark theme";
   const syncStatus = backupPresentation({
+    accessStatus: authorization?.kind === "server"
+      ? authorization.status
+      : undefined,
     backupConfigured,
     blocked,
     lastSyncError,
@@ -1868,10 +1896,12 @@ function Application() {
   const backupReviewPath = syncStatus.state === "blocked"
     ? "/recovery"
     : WORKSPACE_LIST_PATH;
-  const syncTitle = lastSyncError ??
-    (lastSyncedAt
-      ? `Last successful backup: ${formatTimestamp(lastSyncedAt)}`
-      : "This workspace has not been backed up online yet.");
+  const syncTitle = syncStatus.terminal
+    ? `${syncStatus.label}. This retained device copy is not backed up online.`
+    : lastSyncError ??
+      (lastSyncedAt
+        ? `Last successful backup: ${formatTimestamp(lastSyncedAt)}`
+        : "This workspace has not been backed up online yet.");
   const syncLinkTitle = syncStatus.state === "blocked"
     ? `${syncTitle} Open Sync & recovery.`
     : `${syncTitle} Review all workspace backup statuses.`;

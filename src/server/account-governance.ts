@@ -44,6 +44,7 @@ interface GovernanceDatabase extends D1DatabaseLike {
 }
 
 const ROLLING_CREATION_WINDOW_MS = 30 * 24 * 60 * 60 * 1_000;
+const UNNAMED_WORKSPACE_LABEL = "Unnamed workspace";
 
 interface AccountRow {
   account_revision: number;
@@ -60,6 +61,12 @@ interface CustodyCandidateRow {
   candidate_user_id: string;
   snapshot_bytes: number;
   workspace_id: string;
+}
+
+interface CustodyWorkspaceRow {
+  snapshot_bytes: number;
+  workspace_id: string;
+  workspace_name: string | null;
 }
 
 interface IdentityRow {
@@ -354,13 +361,20 @@ async function hasRetainedIdentityBanDigests(
   ).bind(userId).first<{ retained: number }>());
 }
 
-async function finalOwnedWorkspaceIds(
+async function finalOwnedWorkspaceBlockers(
   db: GovernanceDatabase,
   userId: string,
-): Promise<string[]> {
+): Promise<AccountDeletionBlocker[]> {
   const rows = await db.prepare(
-    `SELECT owned.workspace_id
+    `SELECT
+       owned.workspace_id,
+       json_extract(
+         snapshot.state_json,
+         '$.workspace.name'
+       ) AS workspace_name
      FROM workspace_members owned
+     LEFT JOIN workspace_snapshots snapshot
+       ON snapshot.workspace_id = owned.workspace_id
      WHERE owned.user_id = ?
        AND owned.role = 'owner'
        AND NOT EXISTS (
@@ -380,8 +394,16 @@ async function finalOwnedWorkspaceIds(
            AND other_user.deleted_at IS NULL
        )
      ORDER BY owned.workspace_id`,
-  ).bind(userId).all<{ workspace_id: string }>();
-  return rows.results.map(row => row.workspace_id);
+  ).bind(userId).all<{
+    workspace_id: string;
+    workspace_name: string | null;
+  }>();
+  return rows.results.map(row => ({
+    code: "FINAL_WORKSPACE_OWNER",
+    workspaceId: row.workspace_id,
+    workspaceName: row.workspace_name?.trim() ||
+      UNNAMED_WORKSPACE_LABEL,
+  }));
 }
 
 async function custodyPlan(
@@ -394,16 +416,17 @@ async function custodyPlan(
   const custody = await db.prepare(
     `SELECT
        custody.workspace_id,
-       snapshot.stored_bytes AS snapshot_bytes
+       snapshot.stored_bytes AS snapshot_bytes,
+       json_extract(
+         snapshot.state_json,
+         '$.workspace.name'
+       ) AS workspace_name
      FROM workspace_custody custody
      JOIN workspace_snapshots snapshot
        ON snapshot.workspace_id = custody.workspace_id
      WHERE custody.custodian_user_id = ?
      ORDER BY custody.workspace_id`,
-  ).bind(userId).all<{
-    snapshot_bytes: number;
-    workspace_id: string;
-  }>();
+  ).bind(userId).all<CustodyWorkspaceRow>();
   if (custody.results.length === 0) {
     return { blockers: [], transfers: [] };
   }
@@ -463,6 +486,8 @@ async function custodyPlan(
       blockers.push({
         code: "CUSTODY_TRANSFER_UNAVAILABLE",
         workspaceId: target.workspace_id,
+        workspaceName: target.workspace_name?.trim() ||
+          UNNAMED_WORKSPACE_LABEL,
       });
       continue;
     }
@@ -516,11 +541,7 @@ export async function prepareAccountDeletion(
       blockers.push({ code: "FINAL_ADMIN" });
     }
   }
-  const finalWorkspaces = await finalOwnedWorkspaceIds(db, userId);
-  blockers.push(...finalWorkspaces.map(workspaceId => ({
-    code: "FINAL_WORKSPACE_OWNER" as const,
-    workspaceId,
-  })));
+  blockers.push(...await finalOwnedWorkspaceBlockers(db, userId));
   const custody = await custodyPlan(db, userId);
   blockers.push(...custody.blockers);
   const membership = await db.prepare(

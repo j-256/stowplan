@@ -131,6 +131,7 @@ export interface AccountDeletionBlocker {
     | "FINAL_WORKSPACE_OWNER"
     | "GLOBAL_ADMIN";
   workspaceId?: string;
+  workspaceName?: string;
 }
 
 export interface AccountDeletionCustodyTransfer {

@@ -1,5 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { workspacePath } from "../../src/domain/app-url";
 
 const MAX_FACING_CONTENT_GAP = 54;
 const MAX_PANEL_GUTTER = 16;
@@ -292,6 +293,96 @@ test("uses one application name in invitation titles", async ({ page }) => {
   await expect(page).toHaveTitle(
     "Accept workspace invitation · Stowplan",
   );
+});
+
+test("names and links account-deletion workspace blockers", async ({
+  page,
+}) => {
+  const workspaceId = "ws_private_identifier";
+  const workspaceName = "Bob's Box Room";
+  const accountHeaders = {
+    "content-type": "application/json",
+    "x-stowplan-account-id": MOCK_ACCOUNT_ID,
+  };
+  await page.route("**/api/auth/me", route => route.fulfill({
+    body: JSON.stringify({
+      accessMigrationAvailable: false,
+      configured: true,
+      providers: ["development"],
+      turnstileSiteKey: null,
+      user: {
+        displayName: "Bob",
+        email: "bob@example.test",
+        expiresAt: "2099-07-26T12:00:00.000Z",
+        globalRole: "user",
+        userId: MOCK_ACCOUNT_ID,
+      },
+    }),
+    headers: accountHeaders,
+    status: 200,
+  }));
+  await page.route("**/api/auth/sessions*", route => route.fulfill({
+    body: JSON.stringify({
+      currentSession: {
+        createdAt: "2026-07-26T11:00:00.000Z",
+        current: true,
+        expiresAt: "2099-07-26T12:00:00.000Z",
+        id: "ses_bob",
+        ipPrefix: null,
+        lastSeenAt: "2026-07-26T12:00:00.000Z",
+        revokedAt: null,
+        status: "active",
+        userAgent: "Chrome for Testing",
+      },
+      otherSessions: [],
+      page: {
+        hasMore: false,
+        limit: 50,
+        nextCursor: null,
+      },
+    }),
+    headers: accountHeaders,
+    status: 200,
+  }));
+  await page.route("**/api/account/deletion", route => route.fulfill({
+    body: JSON.stringify({
+      deletion: {
+        accountRevision: 3,
+        blockers: [{
+          code: "FINAL_WORKSPACE_OWNER",
+          workspaceId,
+          workspaceName,
+        }],
+        custodyTransfers: [],
+        globalRole: "user",
+        membershipCount: 1,
+        membershipRevision: 4,
+        status: "active",
+        userId: MOCK_ACCOUNT_ID,
+      },
+    }),
+    headers: accountHeaders,
+    status: 200,
+  }));
+
+  await page.goto("/account");
+  await page.getByRole("button", {
+    name: "Review account deletion",
+  }).click();
+  const blockers = page.getByRole("alert").filter({
+    hasText: "Deletion is blocked",
+  });
+  await expect(blockers).toContainText(
+    `Transfer or delete ${workspaceName} before deleting the account.`,
+  );
+  await expect(blockers).not.toContainText(workspaceId);
+  await expect(blockers.getByRole("link", {
+    name: workspaceName,
+  })).toHaveAttribute("href", workspacePath({
+    view: "access",
+    workspaceId,
+    workspaceLabel: workspaceName,
+  }));
 });
 
 test("names label choices and toggles the complete selection", async ({ page }) => {
