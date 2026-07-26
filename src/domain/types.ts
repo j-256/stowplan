@@ -217,11 +217,13 @@ export type Command =
           destinationId: string;
           id: string;
           quantity: number;
+          reopenCompletedParents?: boolean;
       }
     | {
           type: "item.bulkMove";
           destinationId: string;
           itemIds: string[];
+          reopenCompletedParents?: boolean;
       }
     | { type: "plan.create"; plan: MovePlan }
     | { type: "plan.step.complete"; planId: string; stepId: string }

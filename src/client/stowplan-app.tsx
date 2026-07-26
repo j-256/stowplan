@@ -75,6 +75,7 @@ import {
 } from "../domain/app-url";
 import { listWorkspaceReplicas, readWorkspaceReplica } from "./local-replica";
 import { JumpPalette } from "./jump-palette";
+import { ModalDialog } from "./modal-dialog";
 import {
   STOWPLAN_HISTORY_EVENT,
   STOWPLAN_HISTORY_OWNER_ATTRIBUTE,
@@ -132,6 +133,12 @@ type BackupPresentation = {
 type PendingHierarchyChange = {
   command: LocationHierarchyCommand;
   completedParentIds: string[];
+  expectations: FieldExpectation[];
+};
+type ItemBulkMoveCommand = Extract<Command, { type: "item.bulkMove" }>;
+type PendingItemBulkMove = {
+  command: ItemBulkMoveCommand;
+  completedLocationIds: string[];
   expectations: FieldExpectation[];
 };
 type LocationPlacementResult =
@@ -635,7 +642,7 @@ function backupPresentation({
 }): BackupPresentation {
   if (blocked) {
     return {
-      label: `${blocked} change${blocked === 1 ? "" : "s"} need review`,
+      label: `${blocked} change${blocked === 1 ? " needs" : "s need"} review`,
       state: "blocked",
     };
   }
@@ -1649,6 +1656,10 @@ function Application() {
       finishWorkspaceOpen(openController);
     }
   };
+  const reviewWorkspaceRecovery = async (workspaceId: string) => {
+    await chooseWorkspace(workspaceId);
+    location.assign("/recovery");
+  };
   const removeLocalWorkspace = async (workspaceId: string, expectedUpdatedAt?: string) => {
     await removeWorkspace(workspaceId, expectedUpdatedAt);
     setSelected(null);
@@ -1695,6 +1706,7 @@ function Application() {
     onOpen={chooseWorkspace}
     onOpenDemo={openDemo}
     onRefresh={refreshWorkspaces}
+    onReviewRecovery={reviewWorkspaceRecovery}
     onRemove={removeLocalWorkspace}
     onResetDemo={
       state?.workspace.id.startsWith("ws_demo")
@@ -1853,10 +1865,16 @@ function Application() {
     pending,
     syncing,
   });
+  const backupReviewPath = syncStatus.state === "blocked"
+    ? "/recovery"
+    : WORKSPACE_LIST_PATH;
   const syncTitle = lastSyncError ??
     (lastSyncedAt
       ? `Last successful backup: ${formatTimestamp(lastSyncedAt)}`
       : "This workspace has not been backed up online yet.");
+  const syncLinkTitle = syncStatus.state === "blocked"
+    ? `${syncTitle} Open Sync & recovery.`
+    : `${syncTitle} Review all workspace backup statuses.`;
   const readOnlyReason = authorization
     ? workspaceReadOnlyReason(authorization)
     : null;
@@ -1877,10 +1895,12 @@ function Application() {
       </button>
       <a
         className="sync"
-        href={WORKSPACE_LIST_PATH}
+        href={backupReviewPath}
         aria-label={`Review workspace backup statuses: ${syncStatus.label}`}
-        title={`${syncTitle} Review all workspace backup statuses.`}
-        onClick={(event) => followAppLink(event, openWorkspaceMenu)}
+        title={syncLinkTitle}
+        onClick={backupReviewPath === WORKSPACE_LIST_PATH
+          ? (event) => followAppLink(event, openWorkspaceMenu)
+          : undefined}
       >
         <BackupStatusIcon presentation={syncStatus} />
         <span>{syncStatus.label}</span>
@@ -1890,8 +1910,10 @@ function Application() {
       <header><div><p className="eyebrow">{state.workspace.name}</p><h1>{view === "access" ? "Workspace access" : nav.find((entry) => entry.id === view)?.label}</h1></div><div className="header-actions"><button className="jump-trigger" aria-label="Search and jump, Command or Control K" onClick={() => setJumpPaletteOpen(true)}><Search /><span>Search</span><kbd>⌘ / Ctrl K</kbd></button><a className="icon" href={WORKSPACE_LIST_PATH} aria-label="Workspaces and backup status" onClick={(event) => followAppLink(event, openWorkspaceMenu)}><Home /></a><a className="icon mobile-settings" data-active={view === "settings"} aria-label="Open settings" href={tabPath("settings")} onClick={(event) => followAppLink(event, () => selectView("settings"))}><Settings /></a><button className="icon" aria-label="Share this view" onClick={() => void shareCurrentView()}><Share2 /></button><button className="icon" aria-label={themeToggleLabel} title={themeToggleLabel} onClick={() => selectTheme(appliedTheme === "dark" ? "light" : "dark")}>{appliedTheme === "dark" ? <Moon /> : <Sun />}</button></div></header>
       {!syncIssue && <a
         className="mobile-sync-status"
-        href={WORKSPACE_LIST_PATH}
-        onClick={(event) => followAppLink(event, openWorkspaceMenu)}
+        href={backupReviewPath}
+        onClick={backupReviewPath === WORKSPACE_LIST_PATH
+          ? (event) => followAppLink(event, openWorkspaceMenu)
+          : undefined}
       >
         <BackupStatusIcon presentation={syncStatus} />
         <span>{syncStatus.label}</span>
@@ -1900,7 +1922,7 @@ function Application() {
       {syncIssue && <section className="sync-error-banner" role="alert">
         <AlertCircle />
         <span><strong>Backup needs attention</strong><small>{syncIssue}</small></span>
-        <a href={WORKSPACE_LIST_PATH} onClick={(event) => followAppLink(event, openWorkspaceMenu)}>Review backup</a>
+        <a href="/recovery">Review backup</a>
       </section>}
       {readOnlyReason && <section
         className="workspace-read-only-banner"
@@ -3591,6 +3613,11 @@ function Inventory({ state, commit, editing, editFocus, locationFilter, onEditin
   const [query, setQuery] = useState("");
   const [sortBy, setSortBy] = useState<"location" | "name" | "quantity">("name");
   const [selected, setSelected] = useState<string[]>([]);
+  const [moveDestinationId, setMoveDestinationId] = useState("");
+  const [pendingBulkMove, setPendingBulkMove] =
+    useState<PendingItemBulkMove | null>(null);
+  const [bulkMoveBusy, setBulkMoveBusy] = useState(false);
+  const bulkMoveBusyRef = useRef(false);
   const [nativeReorderCue, setNativeReorderCue] = useState<DropTarget | null>(null);
   const [nativeReorderSource, setNativeReorderSource] = useState<DragPayload | null>(null);
   const locationName = useMemo(() => new Map(state.locations.map((location) => [location.id, locationPath(state.locations, location.id).map((part) => part.name).join(" › ")])), [state.locations]);
@@ -3637,25 +3664,115 @@ function Inventory({ state, commit, editing, editFocus, locationFilter, onEditin
       status: hasContents ? "in_progress" : "uncounted",
     });
   };
-  const moveSelected = (destinationId: string) => {
-    const completed = [
-      ...selectedItems.map((item) => item.locationId),
-      destinationId,
-    ]
-      .map((id) => state.locations.find((location) => location.id === id))
-      .find((location) =>
-        location && COMPLETE_CAPTURE_STATUSES.has(location.captureStatus)
-      );
-    if (completed) {
-      showFeedback(`Reopen ${completed.name} before changing its contents`);
-      return;
+  const movableBulkMoveItems = (
+    command: ItemBulkMoveCommand,
+  ): ItemRecord[] => command.itemIds.flatMap((id) => {
+    const item = state.items.find((candidate) => candidate.id === id);
+    return item && item.locationId !== command.destinationId
+      ? [item]
+      : [];
+  });
+  const completedBulkMoveLocations = (
+    command: ItemBulkMoveCommand,
+  ): Location[] => {
+    const sourceIds = movableBulkMoveItems(command).map(
+      (item) => item.locationId,
+    );
+    const locationIds = new Set([...sourceIds, command.destinationId]);
+    return state.locations.filter((location) =>
+      locationIds.has(location.id) &&
+      !location.archivedAt &&
+      COMPLETE_CAPTURE_STATUSES.has(location.captureStatus)
+    );
+  };
+  const applyBulkMove = async (
+    command: ItemBulkMoveCommand,
+    reopenCompletedParents = false,
+  ): Promise<boolean> => {
+    if (bulkMoveBusyRef.current) {
+      showFeedback("The item move is still in progress", "info");
+      return false;
     }
-    void perform(commit, {
+    if (reopenCompletedParents && pendingBulkMove) {
+      const currentExpectations = expectationsForCommand(state, command);
+      if (
+        expectationFingerprint(currentExpectations) !==
+        expectationFingerprint(pendingBulkMove.expectations)
+      ) {
+        setPendingBulkMove(null);
+        setMoveDestinationId("");
+        showFeedback(
+          "The selected items or affected spaces changed while the move was open. Review them before moving.",
+          "info",
+        );
+        return false;
+      }
+    }
+    bulkMoveBusyRef.current = true;
+    setBulkMoveBusy(true);
+    const prepared: ItemBulkMoveCommand = {
+      ...command,
+      reopenCompletedParents,
+    };
+    const applied = await perform(commit, prepared);
+    bulkMoveBusyRef.current = false;
+    setBulkMoveBusy(false);
+    if (applied) {
+      const movedCount = movableBulkMoveItems(command).length;
+      setPendingBulkMove(null);
+      setMoveDestinationId("");
+      setSelected([]);
+      showFeedback(
+        `${countLabel(movedCount, "item record")} moved`,
+        "success",
+      );
+    } else if (!reopenCompletedParents) {
+      setMoveDestinationId("");
+    }
+    return applied;
+  };
+  const moveSelected = (destinationId: string) => {
+    setMoveDestinationId(destinationId);
+    const command: ItemBulkMoveCommand = {
       type: "item.bulkMove",
       itemIds: activeSelection,
       destinationId,
-    }, () => setSelected([]));
+    };
+    const completed = completedBulkMoveLocations(command);
+    if (completed.length > 0) {
+      dismissFeedback();
+      const confirmedCommand = {
+        ...command,
+        reopenCompletedParents: true,
+      };
+      setPendingBulkMove({
+        command: confirmedCommand,
+        completedLocationIds: completed.map((location) => location.id),
+        expectations: expectationsForCommand(state, confirmedCommand),
+      });
+      return;
+    }
+    void applyBulkMove(command);
   };
+  const closeBulkMoveReview = () => {
+    if (bulkMoveBusyRef.current) return;
+    setPendingBulkMove(null);
+    setMoveDestinationId("");
+  };
+  const pendingBulkMoveDestination = pendingBulkMove
+    ? state.locations.find(
+        (location) => location.id === pendingBulkMove.command.destinationId,
+      )
+    : null;
+  const pendingBulkMoveLocations = pendingBulkMove
+    ? pendingBulkMove.completedLocationIds.flatMap((id) => {
+        const location = state.locations.find((candidate) => candidate.id === id);
+        return location ? [location] : [];
+      })
+    : [];
+  const pendingBulkMoveItemCount = pendingBulkMove
+    ? movableBulkMoveItems(pendingBulkMove.command).length
+    : 0;
   const clearNativeReorder = () => {
     setNativeReorderCue(null);
     setNativeReorderSource(null);
@@ -3818,8 +3935,8 @@ function Inventory({ state, commit, editing, editFocus, locationFilter, onEditin
       <b>{shown.length} records</b>
     </div>
     <div className="toolbar inventory-tools">
-      <label className="search"><Search /><input aria-label="Search inventory" value={query} onChange={(event) => { setQuery(event.target.value); setSelected([]); }} placeholder="Search names, categories, tags, constraints, and notes" /></label>
-      <select aria-label="Filter by location" value={locationFilter} onChange={(event) => { onLocationFilterChange(event.target.value); setSelected([]); }}>
+      <label className="search"><Search /><input aria-label="Search inventory" value={query} onChange={(event) => { setQuery(event.target.value); setSelected([]); setMoveDestinationId(""); }} placeholder="Search names, categories, tags, constraints, and notes" /></label>
+      <select aria-label="Filter by location" value={locationFilter} onChange={(event) => { onLocationFilterChange(event.target.value); setSelected([]); setMoveDestinationId(""); }}>
         <option value="">Every container</option>
         {locationOptions.map(({ depth, location }) => <option key={location.id} value={location.id}>{`${"  ".repeat(depth)}${depth ? "↳ " : ""}${location.code} · ${location.name}`}</option>)}
       </select>
@@ -3838,12 +3955,52 @@ function Inventory({ state, commit, editing, editFocus, locationFilter, onEditin
     <section className="panel inventory">{shown.map(inventoryRow)}{shown.length === 0 && <Empty title="No matching records" text="Clear a filter or capture something new." />}</section>
     {activeSelection.length > 0 && <div className="floating">
       <b>{activeSelection.length} selected</b>
-      <select aria-label="Move selected items" defaultValue="" onChange={(event) => { if (event.target.value) moveSelected(event.target.value); }}>
+      <select aria-label="Move selected items" value={moveDestinationId} onChange={(event) => { if (event.target.value) moveSelected(event.target.value); else setMoveDestinationId(""); }}>
         <option value="">Move to…</option>
         {locationOptions.map(({ depth, location }) => <option disabled={selectedItems.length > 0 && selectedItems.every((item) => item.locationId === location.id)} value={location.id} key={location.id}>{`${"  ".repeat(depth)}${depth ? "↳ " : ""}${location.code} · ${location.name}`}</option>)}
       </select>
-      <button onClick={() => setSelected([])}>Clear</button>
+      <button onClick={() => { setSelected([]); setMoveDestinationId(""); }}>Clear</button>
     </div>}
+    <ModalDialog
+      busy={bulkMoveBusy}
+      description={pendingBulkMove && pendingBulkMoveDestination
+        ? `Moving ${countLabel(pendingBulkMoveItemCount, "selected record")} to ${pendingBulkMoveDestination.code} · ${pendingBulkMoveDestination.name} changes what was recorded inside these completed spaces. The move and reopen will be one undoable Activity entry.`
+        : undefined}
+      onClose={closeBulkMoveReview}
+      open={Boolean(pendingBulkMove && pendingBulkMoveDestination)}
+      title="Reopen completed spaces and move items?"
+    >
+      <ul className="hierarchy-review-list">
+        {pendingBulkMoveLocations.map((location) => <li key={location.id}>
+          <strong>{location.code} · {location.name}</strong>
+          <span>Reopen as in progress</span>
+        </li>)}
+      </ul>
+      <div className="hierarchy-dialog-actions">
+        <button
+          type="button"
+          data-dialog-initial-focus
+          disabled={bulkMoveBusy}
+          onClick={closeBulkMoveReview}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="primary"
+          disabled={bulkMoveBusy}
+          onClick={() => {
+            if (pendingBulkMove) {
+              void applyBulkMove(pendingBulkMove.command, true);
+            }
+          }}
+        >
+          {bulkMoveBusy
+            ? "Moving..."
+            : `Move ${pendingBulkMoveItemCount} and reopen`}
+        </button>
+      </div>
+    </ModalDialog>
     {editing && state.items.find((item) => item.id === editing) && <ItemEditor item={state.items.find((item) => item.id === editing) as ItemRecord} state={state} commit={commit} close={() => onEditingChange(null)} focus={editFocus} />}
   </div>;
 }

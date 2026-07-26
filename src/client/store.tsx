@@ -1218,10 +1218,12 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
     const visible = () => {
       if (document.visibilityState === "visible") immediate();
     };
+    addEventListener("focus", immediate);
     addEventListener("online", immediate);
     document.addEventListener("visibilitychange", visible);
     const reconciliation = setInterval(immediate, 300_000);
     return () => {
+      removeEventListener("focus", immediate);
       removeEventListener("online", immediate);
       document.removeEventListener("visibilitychange", visible);
       clearInterval(reconciliation);

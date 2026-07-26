@@ -3398,6 +3398,143 @@ test("supports drag organization and the partial-move fallback", async ({ page }
   await expect(page.getByRole("checkbox", { name: "Select Pasta, 4 boxes in Kitchen › Left side › Cabinet above oven" })).toBeVisible();
 });
 
+test("confirms one atomic bulk move across completed spaces", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    !["desktop-chromium", "mobile-chromium"].includes(testInfo.project.name),
+    "Phone and desktop cover the responsive bulk-move confirmation",
+  );
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
+  await page.locator(".nav:visible", { hasText: "Inventory" }).click();
+  const pasta = page.getByRole("checkbox", {
+    name: "Select Pasta, 6 boxes in Kitchen › Left side › Cabinet above oven",
+  });
+  const flour = page.getByRole("checkbox", {
+    name: "Select All-purpose flour, 1 bag in Kitchen › Right side › Lower cabinet › Baking bin",
+  });
+  await pasta.check();
+  await flour.check();
+  const destination = page.getByRole("combobox", {
+    name: "Move selected items",
+  });
+  const destinationStyle = await destination.evaluate((element) => {
+    const styles = getComputedStyle(element);
+    const luminance = (value: string) => {
+      const channels = value.match(/\d+(?:\.\d+)?/g)?.slice(0, 3)
+        .map((channel) => Number(channel) / 255) ?? [];
+      const linear = channels.map((channel) => channel <= 0.04045
+        ? channel / 12.92
+        : ((channel + 0.055) / 1.055) ** 2.4
+      );
+      return 0.2126 * (linear[0] ?? 0) +
+        0.7152 * (linear[1] ?? 0) +
+        0.0722 * (linear[2] ?? 0);
+    };
+    const foreground = luminance(styles.color);
+    const background = luminance(styles.backgroundColor);
+    return {
+      background: styles.backgroundColor,
+      contrast: (Math.max(foreground, background) + 0.05) /
+        (Math.min(foreground, background) + 0.05),
+      color: styles.color,
+    };
+  });
+  expect(destinationStyle.color).not.toBe(destinationStyle.background);
+  expect(destinationStyle.contrast).toBeGreaterThanOrEqual(4.5);
+  const before = await localReplica(page) as {
+    state: {
+      activities: unknown[];
+      items: { id: string; locationId: string }[];
+      locations: { captureStatus: string; id: string }[];
+    };
+  };
+
+  await destination.selectOption("loc_counter");
+  const confirmation = page.getByRole("dialog", {
+    name: "Reopen completed spaces and move items?",
+  });
+  await expect(confirmation).toBeVisible();
+  await expect(confirmation).toContainText(
+    "Moving 2 selected records to CTR · Counter",
+  );
+  await expect(confirmation.locator(".hierarchy-review-list li")).toHaveCount(3);
+  await expect(confirmation).toContainText("C-02 · Cabinet above oven");
+  await expect(confirmation).toContainText("B-17 · Baking bin");
+  await expect(confirmation).toContainText("CTR · Counter");
+  const cancel = confirmation.getByRole("button", { name: "Cancel" });
+  await expect(cancel).toBeFocused();
+  await cancel.click();
+  await expect(confirmation).toBeHidden();
+  await expect(pasta).toBeChecked();
+  await expect(flour).toBeChecked();
+  await expect(destination).toHaveValue("");
+
+  await destination.selectOption("loc_counter");
+  await confirmation.getByRole("button", {
+    name: "Move 2 and reopen",
+  }).click();
+  await expect(confirmation).toBeHidden();
+  await expect(page.locator(".floating")).toHaveCount(0);
+  await expect.poll(async () => {
+    const replica = await localReplica(page) as typeof before;
+    return {
+      activityCount: replica.state.activities.length,
+      itemLocations: replica.state.items
+        .filter((item) => ["item_flour", "item_pasta"].includes(item.id))
+        .map((item) => [item.id, item.locationId])
+        .sort(),
+      locationStatuses: replica.state.locations
+        .filter((location) =>
+          ["loc_bin", "loc_counter", "loc_warm"].includes(location.id)
+        )
+        .map((location) => [location.id, location.captureStatus])
+        .sort(),
+    };
+  }).toEqual({
+    activityCount: before.state.activities.length + 1,
+    itemLocations: [
+      ["item_flour", "loc_counter"],
+      ["item_pasta", "loc_counter"],
+    ],
+    locationStatuses: [
+      ["loc_bin", "in_progress"],
+      ["loc_counter", "in_progress"],
+      ["loc_warm", "in_progress"],
+    ],
+  });
+
+  await page.locator(".nav:visible", { hasText: "Activity" }).click();
+  await page.getByRole("button", {
+    name: "Undo Moved 2 item records and reopened affected spaces",
+  }).click();
+  await expect.poll(async () => {
+    const replica = await localReplica(page) as typeof before;
+    return {
+      itemLocations: replica.state.items
+        .filter((item) => ["item_flour", "item_pasta"].includes(item.id))
+        .map((item) => [item.id, item.locationId])
+        .sort(),
+      locationStatuses: replica.state.locations
+        .filter((location) =>
+          ["loc_bin", "loc_counter", "loc_warm"].includes(location.id)
+        )
+        .map((location) => [location.id, location.captureStatus])
+        .sort(),
+    };
+  }).toEqual({
+    itemLocations: [
+      ["item_flour", "loc_bin"],
+      ["item_pasta", "loc_warm"],
+    ],
+    locationStatuses: [
+      ["loc_bin", "counted"],
+      ["loc_counter", "counted"],
+      ["loc_warm", "counted"],
+    ],
+  });
+});
+
 test("shows workspace backup state and removes only the device copy", async ({ page }) => {
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await reopenCurrentCapture(page);
@@ -3708,18 +3845,13 @@ test("surfaces a background backup failure on mobile", async ({ page }, testInfo
   await expect(alert).toContainText("Backup service unavailable");
   await expect(alert).toBeVisible();
   await alert.getByRole("link", { name: "Review backup" }).click();
-  await expect(page).toHaveURL(/\/workspaces$/);
-  const card = page.getByRole("article").filter({
-    has: page.getByRole("heading", {
-      exact: true,
-      name: "Kitchen reset",
-    }),
-  });
-  await expect(card).toBeVisible();
-  await expect(card).toContainText("Local changes are waiting to upload");
-  await expect(card).toContainText(
-    "Latest backup check: Backup service unavailable",
-  );
+  await expect(page).toHaveURL(/\/recovery$/);
+  await expect(page.getByRole("heading", {
+    name: "Sync & recovery",
+  })).toBeVisible();
+  await expect(page.getByText(
+    "This export includes the current workspace plus pending or blocked commands and their errors. Export it before any reset.",
+  )).toBeVisible();
 });
 
 test("keeps redacted post-ban accounts disabled in administration", async ({

@@ -147,22 +147,46 @@ export function expectationsForCommand(
             return [itemExpectation(item, "order"), itemExpectation(item, "version")];
         }
         if (command.type === "item.move") {
+            const locationIds = command.reopenCompletedParents
+                ? new Set([item.locationId, command.destinationId])
+                : new Set<string>();
             return [
                 itemExpectation(item, "locationId"),
                 itemExpectation(item, "quantity"),
                 itemExpectation(item, "version"),
+                ...state.locations
+                    .filter((candidate) => locationIds.has(candidate.id))
+                    .map((candidate) =>
+                        locationExpectation(candidate, "captureStatus")
+                    ),
             ];
         }
         return [itemExpectation(item, "")];
     }
 
     if (command.type === "item.bulkMove") {
-        return command.itemIds.flatMap((id) => {
+        const itemExpectations = command.itemIds.flatMap((id) => {
             const item = state.items.find((candidate) => candidate.id === id);
             return item
                 ? [itemExpectation(item, "locationId"), itemExpectation(item, "version")]
                 : [];
         });
+        if (!command.reopenCompletedParents) return itemExpectations;
+        const locationIds = new Set([
+            command.destinationId,
+            ...command.itemIds.flatMap((id) => {
+                const item = state.items.find((candidate) => candidate.id === id);
+                return item ? [item.locationId] : [];
+            }),
+        ]);
+        return [
+            ...itemExpectations,
+            ...state.locations
+                .filter((candidate) => locationIds.has(candidate.id))
+                .map((candidate) =>
+                    locationExpectation(candidate, "captureStatus")
+                ),
+        ];
     }
 
     if (command.type === "plan.create") {

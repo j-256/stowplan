@@ -174,6 +174,25 @@ describe("organizer command engine", () => {
         expect(() => applyCommand(state, envelope)).toThrow(/parent ID or top-level/);
     });
 
+    it("rejects malformed completed-space confirmation on item moves", () => {
+        const state = createDemoState();
+        const envelope = createEnvelope(state, {
+            type: "item.bulkMove",
+            destinationId: "loc_counter",
+            itemIds: ["item_pasta"],
+            reopenCompletedParents: true,
+        });
+        (
+            envelope.command as unknown as {
+                reopenCompletedParents: unknown;
+            }
+        ).reopenCompletedParents = "yes";
+
+        expect(() => applyCommand(state, envelope)).toThrow(
+            /Completed-space confirmation must be true or false/,
+        );
+    });
+
     it("splits a partial quantity and merges equivalent destination records", () => {
         let state = makeLocationsEditable(createDemoState(), "loc_warm", "loc_food");
         const destinationPasta = {
@@ -304,6 +323,105 @@ describe("organizer command engine", () => {
         expect(result.items.find((item) => item.id === "item_beans")?.locationId).toBe("loc_food");
         expect(result.items.find((item) => item.id === "item_pasta")?.locationId).toBe("loc_food");
         expect(result.activities.at(-1)?.label).toContain("2 item records");
+    });
+
+    it("atomically reopens every completed space in a confirmed bulk move", () => {
+        const state = createDemoState();
+        const command: Extract<Command, { type: "item.bulkMove" }> = {
+            type: "item.bulkMove",
+            destinationId: "loc_counter",
+            itemIds: ["item_pasta", "item_flour"],
+            reopenCompletedParents: true,
+        };
+        const envelope = createEnvelope(
+            state,
+            command,
+            { id: "cmd_bulk_reopen" },
+        );
+        const result = applyCommand(state, envelope);
+        const affectedLocationIds = ["loc_bin", "loc_counter", "loc_warm"];
+        const movedItemIds = new Set<string>(command.itemIds);
+
+        expect(
+            envelope.expectations
+                .filter((candidate) => candidate.path === "captureStatus")
+                .map((candidate) => candidate.id)
+                .sort(),
+        ).toEqual(affectedLocationIds);
+        expect(
+            result.state.items
+                .filter((item) => movedItemIds.has(item.id))
+                .map((item) => item.locationId),
+        ).toEqual(["loc_counter", "loc_counter"]);
+        expect(
+            result.state.locations
+                .filter((location) => affectedLocationIds.includes(location.id))
+                .map((location) => [location.id, location.captureStatus])
+                .sort(),
+        ).toEqual([
+            ["loc_bin", "in_progress"],
+            ["loc_counter", "in_progress"],
+            ["loc_warm", "in_progress"],
+        ]);
+        expect(result.activity?.label).toBe(
+            "Moved 2 item records and reopened affected spaces",
+        );
+
+        const undone = applyCommand(
+            result.state,
+            createEnvelope(result.state, {
+                type: "history.undo",
+                activityId: result.activity?.id as string,
+            }),
+        ).state;
+        expect(
+            undone.items
+                .filter((item) => movedItemIds.has(item.id))
+                .map((item) => [item.id, item.locationId])
+                .sort(),
+        ).toEqual([
+            ["item_flour", "loc_bin"],
+            ["item_pasta", "loc_warm"],
+        ]);
+        expect(
+            undone.locations
+                .filter((location) => affectedLocationIds.includes(location.id))
+                .map((location) => [location.id, location.captureStatus])
+                .sort(),
+        ).toEqual([
+            ["loc_bin", "counted"],
+            ["loc_counter", "counted"],
+            ["loc_warm", "counted"],
+        ]);
+    });
+
+    it("reopens both completed spaces for a confirmed partial item move", () => {
+        const state = createDemoState();
+        const result = applyCommand(
+            state,
+            createEnvelope(state, {
+                type: "item.move",
+                destinationId: "loc_counter",
+                id: "item_pasta",
+                quantity: 2,
+                reopenCompletedParents: true,
+            }),
+        );
+
+        expect(
+            result.state.locations
+                .filter((location) =>
+                    ["loc_counter", "loc_warm"].includes(location.id)
+                )
+                .map((location) => [location.id, location.captureStatus])
+                .sort(),
+        ).toEqual([
+            ["loc_counter", "in_progress"],
+            ["loc_warm", "in_progress"],
+        ]);
+        expect(result.activity?.label).toContain(
+            "and reopened affected spaces",
+        );
     });
 
     it("leaves already placed records while bulk moving the rest", () => {

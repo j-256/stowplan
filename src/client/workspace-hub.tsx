@@ -36,6 +36,7 @@ interface WorkspaceHubProps {
   onOpen: (workspaceId: string) => Promise<void>;
   onOpenDemo: () => Promise<void>;
   onRefresh: () => Promise<void>;
+  onReviewRecovery: (workspaceId: string) => Promise<void>;
   onRemove: (
     workspaceId: string,
     expectedUpdatedAt?: string,
@@ -88,6 +89,7 @@ export function WorkspaceHub({
   onOpen,
   onOpenDemo,
   onRefresh,
+  onReviewRecovery,
   onRemove,
   onResetDemo,
   onStart,
@@ -282,6 +284,18 @@ export function WorkspaceHub({
                 </button>}
             {serverBacked && card.access.status === "active" &&
               <a href={accessPath}>Workspace access</a>}
+            {card.blocked > 0 &&
+              <button
+                disabled={busyId === `recovery:${card.id}`}
+                onClick={() => void run(
+                  `recovery:${card.id}`,
+                  () => onReviewRecovery(card.id),
+                  "Could not open sync recovery",
+                )}
+                type="button"
+              >
+                Review sync issues
+              </button>}
             {current &&
               card.capabilities.write &&
               card.id.startsWith("ws_demo") &&

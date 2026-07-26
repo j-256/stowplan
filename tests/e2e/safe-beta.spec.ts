@@ -615,6 +615,112 @@ test(
 );
 
 test(
+  "reconciles collaborator changes when the window regains focus",
+  async ({ browser, context, page, safeBeta }, testInfo) => {
+    skipUnlessProject(testInfo, [DESKTOP_PROJECT]);
+    await safeBeta.signIn(context, "focus reconciliation owner");
+    const workspace = await safeBeta.createWorkspace(
+      context,
+      "focus reconciliation workspace",
+      `Focus pantry ${safeBeta.namespace}`,
+    );
+    await page.goto(workspacePath({
+      view: "settings",
+      workspaceId: workspace.summary.id,
+      workspaceLabel: workspace.summary.name,
+    }));
+    await expect(page.getByText(workspace.summary.name, {
+      exact: true,
+    })).toBeVisible();
+
+    const collaboratorContext = await newContext(browser, safeBeta.origin);
+    try {
+      await safeBeta.signIn(
+        collaboratorContext,
+        "focus reconciliation owner",
+      );
+      const collaboratorPage = await collaboratorContext.newPage();
+      await collaboratorPage.goto(workspacePath({
+        view: "settings",
+        workspaceId: workspace.summary.id,
+        workspaceLabel: workspace.summary.name,
+      }));
+      const collaboratorName = `Focused update ${safeBeta.namespace}`;
+      const collaboratorSync = collaboratorPage.waitForResponse((response) =>
+        syncRequestHasCommands(response.request())
+      );
+      await collaboratorPage.getByLabel("Workspace name").fill(
+        collaboratorName,
+      );
+      await collaboratorPage.getByRole("button", {
+        name: "Rename workspace",
+      }).click();
+      expect((await collaboratorSync).ok()).toBe(true);
+      await expect.poll(async () =>
+        (await readActiveReplica(collaboratorPage))?.outbox.length
+      ).toBe(0);
+      await expect(page.getByText(collaboratorName, {
+        exact: true,
+      })).toHaveCount(0);
+
+      const focusReconciliation = page.waitForResponse((response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname === "/api/sync"
+      );
+      await page.evaluate(() => dispatchEvent(new Event("focus")));
+      expect((await focusReconciliation).ok()).toBe(true);
+      await expect(page.getByText(collaboratorName, {
+        exact: true,
+      })).toBeVisible();
+      expect(
+        (await readActiveReplica(page))?.state.workspace.name,
+      ).toBe(collaboratorName);
+    } finally {
+      await collaboratorContext.close();
+    }
+  },
+);
+
+test(
+  "opens blocked workspace recovery directly from the workspace hub",
+  async ({ context, page, safeBeta }, testInfo) => {
+    skipUnlessProject(testInfo, [DESKTOP_PROJECT]);
+    await safeBeta.signIn(context, "hub recovery owner");
+    const workspace = await safeBeta.createWorkspace(
+      context,
+      "hub recovery workspace",
+      `Recovery pantry ${safeBeta.namespace}`,
+    );
+    await page.goto(workspacePath({
+      view: "capture",
+      workspaceId: workspace.summary.id,
+      workspaceLabel: workspace.summary.name,
+    }));
+    await expect(page.getByRole("heading", {
+      exact: true,
+      name: "Capture",
+    })).toBeVisible();
+    await seedRecoveryOutbox(page, workspace.summary.id);
+
+    await page.goto("/workspaces");
+    const card = cardFor(page, workspace.summary.name);
+    await expect(card).toContainText(
+      "Backup refused one or more local changes",
+    );
+    await card.getByRole("button", {
+      name: "Review sync issues",
+    }).click();
+    await expect(page).toHaveURL(/\/recovery$/u);
+    await expect(page.getByRole("heading", {
+      name: "Sync & recovery",
+    })).toBeVisible();
+    expect((await readActiveReplica(page))?.state.workspace.id).toBe(
+      workspace.summary.id,
+    );
+  },
+);
+
+test(
   "manages members and invite links with keyboard-confirmed owner actions",
   async ({ browser, context, page, safeBeta }, testInfo) => {
     skipUnlessProject(testInfo, [
@@ -1238,8 +1344,20 @@ test(
       );
       await expect(page.getByText("Viewer access", { exact: true }))
         .toBeVisible();
-      await expect(page.getByRole("alert").filter({
+      await expect(page.locator(".sync")).toHaveAttribute(
+        "aria-label",
+        /1 change needs review/u,
+      );
+      const backupAlert = page.getByRole("alert").filter({
         hasText: "Backup needs attention",
+      });
+      await expect(backupAlert).toBeVisible();
+      await backupAlert.getByRole("link", {
+        name: "Review backup",
+      }).click();
+      await expect(page).toHaveURL(/\/recovery$/u);
+      await expect(page.getByRole("heading", {
+        name: "Sync & recovery",
       })).toBeVisible();
 
       const serverSnapshot = await context.request.get(

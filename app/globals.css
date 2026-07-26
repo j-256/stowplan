@@ -464,3 +464,4 @@
   .admin-row-actions button{flex:1}
   .admin-dialog-actions{grid-template-columns:1fr}
 }
+.floating select,.floating select option{background:var(--panel);color:var(--ink)}

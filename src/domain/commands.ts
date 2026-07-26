@@ -514,7 +514,21 @@ function moveCaptureProgressPatches(
     destinationId: string | null,
     timestamp: string,
 ): FieldPatch[] {
-    return [...new Set([sourceId, destinationId].filter(
+    return bulkMoveCaptureProgressPatches(
+        state,
+        [sourceId],
+        destinationId,
+        timestamp,
+    );
+}
+
+function bulkMoveCaptureProgressPatches(
+    state: WorkspaceState,
+    sourceIds: readonly (string | null)[],
+    destinationId: string | null,
+    timestamp: string,
+): FieldPatch[] {
+    return [...new Set([...sourceIds, destinationId].filter(
         (locationId): locationId is string => locationId !== null,
     ))].flatMap((locationId) => {
         const location = requireActiveLocation(state, locationId);
@@ -1373,6 +1387,15 @@ function normalPatches(
 
     if (command.type === "item.move") {
         const item = requireActiveItem(state, command.id);
+        if (
+            command.reopenCompletedParents !== undefined &&
+            typeof command.reopenCompletedParents !== "boolean"
+        ) {
+            throw new DomainError(
+                "INVALID_REOPEN_CONFIRMATION",
+                "Completed-space confirmation must be true or false",
+            );
+        }
         const patches = moveItemPatches(
             state,
             item,
@@ -1380,18 +1403,34 @@ function normalPatches(
             command.quantity,
             envelope,
         );
-        assertCaptureContentsEditable(state, [
-            {
-                action: captureContentActions.moveItemOut,
-                locationId: item.locationId,
-            },
-            {
-                action: captureContentActions.moveItemIn,
-                locationId: command.destinationId,
-            },
-        ]);
+        if (!command.reopenCompletedParents) {
+            assertCaptureContentsEditable(state, [
+                {
+                    action: captureContentActions.moveItemOut,
+                    locationId: item.locationId,
+                },
+                {
+                    action: captureContentActions.moveItemIn,
+                    locationId: command.destinationId,
+                },
+            ]);
+        }
+        const progressPatches = command.reopenCompletedParents
+            ? moveCaptureProgressPatches(
+                  state,
+                  item.locationId,
+                  command.destinationId,
+                  envelope.timestamp,
+              )
+            : captureProgressPatches(
+                  state,
+                  command.destinationId,
+                  envelope.timestamp,
+              );
         return {
-            label: `Moved ${command.quantity} ${item.unit} ${item.name}`,
+            label: command.reopenCompletedParents && progressPatches.length
+                ? `Moved ${command.quantity} ${item.unit} ${item.name} and reopened affected spaces`
+                : `Moved ${command.quantity} ${item.unit} ${item.name}`,
             patches: [
                 ...planInvalidationPatches(
                     state,
@@ -1399,11 +1438,7 @@ function normalPatches(
                     [item.locationId, command.destinationId],
                 ),
                 ...patches,
-                ...captureProgressPatches(
-                    state,
-                    command.destinationId,
-                    envelope.timestamp,
-                ),
+                ...progressPatches,
             ],
             subjectIds: [item.id, item.locationId, command.destinationId],
         };
@@ -1412,6 +1447,15 @@ function normalPatches(
     if (command.type === "item.bulkMove") {
         if (!Array.isArray(command.itemIds) || !command.itemIds.length) {
             throw new DomainError("EMPTY_SELECTION", "Select at least one item");
+        }
+        if (
+            command.reopenCompletedParents !== undefined &&
+            typeof command.reopenCompletedParents !== "boolean"
+        ) {
+            throw new DomainError(
+                "INVALID_REOPEN_CONFIRMATION",
+                "Completed-space confirmation must be true or false",
+            );
         }
         requireActiveLocation(state, command.destinationId);
         const working = clone(state);
@@ -1435,20 +1479,40 @@ function normalPatches(
             applyPatches(working, itemPatches);
             patches.push(...itemPatches);
         }
-        assertCaptureContentsEditable(state, [
-            ...movableIds.map((id) => ({
-                action: captureContentActions.moveItemOut,
-                locationId: requireItem(state, id).locationId,
-            })),
-            {
-                action: captureContentActions.moveItemIn,
-                locationId: command.destinationId,
-            },
-        ]);
+        const sourceIds = movableIds.map(
+            (id) => requireItem(state, id).locationId,
+        );
+        if (!command.reopenCompletedParents) {
+            assertCaptureContentsEditable(state, [
+                ...sourceIds.map((locationId) => ({
+                    action: captureContentActions.moveItemOut,
+                    locationId,
+                })),
+                {
+                    action: captureContentActions.moveItemIn,
+                    locationId: command.destinationId,
+                },
+            ]);
+        }
+        const progressPatches = command.reopenCompletedParents
+            ? bulkMoveCaptureProgressPatches(
+                  state,
+                  sourceIds,
+                  command.destinationId,
+                  envelope.timestamp,
+              )
+            : captureProgressPatches(
+                  state,
+                  command.destinationId,
+                  envelope.timestamp,
+              );
+        const moveLabel = movableIds.length === itemIds.length
+            ? `Moved ${movableIds.length} item record${movableIds.length === 1 ? "" : "s"}`
+            : `Moved ${movableIds.length} of ${itemIds.length} item records`;
         return {
-            label: movableIds.length === itemIds.length
-                ? `Moved ${movableIds.length} item record${movableIds.length === 1 ? "" : "s"}`
-                : `Moved ${movableIds.length} of ${itemIds.length} item records`,
+            label: `${moveLabel}${command.reopenCompletedParents && progressPatches.length
+                ? " and reopened affected spaces"
+                : ""}`,
             patches: [
                 ...planInvalidationPatches(
                     state,
@@ -1463,11 +1527,7 @@ function normalPatches(
                     ],
                 ),
                 ...patches,
-                ...captureProgressPatches(
-                    state,
-                    command.destinationId,
-                    envelope.timestamp,
-                ),
+                ...progressPatches,
             ],
             subjectIds: [...new Set([...movableIds, command.destinationId])],
         };
