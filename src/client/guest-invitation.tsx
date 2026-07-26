@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import {
+  guestInvitationRoleFromToken,
   guestInvitationUrl,
   INVITATION_CONTINUATION_STORAGE_KEY,
   INVITATION_OAUTH_RESUME_PATH,
@@ -250,14 +251,34 @@ export function GuestInvitation({
     }
   };
 
+  const offeredRole = invitation
+    ? guestInvitationRoleFromToken(invitation.token)
+    : null;
+
   return <main className="onboarding account">
     <section>
       <p className="eyebrow">Workspace invitation</p>
       <h1>Open the shared workspace?</h1>
+      {invitation && (offeredRole === "editor"
+        ? <p>
+            <strong>Editor access offered.</strong>{" "}
+            You can add, edit, move, and organize the contents of this
+            workspace.
+          </p>
+        : offeredRole === "viewer"
+          ? <p>
+              <strong>Viewer access offered.</strong>{" "}
+              You can browse this workspace, but you cannot change its
+              contents.
+            </p>
+          : <p>
+              This older invitation offers viewer or editor access. The
+              exact access level will appear after acceptance.
+            </p>)}
       <p>
-        This link can enroll one signed-in account as a viewer or editor
-        before it expires. Membership remains until you leave, an owner
-        removes you, or the server workspace is deleted.
+        This link can enroll one signed-in account before it expires.
+        Membership remains until you leave, an owner removes you, or
+        the server workspace is deleted.
       </p>
       <p>
         No access is granted until you choose Accept invitation. Link

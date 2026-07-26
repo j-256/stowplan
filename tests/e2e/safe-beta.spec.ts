@@ -1033,6 +1033,11 @@ test(
       await expect(page.getByRole("heading", {
         name: "Open the shared workspace?",
       })).toBeVisible();
+      await expect(page.locator("p", {
+        hasText: "Viewer access offered.",
+      })).toContainText(
+        "Viewer access offered. You can browse this workspace, but you cannot change its contents.",
+      );
       const signInToAccept = page.getByRole("button", {
         name: "Sign in to accept invitation",
       });

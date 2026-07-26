@@ -5,6 +5,9 @@ import {
   SignJWT,
 } from "jose";
 import { createEmptyState } from "../src/domain/factories";
+import {
+  guestInvitationRoleFromToken,
+} from "../src/domain/app-url";
 import { D1SnapshotStore } from "../src/adapters/d1-snapshot-store";
 import {
   AUTH_CLEANUP_BATCH_SIZE,
@@ -777,6 +780,12 @@ describe("authentication",()=>{
       "viewer",
       1,
     );
+    expect(guestInvitationRoleFromToken(link.raw)).toBe("viewer");
+    await expect(consumeGuestLink(
+      db,
+      link.raw.replace("_viewer_", "_editor_"),
+      recipient.userId,
+    )).rejects.toThrow(/invalid, expired, used, or revoked/);
     await consumeGuestLink(
       db,
       link.raw,

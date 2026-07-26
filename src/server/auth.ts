@@ -4,6 +4,10 @@ import type {
   D1ResultLike,
   D1StatementLike,
 } from "../adapters/d1-snapshot-store";
+import {
+  roleBoundGuestInvitationToken,
+  type GuestInvitationRole,
+} from "../domain/app-url";
 import { newId, nowIso } from "../domain/factories";
 import {
   API_QUOTAS,
@@ -1367,7 +1371,7 @@ export async function createGuestLink(
   db: AuthDb,
   workspaceId: string,
   creator: string,
-  role: "editor" | "viewer",
+  role: GuestInvitationRole,
   hours: number = GUEST_LINK_EXPIRY_HOURS.default,
 ) {
   if (role !== "editor" && role !== "viewer") {
@@ -1391,7 +1395,7 @@ export async function createGuestLink(
     creator,
   );
   if (creationRefusal) throw creationRefusal;
-  const raw = token();
+  const raw = roleBoundGuestInvitationToken(role, token());
   const id = newId("guest");
   const now = nowIso();
   const end = new Date(

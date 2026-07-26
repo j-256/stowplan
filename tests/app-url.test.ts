@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   GUEST_INVITATION_RETURN_TO_MAX_CHARACTERS,
+  guestInvitationRoleFromToken,
   guestInvitationUrl,
   INVITATION_OAUTH_RESUME_PATH,
   oauthReturnTo,
   parseAppUrl,
   parseGuestInvitationFragment,
+  roleBoundGuestInvitationToken,
   WORKSPACE_LIST_PATH,
   workspaceReturnTo,
   workspacePath,
@@ -248,5 +250,38 @@ describe("workspace URLs", () => {
       "raw",
       oversizedReturn,
     )).toThrow("Invitation URL is invalid");
+  });
+
+  it("binds a valid offered role into new invitation tokens", () => {
+    const secret = "a".repeat(64);
+    const editorToken = roleBoundGuestInvitationToken(
+      "editor",
+      secret,
+    );
+    const viewerToken = roleBoundGuestInvitationToken(
+      "viewer",
+      secret,
+    );
+
+    expect(editorToken).toBe(`g1_editor_${secret}`);
+    expect(viewerToken).toBe(`g1_viewer_${secret}`);
+    expect(guestInvitationRoleFromToken(editorToken)).toBe("editor");
+    expect(guestInvitationRoleFromToken(viewerToken)).toBe("viewer");
+    expect(guestInvitationRoleFromToken(
+      roleBoundGuestInvitationToken(
+        "viewer",
+        `${"a".repeat(42)}_`,
+      ),
+    )).toBe("viewer");
+    expect(guestInvitationRoleFromToken("legacy_invite_secret"))
+      .toBeNull();
+    expect(guestInvitationRoleFromToken(`g1_owner_${secret}`))
+      .toBeNull();
+    expect(guestInvitationRoleFromToken("g1_viewer_short"))
+      .toBeNull();
+    expect(() => roleBoundGuestInvitationToken(
+      "viewer",
+      "short",
+    )).toThrow("Invitation token is invalid");
   });
 });

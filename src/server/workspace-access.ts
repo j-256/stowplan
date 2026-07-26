@@ -4,6 +4,7 @@ import type {
 } from "../adapters/d1-snapshot-store";
 import {
   GUEST_INVITATION_RETURN_TO_MAX_CHARACTERS,
+  roleBoundGuestInvitationToken,
   workspaceReturnTo,
 } from "../domain/app-url";
 import {
@@ -2087,7 +2088,10 @@ export async function createWorkspaceGuestLink(
     new Date(at),
   );
   if (refusal) throw refusal;
-  const raw = randomToken();
+  const raw = roleBoundGuestInvitationToken(
+    input.role,
+    randomToken(),
+  );
   const guestLinkId = newId("guest");
   const expiresAt = new Date(
     Date.parse(at) + input.expiresInHours * 3_600_000,

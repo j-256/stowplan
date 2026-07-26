@@ -1,6 +1,10 @@
 export const DEFAULT_WORKSPACE_VIEW = "capture";
 export const GUEST_INVITATION_PATH = "/guest";
 export const GUEST_INVITATION_RETURN_TO_MAX_CHARACTERS = 2_048;
+export const GUEST_INVITATION_ROLES = Object.freeze([
+  "editor",
+  "viewer",
+] as const);
 export const GUEST_INVITATION_TOKEN_MAX_CHARACTERS = 512;
 export const INVITATION_CONTINUATION_STORAGE_KEY =
   "stowplan_invitation_return_to";
@@ -17,6 +21,8 @@ export const WORKSPACE_VIEWS = Object.freeze([
   "access",
 ] as const);
 
+export type GuestInvitationRole =
+  (typeof GUEST_INVITATION_ROLES)[number];
 export type WorkspaceView = (typeof WORKSPACE_VIEWS)[number];
 
 export type AppRoute =
@@ -48,10 +54,61 @@ const ITEM_PATH_SEGMENT = "items";
 const WORKSPACE_VIEW_SET = new Set<string>(WORKSPACE_VIEWS);
 const PARSE_BASE_URL = "https://stowplan.invalid";
 const INVITATION_PATH_PATTERN = /\/guest(?:[/?#]|$)/u;
+const GUEST_INVITATION_ROLE_SET =
+  new Set<string>(GUEST_INVITATION_ROLES);
+const GUEST_INVITATION_TOKEN_PREFIX = "g1";
+const GUEST_INVITATION_TOKEN_SECRET_PATTERN =
+  /^[A-Za-z0-9_-]{43,128}$/u;
+const GUEST_INVITATION_TOKEN_SEPARATOR = "_";
 
 export interface GuestInvitationFragment {
   returnTo: string | null;
   token: string;
+}
+
+function isGuestInvitationRole(
+  value: unknown,
+): value is GuestInvitationRole {
+  return typeof value === "string" &&
+    GUEST_INVITATION_ROLE_SET.has(value);
+}
+
+export function roleBoundGuestInvitationToken(
+  role: GuestInvitationRole,
+  secret: string,
+): string {
+  if (
+    !isGuestInvitationRole(role) ||
+    !GUEST_INVITATION_TOKEN_SECRET_PATTERN.test(secret)
+  ) {
+    throw new Error("Invitation token is invalid");
+  }
+  return [
+    GUEST_INVITATION_TOKEN_PREFIX,
+    role,
+    secret,
+  ].join(GUEST_INVITATION_TOKEN_SEPARATOR);
+}
+
+export function guestInvitationRoleFromToken(
+  token: string,
+): GuestInvitationRole | null {
+  for (const role of GUEST_INVITATION_ROLES) {
+    const prefix = [
+      GUEST_INVITATION_TOKEN_PREFIX,
+      role,
+      "",
+    ].join(GUEST_INVITATION_TOKEN_SEPARATOR);
+    if (
+      token.startsWith(prefix) &&
+      GUEST_INVITATION_TOKEN_SECRET_PATTERN.test(
+        token.slice(prefix.length),
+      )
+    ) {
+      return role;
+    }
+  }
+  return null;
 }
 
 export function guestInvitationUrl(

@@ -1,6 +1,9 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { workspacePath } from "../../src/domain/app-url";
+import {
+  roleBoundGuestInvitationToken,
+  workspacePath,
+} from "../../src/domain/app-url";
 
 const MAX_FACING_CONTENT_GAP = 54;
 const MAX_PANEL_GUTTER = 16;
@@ -293,6 +296,34 @@ test("uses one application name in invitation titles", async ({ page }) => {
   await expect(page).toHaveTitle(
     "Accept workspace invitation · Stowplan",
   );
+});
+
+test("explains the offered editor role before invitation acceptance", async ({
+  page,
+}) => {
+  await page.route("**/api/auth/me", route => route.fulfill({
+    body: JSON.stringify({
+      configured: true,
+      user: null,
+    }),
+    status: 200,
+  }));
+  const token = roleBoundGuestInvitationToken(
+    "editor",
+    "a".repeat(64),
+  );
+  await page.goto(`/guest#${
+    new URLSearchParams({ token }).toString()
+  }`);
+
+  await expect(page.locator("p", {
+    hasText: "Editor access offered.",
+  })).toContainText(
+    "Editor access offered. You can add, edit, move, and organize the contents of this workspace.",
+  );
+  await expect(page.getByRole("button", {
+    name: "Sign in to accept invitation",
+  })).toBeVisible();
 });
 
 test("names and links account-deletion workspace blockers", async ({
