@@ -67,12 +67,14 @@ npm ci
 bash scripts/verify.sh
 ```
 
-CI runs exactly this sequence, so a local pass reproduces it. A release additionally runs the deployment checks and builds the release artifacts:
+CI runs exactly this sequence, so a local pass reproduces it. CI and release also validate the deployment automation and build the release artifacts, which a release then publishes:
 
 ```bash
 bash scripts/deploy-checks.sh
 bash scripts/release-artifacts.sh
 ```
+
+Both need no credentials and reach no network, so they run on every push rather than first executing when a tag is already published.
 
 The GitHub Pages workflow deliberately builds and link-checks the docs under `/stowplan/`; root-hosted docs receive the same validation. The application production deployment is Sites, while GitHub Pages is the canonical documentation host. The [Cloudflare runbook](https://j-256.github.io/stowplan/deploy/cloudflare) separates reproducible Sites artifact preparation and connector handoff from direct Cloudflare bootstrap, Access, WAF, rate-limit, migration, secret, deploy, backup, and recovery commands.
 

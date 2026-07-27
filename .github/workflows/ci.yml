@@ -18,6 +18,15 @@ jobs:
       - run: bash scripts/verify.sh
         env:
           DOCS_PAGES_BASE: /${{ github.event.repository.name }}/
+      # Exercise the release-only scripts on every push so a break surfaces
+      # here rather than when a tag is already published. Both are offline and
+      # need no credentials; neither publishes anything
+      - run: bash scripts/deploy-checks.sh
+      - run: bash scripts/release-artifacts.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sbom
+          path: stowplan-sbom.cdx.json
   browser:
     runs-on: ubuntu-latest
     steps:
