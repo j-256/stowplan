@@ -31,7 +31,9 @@ npm ci
 npm run dev
 ```
 
-Open the local URL and choose **Explore the kitchen demo**. Local organizing requires no provider credentials. To test Node-backed sync:
+Open the local URL and choose **Explore the kitchen demo**. Local organizing requires no provider credentials.
+
+`npm run dev` applies pending local D1 migrations first, so an existing `.wrangler/` database picks up schema added since it was created. Set `STOWPLAN_SKIP_DEV_MIGRATIONS=1` to start without touching the database; server-backed sign-in and sync need the current schema. To test Node-backed sync:
 
 ```bash
 npm run build:next
