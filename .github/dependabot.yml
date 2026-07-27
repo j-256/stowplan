@@ -8,6 +8,13 @@ updates:
         dependency-type: production
       development:
         dependency-type: development
+    ignore:
+      # typescript-eslint refuses to load under TypeScript 7, so a major bump
+      # breaks lint for the whole grouped update. Support is blocked upstream on
+      # asynchronous ESLint parsers rather than pending release, so hold at 6.x
+      # and drop this entry once typescript-eslint accepts TS >=7
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly }
