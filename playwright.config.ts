@@ -14,6 +14,10 @@ export default defineConfig({
   outputDir: TEST_OUTPUT_DIRECTORY,
   testDir: "tests/e2e",
   fullyParallel: false,
+  // Every worker drives the same Node server and SQLite file, so a second
+  // worker only adds contention for shared state. Intermittent failures traced
+  // to that contention cost more than the wall clock a single worker spends
+  workers: process.env.CI ? 1 : undefined,
   retries: process.env.CI ? 2 : 0,
   reporter: process.env.CI ? "github" : "list",
   use: {
