@@ -8,12 +8,18 @@ updates:
         dependency-type: production
       development:
         dependency-type: development
+    # The Next lint config bundles plugins that pin their own toolchain peers, so
+    # a major bump of either tool below breaks lint for the whole grouped update
+    # while every other package in it is fine. Hold both back and drop the entry
+    # once the bundled plugins accept the new major
     ignore:
-      # typescript-eslint refuses to load under TypeScript 7, so a major bump
-      # breaks lint for the whole grouped update. Support is blocked upstream on
-      # asynchronous ESLint parsers rather than pending release, so hold at 6.x
-      # and drop this entry once typescript-eslint accepts TS >=7
+      # typescript-eslint declares typescript <6.1 and refuses to load under 7.
+      # Blocked upstream on asynchronous ESLint parser support, not a release
       - dependency-name: typescript
+        update-types: [version-update:semver-major]
+      # eslint-plugin-react declares eslint <=9 and calls context.getFilename(),
+      # removed in ESLint 10
+      - dependency-name: eslint
         update-types: [version-update:semver-major]
   - package-ecosystem: github-actions
     directory: /
