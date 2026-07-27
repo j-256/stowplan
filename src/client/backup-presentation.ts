@@ -15,6 +15,17 @@ const TERMINAL_BACKUP_LABELS: Readonly<
   revoked: "Access removed",
   unknown: "Server access unavailable",
 });
+// Statuses where the server relationship definitively ended, so no recovery
+// action remains. "unknown" is excluded on purpose: access merely could not be
+// confirmed (for example after the signed-in account changed), so a refused
+// sync is still actionable and must stay visible
+const ENDED_ACCESS_STATUSES: Readonly<
+  Partial<Record<WorkspaceAccessStatus, true>>
+> = Object.freeze({
+  deleted: true,
+  left: true,
+  revoked: true,
+});
 
 export interface BackupPresentation {
   deviceOnly?: boolean;
@@ -147,7 +158,7 @@ export function backupNotice(
   options: BackupPresentationOptions,
 ): BackupNotice | null {
   const terminalAccess = options.accessStatus
-    ? Boolean(TERMINAL_BACKUP_LABELS[options.accessStatus])
+    ? Boolean(ENDED_ACCESS_STATUSES[options.accessStatus])
     : false;
   const genuineSyncError = options.lastSyncError &&
       options.lastSyncError !== DEVICE_ONLY_BACKUP_ERROR &&

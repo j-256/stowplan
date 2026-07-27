@@ -104,6 +104,25 @@ describe("backup presentation", () => {
     expect(backupNotice(options)).toBeNull();
   });
 
+  it("surfaces refused work when workspace access is unconfirmed", () => {
+    const options = {
+      ...BASE_PRESENTATION,
+      accessStatus: "unknown" as const,
+      authenticationReady: false,
+      lastSyncError: "The signed-in account changed; queued work was not sent",
+      lastSyncedAt: "2026-07-26T12:00:00.000Z",
+      pending: 1,
+      serverBacked: true,
+      signedIn: true,
+    };
+
+    expect(backupNotice(options)).toEqual({
+      action: "recovery",
+      message: "The signed-in account changed; queued work was not sent",
+      title: "Backup needs attention",
+    });
+  });
+
   it("keeps refused changes ahead of an ended session", () => {
     const options = {
       ...BASE_PRESENTATION,
