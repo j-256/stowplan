@@ -14,25 +14,11 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
-      - run: npm audit --omit=dev --audit-level=high
-      - run: npm run typecheck
-      - run: npm run lint
-      - run: npm run test:coverage
-      - run: DOCS_BASE=/${{ github.event.repository.name }}/ npm run docs:build && DOCS_BASE=/${{ github.event.repository.name }}/ npm run docs:check
-      - run: DOCS_BASE=/ npm run docs:build && DOCS_BASE=/ npm run docs:check
-      - run: npm run build
-      - run: npm run test:render
-      - run: npm run build:next
-      - run: npm run test:node-smoke
-      - run: npx wrangler d1 migrations apply stowplan --local --config wrangler.jsonc
-      - run: npm run test:next-dev-smoke
-      - run: npm run build:cloudflare
-      - run: npx wrangler deploy --dry-run --config wrangler.jsonc
-      - run: bash -n scripts/cloudflare-access.sh scripts/cloudflare-edge.sh scripts/github-pages.sh
-      - run: bash scripts/cloudflare-access.sh check
-      - run: bash scripts/cloudflare-edge.sh check
-      - name: Generate CycloneDX SBOM
-        run: npm sbom --omit=dev --sbom-format cyclonedx > stowplan-sbom.cdx.json
+      - run: bash scripts/verify.sh
+        env:
+          DOCS_PAGES_BASE: /${{ github.event.repository.name }}/
+      - run: bash scripts/deploy-checks.sh
+      - run: bash scripts/release-artifacts.sh
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

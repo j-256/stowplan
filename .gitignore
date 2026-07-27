@@ -51,3 +51,4 @@ next-env.d.ts
 /outputs/
 /work/
 /stowplan-before-upgrade.sql
+/stowplan-sbom.cdx.json

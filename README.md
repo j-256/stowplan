@@ -64,21 +64,14 @@ tests/               Domain, sync, adapter, offline, and auth tests
 
 ```bash
 npm ci
-npm audit --omit=dev --audit-level=high
-npm run typecheck
-npm run lint
-npm run test:coverage
-DOCS_BASE=/stowplan/ npm run docs:build && DOCS_BASE=/stowplan/ npm run docs:check
-DOCS_BASE=/ npm run docs:build && DOCS_BASE=/ npm run docs:check
-npm run build
-npm run test:render
-npm run build:next
-npm run test:node-smoke
-npm run build:cloudflare
-npx wrangler deploy --dry-run --config wrangler.jsonc
-bash scripts/cloudflare-access.sh check
-bash scripts/cloudflare-edge.sh check
-npm sbom --omit=dev --sbom-format cyclonedx > stowplan-sbom.cdx.json
+bash scripts/verify.sh
+```
+
+CI runs exactly this sequence, so a local pass reproduces it. A release additionally runs the deployment checks and builds the release artifacts:
+
+```bash
+bash scripts/deploy-checks.sh
+bash scripts/release-artifacts.sh
 ```
 
 The GitHub Pages workflow deliberately builds and link-checks the docs under `/stowplan/`; root-hosted docs receive the same validation. The application production deployment is Sites, while GitHub Pages is the canonical documentation host. The [Cloudflare runbook](https://j-256.github.io/stowplan/deploy/cloudflare) separates reproducible Sites artifact preparation and connector handoff from direct Cloudflare bootstrap, Access, WAF, rate-limit, migration, secret, deploy, backup, and recovery commands.
