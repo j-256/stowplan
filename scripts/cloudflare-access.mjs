@@ -15,6 +15,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const API_ROOT = "https://api.cloudflare.com/client/v4";
 const PAGE_SIZE = 100;
 const MAX_PAGES = 1000;
+export const POST_MUTATION_VERIFICATION_READ_LIMIT = 5;
+export const POST_MUTATION_VERIFICATION_INITIAL_BACKOFF_MS = 250;
+export const POST_MUTATION_VERIFICATION_MAX_BACKOFF_MS = 2_000;
 const RESOURCE_KEY_PATTERN = /^[a-z][a-z0-9-]*$/;
 const DURATION_PATTERN = /^(?:[1-9][0-9]*)(?:ms|s|m|h)$/;
 const SNAPSHOT_SCHEMA_VERSION = 2;
@@ -1386,6 +1389,69 @@ function assertResourceStillMatchesSnapshot(kind, key, resolved, record) {
   }
 }
 
+function waitForPostMutationVerification(delay) {
+  return new Promise((resolveWait) => {
+    setTimeout(resolveWait, delay);
+  });
+}
+
+function postMutationVerificationBackoff(staleReadCount) {
+  return Math.min(
+    POST_MUTATION_VERIFICATION_MAX_BACKOFF_MS,
+    POST_MUTATION_VERIFICATION_INITIAL_BACKOFF_MS
+      * (2 ** (staleReadCount - 1)),
+  );
+}
+
+function postMutationVerificationOptions(overrides) {
+  if (!isObject(overrides)) {
+    fail("post-mutation verification options must be an object");
+  }
+  const readRemoteState =
+    overrides.readRemoteState ?? loadRemoteState;
+  const wait = overrides.wait ?? waitForPostMutationVerification;
+  if (
+    typeof readRemoteState !== "function"
+    || typeof wait !== "function"
+  ) {
+    fail("post-mutation verification hooks must be functions");
+  }
+  return { readRemoteState, wait };
+}
+
+async function verifyMutationAfterWrite({
+  api,
+  kind,
+  key,
+  mutationId,
+  payload,
+  verification,
+}) {
+  for (
+    let readNumber = 1;
+    readNumber <= POST_MUTATION_VERIFICATION_READ_LIMIT;
+    readNumber += 1
+  ) {
+    const state = await verification.readRemoteState(api);
+    const current = findRemoteById(state, kind, mutationId);
+    if (
+      current !== null
+      && currentAction(kind, current, payload) === "current"
+    ) {
+      return { current, state };
+    }
+    if (readNumber < POST_MUTATION_VERIFICATION_READ_LIMIT) {
+      await verification.wait(
+        postMutationVerificationBackoff(readNumber),
+      );
+    }
+  }
+  fail(
+    `${kind} '${key}' could not be verified after ${POST_MUTATION_VERIFICATION_READ_LIMIT} post-mutation reads`,
+    1,
+  );
+}
+
 async function applyResourceKind({
   api,
   config,
@@ -1394,6 +1460,7 @@ async function applyResourceKind({
   snapshotPath,
   kind,
   desiredResources,
+  verification,
 }) {
   let workingState = state;
   for (const desired of desiredResources) {
@@ -1419,14 +1486,16 @@ async function applyResourceKind({
       }
       mutationId = response.result.id;
     }
-    workingState = await loadRemoteState(api);
-    const current = findRemoteById(workingState, kind, mutationId);
-    if (
-      current === null
-      || currentAction(kind, current, resolved.payload) !== "current"
-    ) {
-      fail(`${kind} '${desired.key}' could not be verified after mutation`, 1);
-    }
+    const verified = await verifyMutationAfterWrite({
+      api,
+      kind,
+      key: desired.key,
+      mutationId,
+      payload: resolved.payload,
+      verification,
+    });
+    workingState = verified.state;
+    const current = verified.current;
     if (action.action === "create") {
       record.created_id = mutationId;
     }
@@ -1462,7 +1531,10 @@ export async function applyAccessPlan({
   config,
   initialState,
   rollbackPath,
+  verification: verificationOverrides = {},
 }) {
+  const verification =
+    postMutationVerificationOptions(verificationOverrides);
   const initialPlan = buildPlan(config, initialState);
   const snapshot = createRollbackSnapshot(config, api.accountId, initialPlan);
   await writeNewPrivateJson(rollbackPath, snapshot);
@@ -1475,6 +1547,7 @@ export async function applyAccessPlan({
     snapshotPath: rollbackPath,
     kind: "identity_provider",
     desiredResources: config.identity_providers,
+    verification,
   });
   state = await applyResourceKind({
     api,
@@ -1484,8 +1557,9 @@ export async function applyAccessPlan({
     snapshotPath: rollbackPath,
     kind: "reusable_policy",
     desiredResources: config.reusable_policies,
+    verification,
   });
-  await applyResourceKind({
+  state = await applyResourceKind({
     api,
     config,
     state,
@@ -1493,9 +1567,9 @@ export async function applyAccessPlan({
     snapshotPath: rollbackPath,
     kind: "application",
     desiredResources: config.applications,
+    verification,
   });
-  const finalState = await loadRemoteState(api);
-  const finalPlan = buildPlan(config, finalState);
+  const finalPlan = buildPlan(config, state);
   if (finalPlan.changeCount !== 0) {
     fail("post-apply verification found remaining Access drift", 1);
   }

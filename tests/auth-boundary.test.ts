@@ -261,6 +261,13 @@ describe("identity enforcement boundary", () => {
     expect(provider(
       {
         ...google,
+        AUTH_IDENTITY_DIGEST_KEY: digestKey,
+      },
+      "github",
+    )).toBeNull();
+    expect(provider(
+      {
+        ...google,
         AUTH_BASE_URL: undefined,
         AUTH_IDENTITY_DIGEST_KEY: digestKey,
       },

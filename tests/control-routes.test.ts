@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   beginOAuth: vi.fn(),
   consumeGuestLink: vi.fn(),
   createOrLinkUser: vi.fn(),
+  hasLinkedGoogleIdentity: vi.fn(),
   issueSession: vi.fn(),
   isTrustedMutation: vi.fn(() => true),
   provider: vi.fn(),
@@ -34,6 +35,7 @@ vi.mock("../src/server/auth", async (importOriginal) => ({
   beginOAuth: mocks.beginOAuth,
   consumeGuestLink: mocks.consumeGuestLink,
   createOrLinkUser: mocks.createOrLinkUser,
+  hasLinkedGoogleIdentity: mocks.hasLinkedGoogleIdentity,
   isTrustedMutation: mocks.isTrustedMutation,
   issueSession: mocks.issueSession,
   provider: mocks.provider,
@@ -92,6 +94,7 @@ describe("control route request limits", () => {
       bindingCookie: "oauth-binding=test",
     });
     mocks.provider.mockReturnValue({ id: "google" });
+    mocks.hasLinkedGoogleIdentity.mockResolvedValue(true);
     mocks.adminOverviewPage.mockReturnValue(undefined);
     mocks.adminOverview.mockResolvedValue({
       audit: [],
@@ -325,12 +328,54 @@ describe("control route request limits", () => {
       code: "REAUTHENTICATION_REQUIRED",
       error:
         "Sign in again with an existing Google identity before linking another",
+      hasLinkedGoogleIdentity: true,
     });
     expect(mocks.beginOAuth).not.toHaveBeenCalled();
   });
 
-  it("does not use a non-Google provider for reauthentication", async () => {
-    mocks.provider.mockReturnValueOnce({ id: "github" });
+  it("explains how to refresh recovery before a first Google link", async () => {
+    mocks.authenticate.mockResolvedValueOnce({
+      sessionId: "ses_stale_recovery",
+      userId: OWNER_ACCOUNT_ID,
+    });
+    mocks.hasLinkedGoogleIdentity.mockResolvedValueOnce(false);
+    mocks.requireRecentIdentityLinkAuthentication.mockRejectedValueOnce(
+      new ApiProblem(
+        "REAUTHENTICATION_REQUIRED",
+        "private stale-session detail",
+        401,
+      ),
+    );
+    const response = await postOAuthStart(
+      new Request(
+        "https://stowplan.test/api/auth/google/start",
+        {
+          body: new URLSearchParams({
+            "cf-turnstile-response": "turnstile-token",
+            intent: "link",
+          }),
+          headers: {
+            "content-type":
+              "application/x-www-form-urlencoded",
+          },
+          method: "POST",
+        },
+      ),
+      { params: Promise.resolve({ provider: "google" }) },
+    );
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({
+      code: "REAUTHENTICATION_REQUIRED",
+      error:
+        "Sign out and sign in again with this account's existing method, then link Google when you return",
+      hasLinkedGoogleIdentity: false,
+    });
+    expect(mocks.beginOAuth).not.toHaveBeenCalled();
+  });
+
+  it("refuses GitHub before allocating OAuth state", async () => {
+    mocks.provider.mockReturnValueOnce(null);
     const response = await postOAuthStart(
       new Request(
         "https://stowplan.test/api/auth/github/start",
@@ -349,10 +394,10 @@ describe("control route request limits", () => {
       { params: Promise.resolve({ provider: "github" }) },
     );
 
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(404);
     await expect(response.json()).resolves.toEqual({
-      code: "INVALID_REQUEST",
-      error: "Google is required for reauthentication",
+      code: "NOT_FOUND_OR_INACCESSIBLE",
+      error: "Authentication provider is not configured",
     });
     expect(mocks.verifyTurnstile).not.toHaveBeenCalled();
     expect(mocks.beginOAuth).not.toHaveBeenCalled();

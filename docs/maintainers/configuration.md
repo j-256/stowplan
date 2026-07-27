@@ -27,7 +27,7 @@ Commit only `.env.example`-style names and harmless defaults. OAuth secrets, ses
 
 Global admin authority is stored only in `users.global_role`. `AUTH_ADMIN_EMAILS` is retired, is not read by the application, and must not be retained as a bootstrap or ongoing authority mechanism. Ordinary authentication, an Access allow decision, and workspace membership do not promote an account.
 
-Public Google discovery requires the Google client pair, both Turnstile keys, and a valid `AUTH_IDENTITY_DIGEST_KEY`. A partial configuration fails closed and does not advertise Google through `/api/auth/me`. The launch does not support GitHub as an ordinary sign-in provider. Do not install GitHub OAuth credentials or callbacks for production.
+Public Google discovery requires the Google client pair, both Turnstile keys, and a valid `AUTH_IDENTITY_DIGEST_KEY`. A partial configuration fails closed and does not advertise Google through `/api/auth/me`. The OAuth runtime reads no GitHub credentials and accepts no GitHub callback; dynamic GitHub provider routes fail before OAuth state allocation or exchange. Historical provider-domain database rows remain readable and governable for compatibility.
 
 Set `AUTH_BASE_URL` to the exact externally visible origin with no path or trailing slash. For the production origin `https://stowplan.jklein.dev`, Google's callback is `https://stowplan.jklein.dev/api/auth/google/callback`. The same base controls OAuth callbacks, same-origin mutation checks, and the hostname expected in a production Turnstile result.
 

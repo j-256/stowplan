@@ -22,6 +22,7 @@ import {
   createGuestLink,
   createOrLinkUser,
   finishOAuth,
+  hasLinkedGoogleIdentity,
   InvitationError,
   isTrustedMutation,
   issueSession,
@@ -64,6 +65,43 @@ describe("authentication",()=>{
     )).toBeNull();
   });
   it("links identities, issues opaque sessions, and revokes them",async()=>{const db=database(),env=TEST_AUTH_ENV;const user=await createOrLinkUser(db,env,{provider:"test",subject:"one",email:"OWNER@example.com",displayName:"Owner"});expect(user.globalRole).toBe("user");const request=new Request("https://example.test",{headers:{"user-agent":"test"}}),session=await issueSession(db,env,user,request);expect(session.raw).toHaveLength(64);const authenticated=await authenticate(db,new Request("https://example.test",{headers:{cookie:`__Host-stowplan_session=${session.raw}`}}));expect(authenticated?.email).toBe("owner@example.com");await revokeCurrentSession(db,new Request("https://example.test",{headers:{cookie:`__Host-stowplan_session=${session.raw}`}}));expect(await authenticate(db,new Request("https://example.test",{headers:{cookie:`__Host-stowplan_session=${session.raw}`}}))).toBeNull()});
+  it("reports whether the account has a linked Google identity", async () => {
+    const db = database();
+    const user = await createOrLinkUser(db, TEST_AUTH_ENV, {
+      displayName: "Migration user",
+      email: "migration-user@example.com",
+      provider: "cloudflare-access",
+      subject: "migration-user",
+    });
+    expect(await hasLinkedGoogleIdentity(db, user.userId)).toBe(
+      false,
+    );
+    const session = await issueSession(
+      db,
+      {},
+      user,
+      new Request("https://example.test"),
+    );
+    await createOrLinkUser(
+      db,
+      TEST_AUTH_ENV,
+      {
+        displayName: "Migration user",
+        email: "migration-user@example.com",
+        provider: "google",
+        subject: "migration-user-google",
+      },
+      {
+        linkIntent: {
+          sessionId: session.sessionId,
+          userId: user.userId,
+        },
+      },
+    );
+    expect(await hasLinkedGoogleIdentity(db, user.userId)).toBe(
+      true,
+    );
+  });
   it("records reauthentication without consuming a session issuance budget", async () => {
     const { database: db, sqlite } = numberedMigrationDatabase();
     const user = await createOrLinkUser(db, TEST_AUTH_ENV, {
@@ -136,12 +174,13 @@ describe("authentication",()=>{
   it("scrubs OAuth credentials as soon as a state is claimed", async () => {
     const { database: db, sqlite } = numberedMigrationDatabase();
     const oauthProvider = {
-      authorizationUrl: "https://provider.example/authorize",
+      authorizationUrl:
+        "https://accounts.google.com/o/oauth2/v2/auth",
       clientId: "client-id",
       clientSecret: "client-secret",
-      id: "github" as const,
-      scopes: "read:user user:email",
-      tokenUrl: "https://provider.example/token",
+      id: "google" as const,
+      scopes: "openid email profile",
+      tokenUrl: "https://oauth2.googleapis.com/token",
     };
     const start = await beginOAuth(
       db,
@@ -201,12 +240,13 @@ describe("authentication",()=>{
   it("binds each OAuth state to one browser without letting mismatches consume it", async () => {
     const { database: db, sqlite } = numberedMigrationDatabase();
     const oauthProvider = {
-      authorizationUrl: "https://provider.example/authorize",
+      authorizationUrl:
+        "https://accounts.google.com/o/oauth2/v2/auth",
       clientId: "client-id",
       clientSecret: "client-secret",
-      id: "github" as const,
-      scopes: "read:user user:email",
-      tokenUrl: "https://provider.example/token",
+      id: "google" as const,
+      scopes: "openid email profile",
+      tokenUrl: "https://oauth2.googleapis.com/token",
     };
     const start = await beginOAuth(
       db,

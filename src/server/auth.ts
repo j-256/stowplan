@@ -599,7 +599,7 @@ export async function requireRecentIdentityLinkAuthentication(
   if (!await activeIdentityLinkTarget(db, intent, now, true)) {
     throw new ApiProblem(
       "REAUTHENTICATION_REQUIRED",
-      "Sign in again with an existing Google identity before linking another",
+      "Sign in again before linking a Google identity",
       401,
     );
   }
@@ -985,6 +985,21 @@ export async function markSessionReauthenticated(
     );
   }
   return { reauthenticatedAt };
+}
+
+export async function hasLinkedGoogleIdentity(
+  db: AuthDb,
+  userId: string,
+): Promise<boolean> {
+  const row = await db.prepare(
+    `SELECT EXISTS(
+       SELECT 1
+       FROM identities
+       WHERE user_id=?
+         AND provider='google'
+     ) AS linked`,
+  ).bind(userId).first<{ linked: number }>();
+  return row?.linked === 1;
 }
 
 export async function authenticate(
@@ -1726,7 +1741,7 @@ export async function consumeGuestLink(
   );
 }
 
-export type OAuthProviderId = "github" | "google";
+export type OAuthProviderId = "google";
 export type OAuthIntent = "link" | "reauthenticate" | "sign-in";
 
 export interface OAuthProvider {
@@ -2195,13 +2210,12 @@ export async function beginOAuth(
     "code_challenge_method",
     "S256",
   );
-  if (oauthProvider.id === "google") {
-    authorization.searchParams.set("nonce", nonce);
-    if (intent === "reauthenticate") {
-      authorization.searchParams.set("prompt", "select_account");
-    } else if (intent === "link") {
-      authorization.searchParams.set("prompt", "select_account");
-    }
+  authorization.searchParams.set("nonce", nonce);
+  if (
+    intent === "reauthenticate"
+    || intent === "link"
+  ) {
+    authorization.searchParams.set("prompt", "select_account");
   }
   return {
     authorizationUrl: authorization.toString(),
@@ -2284,88 +2298,6 @@ async function googleProfile(
     email,
     provider: oauthProvider.id,
     subject: payload.sub,
-  };
-}
-
-async function githubProfile(
-  accessToken: string,
-  oauthProvider: OAuthProvider,
-): Promise<ProviderProfile> {
-  const headers = {
-    accept: "application/vnd.github+json",
-    authorization: `Bearer ${accessToken}`,
-    "user-agent": "Stowplan",
-  };
-  const [accountResponse, emailsResponse] = await Promise.all([
-    oauthProviderFetch("https://api.github.com/user", { headers }),
-    oauthProviderFetch(
-      "https://api.github.com/user/emails",
-      { headers },
-    ),
-  ]);
-  if (!accountResponse.ok || !emailsResponse.ok) {
-    throw new OAuthCallbackError(
-      "GitHub profile request failed",
-      accountResponse.ok
-        ? oauthProviderFailureStatus(emailsResponse)
-        : oauthProviderFailureStatus(accountResponse),
-    );
-  }
-  let account: {
-    email?: string;
-    id?: number;
-    login?: string;
-    name?: string;
-  };
-  let emails: unknown;
-  try {
-    account = await accountResponse.json() as typeof account;
-    emails = await emailsResponse.json();
-  } catch {
-    throw new OAuthCallbackError(
-      "GitHub returned an invalid profile response",
-      502,
-    );
-  }
-  if (!Array.isArray(emails)) {
-    throw new OAuthCallbackError(
-      "GitHub account lacks required identity claims",
-      401,
-    );
-  }
-  const typedEmails = emails as Array<{
-    email?: string;
-    primary?: boolean;
-    verified?: boolean;
-  }>;
-  const verifiedEmails = typedEmails.filter(
-    (candidate) => candidate.verified && candidate.email,
-  );
-  const accountEmail = account.email?.trim().toLowerCase();
-  const email = verifiedEmails.find(
-    (candidate) =>
-      candidate.email?.trim().toLowerCase() === accountEmail,
-  )?.email
-    ?? verifiedEmails.find((candidate) =>
-      candidate.primary && candidate.verified
-    )?.email
-    ?? verifiedEmails[0]?.email;
-  if (
-    !Number.isSafeInteger(account.id)
-    || !email
-  ) {
-    throw new OAuthCallbackError(
-      "GitHub account lacks required identity claims",
-      401,
-    );
-  }
-  return {
-    displayName: account.name?.trim()
-      || account.login?.trim()
-      || email,
-    email,
-    provider: oauthProvider.id,
-    subject: String(account.id),
   };
 }
 
@@ -2467,10 +2399,7 @@ export async function finishOAuth(
       oauthProviderFailureStatus(tokenResponse),
     );
   }
-  let tokens: {
-    access_token?: string;
-    id_token?: string;
-  };
+  let tokens: { id_token?: string };
   try {
     tokens = await tokenResponse.json() as typeof tokens;
   } catch {
@@ -2479,31 +2408,17 @@ export async function finishOAuth(
       502,
     );
   }
-  let profile: ProviderProfile;
-  if (oauthProvider.id === "google") {
-    if (!tokens.id_token) {
-      throw new OAuthCallbackError(
-        "Google did not return an ID token",
-        401,
-      );
-    }
-    profile = await googleProfile(
-      tokens.id_token,
-      oauthProvider,
-      transaction.nonce,
-    );
-  } else {
-    if (!tokens.access_token) {
-      throw new OAuthCallbackError(
-        "GitHub did not return an access token",
-        401,
-      );
-    }
-    profile = await githubProfile(
-      tokens.access_token,
-      oauthProvider,
+  if (!tokens.id_token) {
+    throw new OAuthCallbackError(
+      "Google did not return an ID token",
+      401,
     );
   }
+  const profile = await googleProfile(
+    tokens.id_token,
+    oauthProvider,
+    transaction.nonce,
+  );
   return {
     intent: transaction.intent,
     linkIntent: transaction.intent === "link"

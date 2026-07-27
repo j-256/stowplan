@@ -31,6 +31,7 @@ interface User {
 interface MeResponse {
   accessMigrationAvailable: boolean;
   configured: boolean;
+  hasLinkedGoogleIdentity: boolean;
   providers: string[];
   turnstileSiteKey: string | null;
   user: User | null;
@@ -183,6 +184,10 @@ export default function Account() {
     setAccessMigrationAvailable,
   ] = useState(false);
   const [configured, setConfigured] = useState(false);
+  const [
+    hasLinkedGoogleIdentity,
+    setHasLinkedGoogleIdentity,
+  ] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [message, setMessage] = useState("");
   const [providers, setProviders] = useState<string[]>([]);
@@ -222,6 +227,9 @@ export default function Account() {
         account.accessMigrationAvailable ?? false,
       );
       setConfigured(account.configured);
+      setHasLinkedGoogleIdentity(
+        account.hasLinkedGoogleIdentity === true,
+      );
       setProviders(account.providers ?? []);
       setTurnstileSiteKey(account.turnstileSiteKey ?? null);
       if (account.user) broadcastAccountChange();
@@ -375,6 +383,9 @@ export default function Account() {
                 {user.globalRole === "admin" && <Link href="/admin">Open admin control panel</Link>}
                 {providers.includes("google") && turnstileSiteKey &&
                   <GoogleSignIn
+                    hasLinkedGoogleIdentity={
+                      hasLinkedGoogleIdentity
+                    }
                     intent="link"
                     returnTo={returnTo}
                     siteKey={turnstileSiteKey}

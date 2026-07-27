@@ -39,6 +39,7 @@ declare global {
 }
 
 interface GoogleSignInProps {
+  hasLinkedGoogleIdentity?: boolean;
   intent?: "link" | "reauthenticate" | "sign-in";
   returnTo: string;
   siteKey: string;
@@ -48,6 +49,7 @@ interface OAuthStartResponse {
   authorizationUrl?: string;
   code?: string;
   error?: string;
+  hasLinkedGoogleIdentity?: boolean;
 }
 
 const GOOGLE_AUTHORIZATION_ORIGIN =
@@ -56,6 +58,7 @@ const TURNSTILE_SCRIPT_URL =
   "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
 
 export function GoogleSignIn({
+  hasLinkedGoogleIdentity = false,
   intent = "sign-in",
   returnTo,
   siteKey,
@@ -168,10 +171,20 @@ export function GoogleSignIn({
         && response.status === 401
         && body?.code === "REAUTHENTICATION_REQUIRED"
       ) {
-        setStartIntent("reauthenticate");
-        setMessage(
-          "Confirm with an existing Google identity, then choose link again when you return.",
-        );
+        const linkedGoogleIdentity =
+          body.hasLinkedGoogleIdentity
+          ?? hasLinkedGoogleIdentity;
+        if (linkedGoogleIdentity) {
+          setStartIntent("reauthenticate");
+          setMessage(
+            "Confirm with an existing Google identity, then choose link again when you return.",
+          );
+        } else {
+          setMessage(
+            body.error
+            ?? "Sign out and sign in again with this account's existing method, then link Google when you return.",
+          );
+        }
         resetWidget();
         setSubmitting(false);
         return;
@@ -222,7 +235,9 @@ export function GoogleSignIn({
         {submitting
           ? "Opening Google..."
           : startIntent === "link"
-            ? "Link another Google identity"
+            ? hasLinkedGoogleIdentity
+              ? "Link another Google identity"
+              : "Link Google identity"
             : startIntent === "reauthenticate"
               ? "Confirm with Google"
               : "Continue with Google"}

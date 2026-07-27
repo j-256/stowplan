@@ -123,6 +123,97 @@ test("offers the temporary Access migration handoff only when enabled", async ({
   await expect((await migrationRequest).method()).toBe("POST");
 });
 
+for (const {
+  afterLabel,
+  error,
+  hasLinkedGoogleIdentity,
+  label,
+  message,
+  state,
+} of [
+  {
+    afterLabel: "Link Google identity",
+    error:
+      "Sign out and sign in again with this account's existing method, then link Google when you return",
+    hasLinkedGoogleIdentity: false,
+    label: "Link Google identity",
+    message:
+      "Sign out and sign in again with this account's existing method, then link Google when you return",
+    state: "first",
+  },
+  {
+    afterLabel: "Confirm with Google",
+    error:
+      "Sign in again with an existing Google identity before linking another",
+    hasLinkedGoogleIdentity: true,
+    label: "Link another Google identity",
+    message:
+      "Confirm with an existing Google identity, then choose link again when you return.",
+    state: "additional",
+  },
+]) {
+  test(`labels the ${state} Google identity action from server state`, async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      window.turnstile = {
+        remove: () => undefined,
+        render: (_container, options) => {
+          queueMicrotask(() => options.callback(
+            "synthetic-turnstile-token",
+          ));
+          return "synthetic-widget";
+        },
+        reset: () => undefined,
+      };
+    });
+    await page.route("**/api/auth/me", (route) => route.fulfill({
+      body: JSON.stringify({
+        accessMigrationAvailable: false,
+        configured: true,
+        hasLinkedGoogleIdentity,
+        providers: ["google"],
+        turnstileSiteKey: "1x00000000000000000000AA",
+        user: {
+          displayName: OWNER_NAME,
+          email: OWNER_EMAIL,
+          expiresAt: "2099-07-26T00:00:00.000Z",
+          globalRole: "user",
+          userId: OWNER_ID,
+        },
+      }),
+      contentType: "application/json",
+      status: 200,
+    }));
+    await page.route(
+      "**/api/auth/google/start*",
+      (route) => route.fulfill({
+        body: JSON.stringify({
+          code: "REAUTHENTICATION_REQUIRED",
+          error,
+          hasLinkedGoogleIdentity,
+        }),
+        contentType: "application/json",
+        status: 401,
+      }),
+    );
+
+    await page.goto("/account");
+
+    const action = page.getByRole("button", {
+      exact: true,
+      name: label,
+    });
+    await expect(action).toBeEnabled();
+    await action.click();
+    await expect(page.getByRole("button", {
+      exact: true,
+      name: afterLabel,
+    })).toBeVisible();
+    await expect(page.locator("output")).toContainText(message);
+  });
+}
+
 test("reloads after development sign-out without visiting the Access logout endpoint", async ({
   page,
 }) => {

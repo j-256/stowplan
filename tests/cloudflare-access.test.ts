@@ -5,6 +5,9 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   CloudflareApi,
+  POST_MUTATION_VERIFICATION_INITIAL_BACKOFF_MS,
+  POST_MUTATION_VERIFICATION_MAX_BACKOFF_MS,
+  POST_MUTATION_VERIFICATION_READ_LIMIT,
   applyAccessPlan,
   buildPlan,
   createRollbackSnapshot,
@@ -760,6 +763,142 @@ describe("Cloudflare Access desired state", () => {
         "rolled_back",
         "rolled_back",
       ]);
+    } finally {
+      await rm(temporaryDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("verifies a successful mutation after bounded stale reads without repeating it", async () => {
+    const temporaryDirectory = await mkdtemp(
+      join(tmpdir(), "stowplan-access-test-"),
+    );
+    const rollbackPath = join(temporaryDirectory, "rollback.json");
+    const api = new FakeCloudflareApi();
+    const staleState = structuredClone(api.state);
+    const delays: number[] = [];
+    let verificationReads = 0;
+    try {
+      const finalPlan = await applyAccessPlan({
+        api,
+        config,
+        initialState: structuredClone(api.state),
+        rollbackPath,
+        verification: {
+          readRemoteState: async (candidateApi: FakeCloudflareApi) => {
+            verificationReads += 1;
+            if (verificationReads <= 2) {
+              return structuredClone(staleState);
+            }
+            return loadRemoteState(candidateApi);
+          },
+          wait: async (delay: number) => {
+            delays.push(delay);
+          },
+        },
+      });
+
+      expect(finalPlan.changeCount).toBe(0);
+      expect(delays).toEqual([
+        POST_MUTATION_VERIFICATION_INITIAL_BACKOFF_MS,
+        Math.min(
+          POST_MUTATION_VERIFICATION_INITIAL_BACKOFF_MS * 2,
+          POST_MUTATION_VERIFICATION_MAX_BACKOFF_MS,
+        ),
+      ]);
+      expect(api.requests.filter(
+        ({ method, endpoint }) =>
+          method === "POST"
+          && endpoint === "/access/identity_providers",
+      )).toHaveLength(1);
+      expect(api.requests.filter(
+        ({ method, endpoint }) =>
+          method === "POST"
+          && endpoint === "/access/policies",
+      )).toHaveLength(1);
+      expect(api.requests.filter(
+        ({ method, endpoint }) =>
+          method === "PUT"
+          && endpoint === "/access/apps/managed-app-id",
+      )).toHaveLength(1);
+      const snapshot = JSON.parse(
+        await readFile(rollbackPath, "utf8"),
+      );
+      expect(
+        snapshot.resources.identity_providers["admin-cloudflare"],
+      ).toMatchObject({
+        after_digest: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        created_id: expect.any(String),
+        mutation_state: "applied",
+      });
+      expect(snapshot.resources.applications.admin).toMatchObject({
+        after_digest: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        mutation_state: "applied",
+      });
+    } finally {
+      await rm(temporaryDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves an exhausted verification pending without duplicate or dependent mutations", async () => {
+    const temporaryDirectory = await mkdtemp(
+      join(tmpdir(), "stowplan-access-test-"),
+    );
+    const rollbackPath = join(temporaryDirectory, "rollback.json");
+    const api = new FakeCloudflareApi();
+    const staleState = structuredClone(api.state);
+    let verificationReads = 0;
+    let waits = 0;
+    try {
+      await expect(applyAccessPlan({
+        api,
+        config,
+        initialState: structuredClone(api.state),
+        rollbackPath,
+        verification: {
+          readRemoteState: async () => {
+            verificationReads += 1;
+            return structuredClone(staleState);
+          },
+          wait: async () => {
+            waits += 1;
+          },
+        },
+      })).rejects.toThrow(
+        `could not be verified after ${POST_MUTATION_VERIFICATION_READ_LIMIT} post-mutation reads`,
+      );
+      expect(verificationReads).toBe(
+        POST_MUTATION_VERIFICATION_READ_LIMIT,
+      );
+      expect(waits).toBe(
+        POST_MUTATION_VERIFICATION_READ_LIMIT - 1,
+      );
+      expect(api.requests.filter(
+        ({ method }) => method === "POST" || method === "PUT",
+      )).toEqual([{
+        endpoint: "/access/identity_providers",
+        method: "POST",
+      }]);
+      expect(api.state.applications[0].domain).toBe(
+        "stowplan.jklein.dev/account*",
+      );
+      const snapshot = JSON.parse(
+        await readFile(rollbackPath, "utf8"),
+      );
+      expect(
+        snapshot.resources.identity_providers["admin-cloudflare"],
+      ).toMatchObject({
+        after_digest: null,
+        created_id: null,
+        mutation_state: "pending",
+      });
+      expect(
+        snapshot.resources.reusable_policies[
+          "admin-account-members"
+        ].mutation_state,
+      ).toBe("not_started");
+      expect(
+        snapshot.resources.applications.admin.mutation_state,
+      ).toBe("not_started");
     } finally {
       await rm(temporaryDirectory, { recursive: true, force: true });
     }

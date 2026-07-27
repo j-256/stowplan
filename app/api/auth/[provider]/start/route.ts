@@ -3,6 +3,7 @@ import {
   authenticationBaseUrl,
   AuthorizationError,
   beginOAuth,
+  hasLinkedGoogleIdentity,
   isTrustedMutation,
   provider,
   requireRecentIdentityLinkAuthentication,
@@ -29,6 +30,7 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ provider: string }> },
 ) {
+  let googleIdentityLinked = false;
   try {
     const env = await runtimeEnv();
     if (!isTrustedMutation(request, env.AUTH_BASE_URL)) {
@@ -106,18 +108,6 @@ export async function POST(
       );
     }
     const intent = requestedIntent as OAuthIntent;
-    if (
-      intent === "reauthenticate"
-      && configuredProvider.id !== "google"
-    ) {
-      return privateJson(
-        {
-          code: "INVALID_REQUEST",
-          error: "Google is required for reauthentication",
-        },
-        { status: 400 },
-      );
-    }
     const url = new URL(request.url);
     const base = authenticationBaseUrl(env, request.url);
     if (!base) {
@@ -145,6 +135,10 @@ export async function POST(
       );
     }
     if (intent === "link" && principal) {
+      googleIdentityLinked = await hasLinkedGoogleIdentity(
+        env.DB,
+        principal.userId,
+      );
       await requireRecentIdentityLinkAuthentication(
         env.DB,
         {
@@ -213,8 +207,10 @@ export async function POST(
       return privateJson(
         {
           code: error.code,
-          error:
-            "Sign in again with an existing Google identity before linking another",
+          error: googleIdentityLinked
+            ? "Sign in again with an existing Google identity before linking another"
+            : "Sign out and sign in again with this account's existing method, then link Google when you return",
+          hasLinkedGoogleIdentity: googleIdentityLinked,
         },
         { status: 401 },
       );

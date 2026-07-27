@@ -1,6 +1,7 @@
 import {
   authenticate,
   developmentAuthenticationAllowed,
+  hasLinkedGoogleIdentity,
   identityEnforcementConfigured,
   provider,
 } from "../../../../src/server/auth";
@@ -24,6 +25,7 @@ export async function GET(request: Request) {
         adminAccessRequired:
           env.AUTH_ADMIN_REQUIRE_ACCESS === "true",
         configured: false,
+        hasLinkedGoogleIdentity: false,
         providers: [],
         turnstileSiteKey: null,
         user: null,
@@ -32,6 +34,9 @@ export async function GET(request: Request) {
     );
   }
   const user = await authenticate(env.DB, request);
+  const googleIdentityLinked = user
+    ? await hasLinkedGoogleIdentity(env.DB, user.userId)
+    : false;
   return Response.json(
     {
       accessMigrationAvailable:
@@ -39,6 +44,7 @@ export async function GET(request: Request) {
       adminAccessRequired:
         env.AUTH_ADMIN_REQUIRE_ACCESS === "true",
       configured: true,
+      hasLinkedGoogleIdentity: googleIdentityLinked,
       providers,
       turnstileSiteKey: googleConfigured
         ? env.AUTH_TURNSTILE_SITE_KEY

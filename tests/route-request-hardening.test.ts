@@ -87,13 +87,30 @@ describe("private route request hardening", () => {
     mocks.authenticate.mockResolvedValue(null);
     mocks.authorizeAdmin.mockResolvedValue({ userId: "usr_admin" });
     mocks.provider.mockReturnValue({
-      authorizationUrl: "https://provider.test/authorize",
+      authorizationUrl: "https://accounts.google.com/authorize",
       clientId: "client",
       clientSecret: "secret",
-      id: "github",
-      scopes: "profile",
-      tokenUrl: "https://provider.test/token",
+      id: "google",
+      scopes: "openid email profile",
+      tokenUrl: "https://oauth2.googleapis.com/token",
     });
+  });
+
+  it("refuses an unconfigured GitHub callback before OAuth work", async () => {
+    mocks.provider.mockReturnValueOnce(null);
+    const response = await getOAuthCallback(
+      new Request(
+        `https://stowplan.test/api/auth/github/callback?state=${"a".repeat(64)}&code=code`,
+      ),
+      { params: Promise.resolve({ provider: "github" }) },
+    );
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({
+      code: "NOT_FOUND_OR_INACCESSIBLE",
+      error: "Authentication provider is not configured",
+    });
+    expect(mocks.finishOAuth).not.toHaveBeenCalled();
   });
 
   it("does not expose OAuth callback failures", async () => {
@@ -103,9 +120,9 @@ describe("private route request hardening", () => {
 
     const response = await getOAuthCallback(
       new Request(
-        `https://stowplan.test/api/auth/github/callback?state=${"a".repeat(64)}&code=code`,
+        `https://stowplan.test/api/auth/google/callback?state=${"a".repeat(64)}&code=code`,
       ),
-      { params: Promise.resolve({ provider: "github" }) },
+      { params: Promise.resolve({ provider: "google" }) },
     );
 
     expect(response.status).toBe(500);
@@ -174,7 +191,7 @@ describe("private route request hardening", () => {
         profile: {
           displayName: "User",
           email: "user@example.com",
-          provider: "github",
+          provider: "google",
           subject: "provider-subject",
         },
         returnTo: "/account",
@@ -188,9 +205,9 @@ describe("private route request hardening", () => {
       );
       const response = await getOAuthCallback(
         new Request(
-          `https://stowplan.test/api/auth/github/callback?state=${"b".repeat(64)}&code=code`,
+          `https://stowplan.test/api/auth/google/callback?state=${"b".repeat(64)}&code=code`,
         ),
-        { params: Promise.resolve({ provider: "github" }) },
+        { params: Promise.resolve({ provider: "google" }) },
       );
 
       expect(response.status).toBe(expectedStatus);

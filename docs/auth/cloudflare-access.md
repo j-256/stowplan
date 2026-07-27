@@ -44,7 +44,7 @@ bash scripts/cloudflare-access.sh apply \
   --confirm-admin-cutover
 ```
 
-Before each remote write, the reconciler persists that resource as `pending`. A verified write becomes `applied`; an untouched resource remains `not_started`. If a write response is lost, rollback refuses the uncertain snapshot instead of guessing whether Cloudflare changed. The private mode-`0600` snapshot stores managed before-payloads and only IDs plus SHA-256 digests for linked legacy providers and policies. It never stores legacy policy contents or identity values.
+Before each remote write, the reconciler persists that resource as `pending`. After a successful mutation response, bounded exponential-backoff reads verify the exact resource and desired writable payload. A stale read never repeats the create or update mutation. A verified write becomes `applied`; an untouched resource remains `not_started`; bounded verification exhaustion leaves the mutation `pending` and fails with a sanitized logical-resource error. If a write response is lost, rollback likewise refuses the uncertain snapshot instead of guessing whether Cloudflare changed. The private mode-`0600` snapshot stores managed before-payloads and only IDs plus SHA-256 digests for linked legacy providers and policies. It never stores legacy policy contents or identity values.
 
 Rollback uses the unchanged desired-state file and the private snapshot:
 

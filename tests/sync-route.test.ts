@@ -15,6 +15,7 @@ const MEMBER_ACCOUNT_ID = "usr_member";
 
 const mocks = vi.hoisted(() => ({
   authenticate: vi.fn(),
+  hasLinkedGoogleIdentity: vi.fn(),
   initializeOwnedWorkspace: vi.fn(),
   loadAuthorization: vi.fn(),
   loadAuthorized: vi.fn(),
@@ -41,6 +42,7 @@ vi.mock("../src/server/auth", async importOriginal => {
   return {
     ...actual,
     authenticate: mocks.authenticate,
+    hasLinkedGoogleIdentity: mocks.hasLinkedGoogleIdentity,
     isTrustedMutation: vi.fn(() => true),
   };
 });
@@ -640,9 +642,39 @@ describe("authentication status", () => {
       accessMigrationAvailable: false,
       adminAccessRequired: false,
       configured: true,
+      hasLinkedGoogleIdentity: false,
       providers: [],
       turnstileSiteKey: null,
       user: null,
     });
+  });
+
+  it("reports authoritative Google link state for the active account", async () => {
+    mocks.authenticate.mockResolvedValue({
+      displayName: "Migration user",
+      email: "migration-user@example.com",
+      expiresAt: "2099-07-26T00:00:00.000Z",
+      globalRole: "user",
+      sessionId: "ses_migration",
+      userId: "usr_migration",
+    });
+    mocks.hasLinkedGoogleIdentity.mockResolvedValue(true);
+
+    const response = await GET_AUTH_STATUS(
+      new Request("https://stowplan.test/api/auth/me"),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      configured: true,
+      hasLinkedGoogleIdentity: true,
+      user: {
+        userId: "usr_migration",
+      },
+    });
+    expect(mocks.hasLinkedGoogleIdentity).toHaveBeenCalledWith(
+      expect.anything(),
+      "usr_migration",
+    );
   });
 });
