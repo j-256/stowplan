@@ -345,16 +345,46 @@ export async function readActiveReplica(
   );
 }
 
+// `keyboard.press` resolves once the key event is dispatched, not once the
+// browser has moved focus. Reading activeElement immediately after can therefore
+// still observe the pre-Tab element, so the walk tabs past its target and a later
+// keypress lands on the wrong control -- a race that only appears when the
+// browser is contended.
+//
+// Focus staying put is not a stop condition: a radio group is a single tab stop,
+// so Tab legitimately leaves activeElement unchanged while walking through it.
+// Only that ambiguous case waits, so an unimpeded walk costs nothing
+const FOCUS_SETTLE_TIMEOUT_MS = 2000;
+
 export async function tabTo(
   page: Page,
   target: Locator,
   maximumTabs = 80,
 ): Promise<void> {
+  // Node identity, not markup: repeated controls can be structurally identical
+  const activeElementHandle = () =>
+    page.evaluateHandle(() => document.activeElement);
+  const focused = () =>
+    target.evaluate((element) => element === document.activeElement);
   for (let index = 0; index < maximumTabs; index += 1) {
-    if (await target.evaluate((element) => element === document.activeElement)) {
-      return;
-    }
+    if (await focused()) return;
+    const before = await activeElementHandle();
     await page.keyboard.press("Tab");
+    const moved = await page.evaluate(
+      (previous) => document.activeElement !== previous,
+      before,
+    );
+    await before.dispose();
+    if (moved) continue;
+    // Either focus has not caught up yet or this is one tab stop spanning
+    // several controls, such as a radio group. Give the target a settle window;
+    // if it is genuinely elsewhere, keep walking rather than failing here
+    try {
+      await expect(target).toBeFocused({ timeout: FOCUS_SETTLE_TIMEOUT_MS });
+      return;
+    } catch {
+      continue;
+    }
   }
   await expect(target).toBeFocused();
 }
