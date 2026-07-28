@@ -1,33 +1,51 @@
-# Offline and server-outage behavior
+# Offline and backup
 
-Stowplan is local-first. IndexedDB contains the active workspace, preserved inactive workspaces, each workspace's ordered outbox, discovered server summaries, explicit server role and capabilities, and the timestamps and outcome of server-backup attempts. A permitted command changes the local snapshot and enters the outbox in one transaction. Opening a shared workspace never erases the one you were using; switch from the workspace home screen.
+Stowplan saves accepted workspace changes in this browser first. You can keep capturing and organizing through weak service or an outage, then let online backup catch up later.
 
-Network backup waits 1.8 seconds after the most recent command and flushes no later than 8 seconds during continuous work. Returning online, returning to the foreground, or a five-minute reconciliation interval retries every preserved workspace that has pending changes, even if a different workspace is open. The active workspace also performs an empty reconciliation so it can pull changes made by other devices. Retries are idempotent by command ID.
+Local-first does not mean permanent by itself. Browser site data can be cleared, a device can fail, and an app can be uninstalled. Export important work or sign in for online backup before relying on the device as your only copy.
 
-Status meanings:
+## What works without a connection
 
-- **Stored only on this device:** no authorized server copy is known.
-- **Available from the server:** the signed-in account has access, but this device has not downloaded a replica.
-- **Device and server are synchronized:** local and server revisions match and no commands are waiting.
-- **Local changes are waiting to upload:** permitted work is durable on the device and the server copy is behind.
-- **Backup refused one or more local changes:** a same-field conflict or rejected command is retained with its server error.
-- **This device has newer work:** the local summary is ahead of the latest known server summary.
-- **The server copy is newer:** reconciliation can pull authorized server changes into the local replica.
-- **Server workspace unavailable while offline:** a discovered server-only workspace needs a connection for its first download.
-- **Workspace access is unavailable:** membership ended, the server workspace was deleted, or access cannot be confirmed.
+A workspace already opened on this device remains available for browsing and, when your last confirmed role permits it, editing. Capture, search, spaces, inventory, plans, and Activity use the saved device copy.
 
-An empty outbox by itself is not described as "up to date" unless this device has recorded a successful server backup. A failed availability or authentication check does not erase the last successful timestamp; the latest error is shown separately.
+An online workspace that has never been downloaded to this device needs a connection once. Its card says **Open when online** until Stowplan can download and check the first local copy.
 
-The workspace home screen keeps discovered server summaries so a server-only card can remain visible offline. Its **Open when online** action is focusable and explains why opening is unavailable. A workspace that already has a local replica remains readable offline. Reconciliation does not erase pending or blocked commands, replace a newer local summary with an older one, or switch the active workspace without the user choosing it.
+Static parts of the app may also be available offline after a prior visit. Workspace data comes from the saved device copy, not from a cached server response.
 
-Known viewer access is read-only before a command reaches IndexedDB, so navigation, search, filters, details, plans, activity, and authorized export do not create an outbox entry. Owner and editor commands continue to use the transactional local snapshot and outbox write.
+## Read the workspace status
 
-The device cannot learn about a role change while offline. It may preserve edits accepted under the last confirmed owner or editor role. On reconnect, the server role wins: a downgrade or membership removal updates the interface, unauthorized commands become blocked with their intended action and refusal reason, and the device does not report them as backed up. Export the full recovery bundle before deciding how to recover or reset that work.
+| Status | What it means |
+|---|---|
+| Stored only on this device | Stowplan does not know of an authorized online copy |
+| Available from the server | The signed-in account has access, but this device has not downloaded it |
+| Device and server are synchronized | The known device and online copies match and nothing is waiting |
+| Local changes are waiting to upload | The changes are saved here, but the online copy is behind |
+| Backup refused one or more local changes | Stowplan preserved work that needs review |
+| This device has newer work | The device summary is ahead of the latest online summary it knows |
+| The server copy is newer | Another device or person changed the online copy |
+| Server workspace unavailable while offline | This device needs a connection for the first download |
+| Workspace access is unavailable | Membership ended, the workspace was deleted, or access cannot be confirmed |
 
-On a shared browser, a cached server role belongs only to the account that received it. Switching to another signed-in account makes that workspace read-only until Stowplan confirms the new account's access. Pending changes from the first account remain on the device and are not sent as the second account.
+A failed connection does not erase the last successful backup time. Stowplan shows the newer error separately.
 
-Static application assets may be cached. API responses are never service-worker cached. The local replica, not an HTTP cache, enables offline work.
+## What happens when the connection returns
 
-Before clearing site data or uninstalling the PWA, export a JSON recovery bundle if any commands remain pending.
+Stowplan retries waiting changes, including changes in local workspaces that are not open. It also checks the open workspace for changes from other devices. It does not switch workspaces on its own or discard refused work.
 
-See [Workspaces and collaboration](/guide/collaboration) for role and lifecycle behavior.
+If your Stowplan session expires, **Remote backup paused** means local work remains on the device but cannot reach the account until you sign in again.
+
+If another person changed a different field, both changes can usually be preserved. If the same field changed in incompatible ways, Stowplan keeps the device's intended action for review rather than silently choosing a winner.
+
+## Shared workspaces offline
+
+A known viewer stays read-only offline. A known owner or editor can continue making local changes.
+
+The device cannot know that an owner changed your role or removed your membership while it was disconnected. After reconnecting, server access wins. Any newly unauthorized work stays visible as refused work and can be exported from Recovery.
+
+On a shared browser, saved server permission belongs to the account that received it. Switching accounts makes that workspace read-only until Stowplan confirms the new account's access. Waiting changes from the first account are not uploaded as the second account.
+
+## Before clearing browser data
+
+Open **Settings → Review sync issues or restore a backup** if anything is waiting or refused, then export the full recovery bundle. For a clean workspace, **Settings → Export JSON backup** creates a portable snapshot.
+
+Save the file somewhere outside this browser's site data. See [Backup and recovery](/guide/recovery) for restore choices.

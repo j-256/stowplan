@@ -1,7 +1,8 @@
-const CACHE = "stowplan-shell-v8";
+const CACHE = "stowplan-shell-v9";
 const CACHE_PREFIX = "stowplan-shell-";
 const SHELL = [
   "/",
+  "/demo",
   "/docs",
   "/docs/",
   "/labels",
@@ -69,7 +70,8 @@ self.addEventListener("fetch", (event) => {
   ) return;
 
   const navigation = request.mode === "navigate";
-  const workspaceNavigation =
+  const appNavigation =
+    url.pathname === "/demo" ||
     url.pathname === "/workspaces" ||
     url.pathname.startsWith("/workspaces/");
   const staticAsset =
@@ -94,7 +96,7 @@ self.addEventListener("fetch", (event) => {
       .catch(async () => {
         const cached = await caches.match(cacheKey);
         if (cached) return cached;
-        if (navigation && workspaceNavigation) {
+        if (navigation && appNavigation) {
           const shell = await caches.match("/");
           if (shell) return shell;
         }

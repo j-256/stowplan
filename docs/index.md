@@ -3,24 +3,28 @@ layout: home
 title: Stowplan
 hero:
   name: Stowplan
-  text: Know where everything lives.
-  tagline: A mobile-first, local-first organizer for boxes, cabinets, drawers, and every container inside them.
+  text: Find what you packed without opening every box.
+  tagline: Label spaces, capture what is inside, and get a practical plan for putting everything where it belongs. No account is needed to try it.
   actions:
     - theme: brand
-      text: Start the first pass
-      link: /guide/getting-started
+      text: Try the kitchen demo
+      link: stowplan:demo
     - theme: alt
-      text: Deploy Stowplan
-      link: /deploy/
+      text: Organize your first room
+      link: /guide/getting-started
 features:
-  - title: Capture without friction
-    details: Label a container, enter quantity + unit + item, add nested containers in place, and jump to the next uncounted space.
-  - title: Keep working through outages
-    details: Every command commits to IndexedDB first. Server backup is delayed, batched, idempotent, and never required for continued organizing.
-  - title: Find every shared workspace
-    details: Sign in on a fresh device to discover authorized server workspaces, see honest device and backup state, and collaborate according to your workspace role.
-  - title: Make explainable moves
-    details: Plans consider suitability, capacity, grouping, access, distance, and whole-container moves. Every completed change is reversible.
+  - title: Start before the system is perfect
+    details: Put a short code on each room, cabinet, drawer, box, or bin, then record what you see as you go.
+  - title: Keep working without service
+    details: Accepted changes are saved in this browser first. Keep counting in a basement, garage, or moving truck and back up later.
+  - title: Find anything quickly
+    details: Search names, categories, tags, notes, and locations across the workspace instead of opening containers one by one.
+  - title: Make fewer physical moves
+    details: Build an explainable move plan, review why each suggestion was made, and undo completed changes when reality differs.
 ---
 
-Stowplan is free-tier-friendly and adapter-oriented. Cloudflare Workers + D1 is the reference production deployment; the domain, sync protocol, and storage contract do not depend on Cloudflare.
+The demo creates a ready-made kitchen workspace so you can capture an item, inspect a cabinet, search the inventory, and try a move plan without setting anything up. When you are ready to organize your own space, the [getting-started guide](/guide/getting-started) follows the same path with the labels you have on hand.
+
+Stowplan works without an account. Signing in keeps the browser copy and can add an online server copy for backup and sharing. Authorized workspace members, installation administrators, and the host may be able to access that server copy. Read [Account, privacy, and data](/guide/account-data) before using online features.
+
+Want to run Stowplan for a household, team, or community? Start with [Host and operate](/deploy/). Technical design, API, testing, and contributor material live under [Maintain](/maintainers/architecture).

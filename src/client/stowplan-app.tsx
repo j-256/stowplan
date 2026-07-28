@@ -83,6 +83,10 @@ import {
 } from "../domain/app-url";
 import { listWorkspaceReplicas, readWorkspaceReplica } from "./local-replica";
 import { JumpPalette } from "./jump-palette";
+import {
+  SOURCE_REPOSITORY_URL,
+  USER_GUIDE_URL,
+} from "./external-links";
 import { ModalDialog } from "./modal-dialog";
 import {
   STOWPLAN_HISTORY_EVENT,
@@ -207,6 +211,26 @@ const COMPLETE_CAPTURE_STATUSES = new Set<CaptureStatus>([
   "counted",
   "known_empty",
 ]);
+
+function demoEntryLocationId(
+  state: WorkspaceState,
+): string | undefined {
+  const live = state.locations.filter((location) => !location.archivedAt);
+  const parentIds = new Set(
+    live
+      .map((location) => location.parentId)
+      .filter((id): id is string => id !== null),
+  );
+  return live.find((location) =>
+    !parentIds.has(location.id) &&
+    !COMPLETE_CAPTURE_STATUSES.has(location.captureStatus)
+  )?.id ??
+    live.find((location) =>
+      !COMPLETE_CAPTURE_STATUSES.has(location.captureStatus)
+    )?.id ??
+    live[0]?.id;
+}
+
 const STACKED_TOUCH_LAYOUT_QUERY =
   "(max-width: 760px), (max-height: 520px) and (pointer: coarse) and (min-width: 761px)";
 const BROWSER_HISTORY_STATE = Object.freeze({ stowplan: true });
@@ -215,6 +239,7 @@ const ITEM_MODAL_HISTORY_STATE = Object.freeze({
   itemModal: true,
 });
 const DISMISS_FEEDBACK_EVENT = "stowplan:feedback-dismiss";
+const DEMO_ENTRY_FOCUS_DELAY_MS = 100;
 const FEEDBACK_EVENT = "stowplan:feedback";
 const SEARCH_BLOCKED_EVENT = "stowplan:search-blocked";
 const REORDER_DROP_MIDPOINT = 0.5;
@@ -1187,11 +1212,21 @@ function LocationCreateFields({
   </>;
 }
 
-export function StowplanApp() {
-  return <StowplanProvider><Application /></StowplanProvider>;
+interface StowplanAppProps {
+  directDemo?: boolean;
 }
 
-function Application() {
+export function StowplanApp({
+  directDemo = false,
+}: StowplanAppProps) {
+  return <StowplanProvider>
+    <Application directDemo={directDemo} />
+  </StowplanProvider>;
+}
+
+function Application({
+  directDemo,
+}: Required<StowplanAppProps>) {
   const {
     account,
     accountId,
@@ -1253,6 +1288,7 @@ function Application() {
   const workspaceOpenController = useRef<AbortController | null>(
     null,
   );
+  const directDemoHandled = useRef(false);
 
   const cancelWorkspaceOpen = useCallback(() => {
     workspaceOpenController.current?.abort();
@@ -1555,7 +1591,8 @@ function Application() {
     if (
       routeStatus !== "ready" ||
       showWelcome ||
-      !canonicalPath
+      !canonicalPath ||
+      (directDemo && !directDemoHandled.current)
     ) return;
     const browserPath = `${location.pathname}${location.search}`;
     if (browserPath !== canonicalPath) {
@@ -1569,7 +1606,13 @@ function Application() {
           : BROWSER_HISTORY_STATE,
       );
     }
-  }, [canonicalPath, routeStatus, showWelcome, validInventoryItemId]);
+  }, [
+    canonicalPath,
+    directDemo,
+    routeStatus,
+    showWelcome,
+    validInventoryItemId,
+  ]);
 
   useEffect(() => {
     if (showWelcome) {
@@ -1581,7 +1624,7 @@ function Application() {
     document.title = `${viewLabel} · ${state.workspace.name} · Stowplan`;
   }, [showWelcome, state, view]);
 
-  const writePath = (
+  const writePath = useCallback((
     path: string,
     mode: "push" | "replace" = "push",
     itemModal = false,
@@ -1595,13 +1638,16 @@ function Application() {
       mode,
       itemModal ? ITEM_MODAL_HISTORY_STATE : BROWSER_HISTORY_STATE,
     );
-  };
+  }, []);
 
-  const enter = (
+  const enter = useCallback((
     next: WorkspaceState,
     mode: "push" | "replace" = "replace",
+    initialLocationId?: string,
   ) => {
-    const locationId = next.locations.find((location) => !location.archivedAt)?.id ?? null;
+    const locationId = initialLocationId ??
+      next.locations.find((location) => !location.archivedAt)?.id ??
+      null;
     setSelected(locationId);
     setInventoryLocationId(null);
     setInventoryItemId(null);
@@ -1615,13 +1661,26 @@ function Application() {
       locationId,
       view: "capture",
     }), mode);
-  };
-  const start = async (demo: boolean, name?: string) => {
+  }, [writePath]);
+  const start = useCallback(async (
+    demo: boolean,
+    name?: string,
+    mode?: "push" | "replace",
+    enterDemoTask = false,
+  ) => {
     const next = demo ? createDemoState(newId("ws_demo")) : createEmptyState(name?.trim() || "My home");
     await initialize(next);
-    enter(next, location.pathname === WORKSPACE_LIST_PATH ? "push" : "replace");
-  };
-  const openDemo = async () => {
+    enter(
+      next,
+      mode ??
+        (location.pathname === WORKSPACE_LIST_PATH ? "push" : "replace"),
+      enterDemoTask ? demoEntryLocationId(next) : undefined,
+    );
+  }, [enter, initialize]);
+  const openDemo = useCallback(async (
+    mode: "push" | "replace" = "push",
+    enterDemoTask = false,
+  ) => {
     const openController = beginWorkspaceOpen();
     const demo = (await listWorkspaceReplicas()).find((workspace) => workspace.id.startsWith("ws_demo"));
     try {
@@ -1630,17 +1689,46 @@ function Application() {
         const next = await readWorkspaceReplica(demo.id);
         if (!next) throw new Error("Could not open kitchen demo");
         if (!openController.signal.aborted) {
-          enter(next.state, "push");
+          enter(
+            next.state,
+            mode,
+            enterDemoTask
+              ? demoEntryLocationId(next.state)
+              : undefined,
+          );
         }
         return;
       }
-      await start(true);
+      await start(true, undefined, mode, enterDemoTask);
     } catch (error) {
       if (!openController.signal.aborted) throw error;
     } finally {
       finishWorkspaceOpen(openController);
     }
-  };
+  }, [
+    beginWorkspaceOpen,
+    enter,
+    finishWorkspaceOpen,
+    openWorkspace,
+    start,
+  ]);
+  useEffect(() => {
+    if (
+      !directDemo ||
+      directDemoHandled.current ||
+      routeStatus !== "ready"
+    ) return;
+    directDemoHandled.current = true;
+    void openDemo("replace", true).catch((error) => {
+      setShowWelcome(true);
+      setRouteStatus("blocked");
+      setWorkspaceNotice(
+        error instanceof Error
+          ? error.message
+          : "Could not open the kitchen demo",
+      );
+    });
+  }, [directDemo, openDemo, routeStatus]);
   const chooseWorkspace = async (workspaceId: string) => {
     const openController = beginWorkspaceOpen();
     try {
@@ -2288,7 +2376,21 @@ function Application() {
           <h2>Device-only workspace</h2>
           <p>Back up this workspace to a signed-in account before managing members or invitations.</p>
         </section>}
-      {!readOnly && view === "capture" && <Capture state={state} current={current} select={selectLocation} commit={dispatch} focusEditorKey={guidanceTarget?.view === "capture" ? guidanceTarget.token : null} />}
+      {!readOnly && view === "capture" && <Capture
+        commit={dispatch}
+        current={current}
+        demoIntro={
+          directDemo &&
+          state.workspace.id.startsWith("ws_demo")
+        }
+        focusEditorKey={
+          guidanceTarget?.view === "capture"
+            ? guidanceTarget.token
+            : null
+        }
+        select={selectLocation}
+        state={state}
+      />}
       {!readOnly && view === "spaces" && <Spaces state={state} current={current} select={selectLocation} commit={dispatch} focusEditorKey={guidanceTarget?.view === "spaces" ? guidanceTarget.token : null} focusEditorSection={guidanceTarget?.view === "spaces" ? guidanceTarget.focus : undefined} />}
       {!readOnly && view === "inventory" && <Inventory state={state} commit={dispatch} editing={validInventoryItemId} editFocus={guidanceTarget?.view === "inventory" ? guidanceTarget.focus : undefined} locationFilter={validInventoryLocationId ?? ""} onEditingChange={changeInventoryItem} onLocationFilterChange={changeInventoryLocation} onOpenLocation={(id) => openGuidanceTarget("spaces", id)} />}
       {!readOnly && view === "plan" && <Planner state={state} commit={dispatch} openGuidanceTarget={openGuidanceTarget} />}
@@ -2368,8 +2470,9 @@ function Nav({ label, icon: Icon, active, href, select }: { label: string; icon:
   return <a className="nav" data-active={active} aria-current={active ? "page" : undefined} href={href} title={label} onClick={(event) => followAppLink(event, select)}><Icon /><span>{label}</span></a>;
 }
 
-function Capture({ state, current, select, commit, focusEditorKey }: { state: WorkspaceState; current: Location | null; select: (id: string) => void; commit: Commit; focusEditorKey: number | null }) {
+function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: { state: WorkspaceState; current: Location | null; select: (id: string) => void; commit: Commit; demoIntro: boolean; focusEditorKey: number | null }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  const [demoIntroDismissed, setDemoIntroDismissed] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [emptying, setEmptying] = useState(false);
   const [containerReview, setContainerReview] = useState<ContainerReview | null>(null);
@@ -2473,6 +2576,17 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
     });
     return () => cancelAnimationFrame(frame);
   }, [editorNavigationKey, focusEditorKey]);
+  useEffect(() => {
+    if (!demoIntro) return;
+    const timeout = setTimeout(() => {
+      editor.current?.scrollIntoView({
+        behavior: "auto",
+        block: "start",
+      });
+      editor.current?.focus({ preventScroll: true });
+    }, DEMO_ENTRY_FOCUS_DELAY_MS);
+    return () => clearTimeout(timeout);
+  }, [demoIntro]);
   useEffect(() => {
     if (!containerReview) return;
     const trigger = containerReviewTrigger.current;
@@ -2945,7 +3059,32 @@ function Capture({ state, current, select, commit, focusEditorKey }: { state: Wo
         </div>
       </div>;
     })}</div>{queueShown.length === 0 && <p className="muted queue-empty">{live.length === 0 ? "No containers yet. Add your first space below." : "No containers match this search."}</p>}{captureComplete ? <form key={`${current?.id ?? "root"}-top-level`} onSubmit={(event) => submitForm(event, addContainer)} className="nested"><h3>Add an unrelated top-level space</h3><LocationCreateFields defaultKind="room" existingCodes={live.map((location) => location.code)} kindLabel="Space type" namePlaceholder="Friendly name (e.g. garage)" /><input type="hidden" name="topLevel" value="on" /><button>Add top-level space</button></form> : <form key={current?.id ?? "root"} onSubmit={(event) => submitForm(event, addContainer)} className="nested"><LocationCreateFields defaultKind={current ? "box" : "room"} existingCodes={live.map((location) => location.code)} kindLabel="Container type" namePlaceholder={current ? "Friendly name (e.g. winter gear bin)" : "Friendly name (e.g. apartment)"} />{current && <label className="top-level"><input type="checkbox" name="topLevel" /> Add as another top-level space</label>}<button>{current ? `Add inside ${current.name}` : "Add first space"}</button></form>}</section>;
-  const capturePanel = <section className="panel capture-card" ref={editor} tabIndex={-1} aria-label={current ? `Capture inside ${current.name}` : "Capture editor"}>{current ? <><nav className="breadcrumbs" aria-label="Current container path">{breadcrumbs.map((location, index) => <span key={location.id}>{index > 0 && <i aria-hidden>›</i>}<button onClick={() => selectCaptureLocation(location.id)}>{location.code}</button></span>)}</nav><div className="title"><div><p className="eyebrow">Inside this container</p><h2>{current.code} · {current.name}</h2></div><span className="tag capture-status" data-status={current.captureStatus}><CaptureStatusIcon /><span>{current.captureStatus.replace("_", " ")}</span></span></div>{nextUncounted && <button className="capture-next-location" type="button" aria-label={`Open next unfinished location without changing ${current.name}: ${nextUncounted.code}, ${nextUncounted.name}`} onClick={() => selectCaptureLocation(nextUncounted.id)}><span>Next unfinished</span><strong>{nextUncounted.code} · {nextUncounted.name}</strong></button>}{captureComplete ? <div className="capture-locked" role="status"><CheckCircle2 /><span><strong>Capture is complete</strong><small>Reopen this space before adding, editing, or reordering its contents.</small></span></div> : <form key={current.id} className="quick" onSubmit={(event) => submitForm(event, addItem, true, '[name="name"]')}><label>Qty<input required type="number" min="0.01" step="any" name="quantity" defaultValue="1" /></label><label>Unit<input required name="unit" defaultValue="each" list="capture-units" /><datalist id="capture-units"><option value="each" /><option value="boxes" /><option value="bags" /><option value="cans" /><option value="pairs" /></datalist></label><label className="grow">What is it?<input required name="name" placeholder="e.g. winter gloves" /></label><button className="primary">Save & add next</button></form>}
+  const demoIntroPanel = demoIntro && !demoIntroDismissed
+    ? <aside
+        aria-label="Kitchen demo task"
+        className="capture-demo-intro"
+      >
+        <Info aria-hidden="true" />
+        <span>
+          <strong>{captureComplete ? "Keep exploring" : "Try one change"}</strong>
+          <small>{captureComplete
+            ? "This demo container is complete. Reopen it to make another change, or reset the kitchen from Workspaces."
+            : "Add a sample item below, choose Save & add next, then finish this container with Counted & next. Signed-in demos may back up online."}</small>
+          <a href={USER_GUIDE_URL} rel="noreferrer" target="_blank">
+            Open the step-by-step demo guide
+          </a>
+        </span>
+        <button
+          aria-label="Dismiss demo task"
+          className="icon small"
+          onClick={() => setDemoIntroDismissed(true)}
+          type="button"
+        >
+          <X />
+        </button>
+      </aside>
+    : null;
+  const capturePanel = <section className="panel capture-card" ref={editor} tabIndex={-1} aria-label={current ? `Capture inside ${current.name}` : "Capture editor"}>{current ? <><nav className="breadcrumbs" aria-label="Current container path">{breadcrumbs.map((location, index) => <span key={location.id}>{index > 0 && <i aria-hidden>›</i>}<button onClick={() => selectCaptureLocation(location.id)}>{location.code}</button></span>)}</nav><div className="title"><div><p className="eyebrow">Inside this container</p><h2>{current.code} · {current.name}</h2></div><span className="tag capture-status" data-status={current.captureStatus}><CaptureStatusIcon /><span>{current.captureStatus.replace("_", " ")}</span></span></div>{demoIntroPanel}{nextUncounted && <button className="capture-next-location" type="button" aria-label={`Open next unfinished location without changing ${current.name}: ${nextUncounted.code}, ${nextUncounted.name}`} onClick={() => selectCaptureLocation(nextUncounted.id)}><span>Next unfinished</span><strong>{nextUncounted.code} · {nextUncounted.name}</strong></button>}{captureComplete ? <div className="capture-locked" role="status"><CheckCircle2 /><span><strong>Capture is complete</strong><small>Reopen this space before adding, editing, or reordering its contents.</small></span></div> : <form key={current.id} className="quick" onSubmit={(event) => submitForm(event, addItem, true, '[name="name"]')}><label>Qty<input required type="number" min="0.01" step="any" name="quantity" defaultValue="1" /></label><label>Unit<input required name="unit" defaultValue="each" list="capture-units" /><datalist id="capture-units"><option value="each" /><option value="boxes" /><option value="bags" /><option value="cans" /><option value="pairs" /></datalist></label><label className="grow">What is it?<input required name="name" placeholder="e.g. winter gloves" /></label><button className="primary">Save & add next</button></form>}
       {nested.length > 0 && <div className="nested-list"><small>Nested containers</small>{nested.map((location) => <button key={location.id} onClick={() => selectCaptureLocation(location.id)}><b>{location.code}</b><span>{location.name}</span><small>{location.captureStatus.replace("_", " ")}</small></button>)}</div>}
       <div className="captured">{items.map((item, index) => {
         const validDrop = nativeReorderSource?.type === "item"
@@ -4725,7 +4864,7 @@ function Preferences({ state, commit, theme, setTheme, openMenu, returnTo, serve
       if (url) URL.revokeObjectURL(url);
     }
   };
-  return <div className="content settings"><section className="panel"><h2>Workspace</h2><form className="workspace-rename" onSubmit={(event) => submitForm(event, (data) => perform(commit, { type: "workspace.rename", name: String(data.get("workspaceName")) }), false)}><label>Workspace name<input required maxLength={80} name="workspaceName" defaultValue={state.workspace.name} /></label><button>Rename workspace</button></form><p className="muted">Switch workspaces, inspect backup status, or manage device copies.</p><a className="settings-workspaces-link" href={WORKSPACE_LIST_PATH} onClick={(event) => followAppLink(event, openMenu)}><Home /> Workspaces and backup status</a>{serverBacked && <a href={workspacePath({ view: "access", workspaceId: state.workspace.id, workspaceLabel: state.workspace.name })}>Workspace access</a>}<h2>Appearance</h2><div className="segments">{(["system", "light", "dark"] as const).map((entry) => <button aria-pressed={theme === entry} data-active={theme === entry} key={entry} onClick={() => setTheme(entry)}>{entry}</button>)}</div><h2>Backup & recovery</h2><p className="muted">Export a complete portable snapshot. Imports are validated and previewed before replacement.</p><button onClick={download}>Export JSON backup</button><a href="/recovery">Review sync issues or restore a backup</a><a href="/labels">Print text and QR labels</a></section><section className="panel"><h2>Account & server backup</h2><a href={`/account?workspace=${encodeURIComponent(state.workspace.id)}&returnTo=${encodeURIComponent(returnTo)}`}>Sign in or review this account</a><h2>Help & source</h2><a href="/docs/">Read the offline quick guide</a><a target="_blank" rel="noreferrer" href={process.env.NEXT_PUBLIC_REPOSITORY_URL || "https://github.com/j-256/stowplan"}>View source repository</a><p className="license">AGPL-3.0-only<br />Copyright © 2026 James Klein (j-256)</p></section></div>;
+  return <div className="content settings"><section className="panel"><h2>Workspace</h2><form className="workspace-rename" onSubmit={(event) => submitForm(event, (data) => perform(commit, { type: "workspace.rename", name: String(data.get("workspaceName")) }), false)}><label>Workspace name<input required maxLength={80} name="workspaceName" defaultValue={state.workspace.name} /></label><button>Rename workspace</button></form><p className="muted">Switch workspaces, inspect backup status, or manage device copies.</p><a className="settings-workspaces-link" href={WORKSPACE_LIST_PATH} onClick={(event) => followAppLink(event, openMenu)}><Home /> Workspaces and backup status</a>{serverBacked && <a href={workspacePath({ view: "access", workspaceId: state.workspace.id, workspaceLabel: state.workspace.name })}>Workspace access</a>}<h2>Appearance</h2><div className="segments">{(["system", "light", "dark"] as const).map((entry) => <button aria-pressed={theme === entry} data-active={theme === entry} key={entry} onClick={() => setTheme(entry)}>{entry}</button>)}</div><h2>Backup & recovery</h2><p className="muted">Export a complete portable snapshot. Imports are validated and previewed before replacement.</p><button onClick={download}>Export JSON backup</button><a href="/recovery">Review sync issues or restore a backup</a><a href="/labels">Print text and QR labels</a></section><section className="panel"><h2>Account & server backup</h2><a href={`/account?workspace=${encodeURIComponent(state.workspace.id)}&returnTo=${encodeURIComponent(returnTo)}`}>Sign in or review this account</a><h2>Help & source</h2><a target="_blank" rel="noreferrer" href={USER_GUIDE_URL}>Open full user guide</a><a href="/docs/">Read the offline quick guide</a><a target="_blank" rel="noreferrer" href={SOURCE_REPOSITORY_URL}>View source repository</a><p className="license">AGPL-3.0-only<br />Copyright © 2026 James Klein (j-256)</p></section></div>;
 }
 function Empty({ title, text }: { title: string; text: string }) {
   return <div className="empty"><b>□</b><h3>{title}</h3><p>{text}</p></div>;

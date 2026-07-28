@@ -17,6 +17,7 @@ import {
 } from "../../src/client/account-channel";
 import { AccountDeletion } from "../../src/client/account-deletion";
 import { AccountSessions } from "../../src/client/account-sessions";
+import { ACCOUNT_DATA_URL } from "../../src/client/external-links";
 import { GoogleSignIn } from "../../src/client/google-sign-in";
 import styles from "./account.module.css";
 
@@ -394,8 +395,14 @@ export default function Account() {
             </>
           : <>
               <p>{configured
-                ? "Sign in to back up this device and collaborate in workspaces where your account is a member. Global administration requires a separate database role and Cloudflare Access."
+                ? "Sign in to create or update the online backup of the workspace open in this browser and upload waiting changes from other local workspaces. Local copies remain in this browser. You can also collaborate in workspaces where your account is a member."
                 : "This deployment has no server database. Local organizing remains fully available; use the Node + SQLite or Cloudflare + D1 runbook to test server features."}</p>
+              {configured && <p className="muted">
+                Installation administrators can inspect and administer server-backed workspace data without workspace membership.{" "}
+                <a href={ACCOUNT_DATA_URL} rel="noreferrer" target="_blank">
+                  How Stowplan stores and administers online data
+                </a>
+              </p>}
               {providers.includes("development") && <form action={developmentSignIn} className="dev-signin">
                 <h2>Local development sign-in</h2>
                 <label>Name<input name="name" defaultValue="Local Owner" required /></label>

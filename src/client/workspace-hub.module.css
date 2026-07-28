@@ -38,6 +38,43 @@
   margin-left: auto;
 }
 
+.guideAction {
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+  justify-content: center;
+  padding: 0.65rem 0.9rem;
+  text-decoration: none;
+}
+
+.trial {
+  align-items: center;
+  background:
+    linear-gradient(135deg, var(--panel), var(--sage2));
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  box-shadow: var(--shadow);
+  display: flex;
+  gap: 1.5rem;
+  justify-content: space-between;
+  margin: 1.25rem 0;
+  padding: clamp(1rem, 4vw, 2rem);
+}
+
+.trial h2,
+.trial p:last-child {
+  margin-bottom: 0;
+}
+
+.trial p:last-child {
+  color: var(--muted);
+  line-height: 1.6;
+  max-width: 46rem;
+}
+
+.trial button {
+  flex: none;
+}
+
 .alert,
 .notice {
   align-items: center;
@@ -52,6 +89,7 @@
 
 .alert > span,
 .notice > span {
+  line-height: 1.45;
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -83,6 +121,15 @@
   display: grid;
   gap: 0.35rem;
   min-width: 0;
+}
+
+.toolbar[data-first-run="true"] {
+  display: block;
+}
+
+.toolbar[data-first-run="true"] form {
+  margin: 0 auto;
+  max-width: 46rem;
 }
 
 .toolbar label span {
@@ -254,6 +301,11 @@
     grid-row: 1;
   }
 
+  .guideAction {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
   .headerActions > button {
     grid-column: 1 / -1;
   }
@@ -264,6 +316,11 @@
 
   .toolbar form {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .trial {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .dialogActions {

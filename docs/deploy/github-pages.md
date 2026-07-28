@@ -13,7 +13,7 @@ DOCS_BASE=/stowplan/ npm run docs:build
 DOCS_BASE=/stowplan/ npm run docs:preview
 ```
 
-The base is derived from `github.event.repository.name`, and `DOCS_REPOSITORY_URL` is derived from the current GitHub repository, so forks and renamed repositories do not require a source edit. VitePress rewrites navigation, search assets, the favicon, styles, and JavaScript to that same subpath. The CI release gate separately builds both a project subpath and `/` to catch host-specific link regressions.
+The base is derived from `github.event.repository.name`, and `DOCS_REPOSITORY_URL` is derived from the current GitHub repository, so forks and renamed repositories do not require a source edit. Set the repository variable `DOCS_APPLICATION_URL` when the docs should send **Try Stowplan** to a different application origin. The docs build applies it to every direct demo link, and the build checker verifies those destinations. VitePress rewrites navigation, search assets, the favicon, styles, and JavaScript to the docs subpath. The CI release gate separately builds both a project subpath and `/` to catch host-specific link regressions.
 
 The repository includes an idempotent CLI path for the one-time Pages setting and later manual deployments:
 

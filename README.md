@@ -8,6 +8,8 @@
 
 A mobile-first, local-first organizer for rooms, cabinets, drawers, boxes, bins, and every container inside them. Label physical spaces, perform a fast first-pass count, search structured inventory, generate explainable move plans, and keep working through connectivity or server failures.
 
+[Try the ready-made kitchen](https://stowplan.jklein.dev/demo) or read the [user guide](https://j-256.github.io/stowplan/guide/getting-started). The demo needs no account and does not replace another workspace already stored in the browser.
+
 ## Why Stowplan
 
 - Container-first onboarding distinguishes uncounted, in-progress, known-empty, and counted spaces.
@@ -31,7 +33,7 @@ npm ci
 npm run dev
 ```
 
-Open the local URL and choose **Explore the kitchen demo**. Local organizing requires no provider credentials.
+Open the local URL and choose **Open kitchen demo**. Local organizing requires no provider credentials.
 
 `npm run dev` applies pending local D1 migrations first, so an existing `.wrangler/` database picks up schema added since it was created. Set `STOWPLAN_SKIP_DEV_MIGRATIONS=1` to start without touching the database; server-backed sign-in and sync need the current schema. To test Node-backed sync:
 

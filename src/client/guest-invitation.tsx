@@ -289,7 +289,8 @@ export function GuestInvitation({
         : account
           ? <p>
               Accepting as <strong>{account.displayName}</strong>{" "}
-              ({account.email}).
+              ({account.email}). Workspace owners will see this display
+              name and email after acceptance.
             </p>
           : <p>No account is signed in yet.</p>}
       {error && <p role="alert">{error}</p>}

@@ -14,6 +14,7 @@ import {
   workspaceHubCardMatches,
   type WorkspaceHubCard,
 } from "./workspace-hub-state";
+import { USER_GUIDE_URL } from "./external-links";
 import { ModalDialog } from "./modal-dialog";
 import styles from "./workspace-hub.module.css";
 
@@ -213,30 +214,45 @@ export function WorkspaceHub({
         ? "remote-backup-paused"
         : "optional-online"
       : null;
+  const firstRun = cards.length === 0 && !catalogLoading;
 
   return <main className={styles.hub}>
     <header>
       <div>
-        <p className="eyebrow">Device and server workspaces</p>
+        <p className="eyebrow">
+          {firstRun
+            ? "Organize one space at a time"
+            : "All your workspaces"}
+        </p>
         <h1 ref={headingRef} tabIndex={-1}>Your workspaces</h1>
-        <p>Open local work offline, discover authorized server workspaces after sign-in, and review backup state in one place.</p>
+        <p>{firstRun
+          ? "Try a ready-made kitchen or create a workspace for your own rooms, cabinets, drawers, boxes, and bins."
+          : "Open work saved in this browser, find shared workspaces after sign-in, and review backup status in one place."}</p>
       </div>
       <div className={styles.headerActions}>
         {currentId && onContinue &&
           <button className="primary" onClick={onContinue} type="button">
             Continue current workspace
           </button>}
-        <button
-          disabled={catalogLoading || !online || !signedIn}
-          onClick={() => void run(
-            "refresh",
-            onRefresh,
-            "Could not refresh server workspaces",
-          )}
-          type="button"
+        {signedIn && <button
+            disabled={catalogLoading || !online}
+            onClick={() => void run(
+              "refresh",
+              onRefresh,
+              "Could not refresh server workspaces",
+            )}
+            type="button"
+          >
+            {catalogLoading ? "Refreshing..." : "Refresh server list"}
+          </button>}
+        <a
+          className={styles.guideAction}
+          href={USER_GUIDE_URL}
+          rel="noreferrer"
+          target="_blank"
         >
-          {catalogLoading ? "Refreshing..." : "Refresh server list"}
-        </button>
+          User guide
+        </a>
         <AccountMenu
           accountState={accountState}
           className={styles.accountAction}
@@ -261,6 +277,25 @@ export function WorkspaceHub({
     >
       {catalogError}
     </HubMessage>}
+    {firstRun && <section className={styles.trial}>
+      <div>
+        <p className="eyebrow">Quick tour</p>
+        <h2>Try Stowplan with a ready-made kitchen</h2>
+        <p>No account is needed. Change anything. Signed-in demos use online backup; resetting a backed-up demo requires online owner access and deletes that demo&apos;s online copy.</p>
+      </div>
+      <button
+        className="primary"
+        disabled={busyId === "demo"}
+        onClick={() => void run(
+          "demo",
+          onOpenDemo,
+          "Could not open the kitchen demo",
+        )}
+        type="button"
+      >
+        Open kitchen demo
+      </button>
+    </section>}
     {onlineNotice === "device-only" &&
       onlineNotice !== dismissedOnlineNotice &&
       <HubMessage
@@ -279,7 +314,7 @@ export function WorkspaceHub({
         onDismiss={() => setDismissedOnlineNotice(onlineNotice)}
         role="status"
       >
-        <span>Remote backup and collaboration are optional. Sign in whenever you want to use them; local work stays on this device.</span>{" "}
+        <span>Remote backup and collaboration are optional. Signing in turns on online backup for the open workspace and sends other local changes waiting to upload; local copies stay in this browser.</span>{" "}
         <a href="/account?returnTo=%2Fworkspaces">Open Account</a>
       </HubMessage>}
     {onlineNotice === "remote-backup-paused" &&
@@ -294,8 +329,12 @@ export function WorkspaceHub({
         <a href="/account?returnTo=%2Fworkspaces">Sign in again</a>
       </HubMessage>}
 
-    <section className={styles.toolbar} aria-label="Workspace tools">
-      <label>
+    <section
+      className={styles.toolbar}
+      data-first-run={firstRun}
+      aria-label="Workspace tools"
+    >
+      {!firstRun && <label>
         <span>Search workspaces</span>
         <input
           onChange={(event) => setQuery(event.currentTarget.value)}
@@ -303,10 +342,10 @@ export function WorkspaceHub({
           type="search"
           value={query}
         />
-      </label>
+      </label>}
       <form onSubmit={createWorkspace}>
         <label>
-          <span>New device workspace</span>
+          <span>{firstRun ? "Your workspace name" : "New workspace"}</span>
           <input
             maxLength={80}
             onChange={(event) => setWorkspaceName(event.currentTarget.value)}
@@ -319,7 +358,7 @@ export function WorkspaceHub({
           Create
         </button>
       </form>
-      <button
+      {!firstRun && <button
         disabled={busyId === "demo"}
         onClick={() => void run(
           "demo",
@@ -329,7 +368,7 @@ export function WorkspaceHub({
         type="button"
       >
         Open kitchen demo
-      </button>
+      </button>}
     </section>
 
     <section className={styles.cards} aria-busy={catalogLoading}>
@@ -430,7 +469,7 @@ export function WorkspaceHub({
           </div>
         </article>;
       })}
-      {filtered.length === 0 && <p className={styles.empty}>
+      {filtered.length === 0 && !firstRun && <p className={styles.empty}>
         {cards.length === 0 && catalogLoading
           ? "Loading workspaces..."
           : cards.length === 0

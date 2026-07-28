@@ -1,44 +1,76 @@
-# Backup, import, and recovery
+# Backup and recovery
 
-Use **Settings → Export JSON backup** regularly and before migrations, bulk imports, or device cleanup. The file contains the complete workspace state, history, plans, and schema version; secrets and server sessions are excluded.
+Use backups for device loss, browser cleanup, major workspace changes, and refused online work. Activity is better for an ordinary recent mistake.
 
-## Before a workspace lifecycle action
+## Choose the right export
 
-Export before removing a replica from a device, leaving a shared workspace, or deleting its server copy. An ordinary JSON backup is a portable snapshot of the workspace. When pending or blocked commands exist, export the full recovery bundle from **Review sync issues or restore a backup** because it also contains the durable device queue and server refusal context.
+**Settings → Export JSON backup** saves a portable workspace snapshot, including its spaces, items, plans, and available history. It does not contain an app session or sign-in secret.
 
-Removing a replica from one device leaves the server workspace and membership unchanged. Leaving removes only the caller's membership and leaves the server workspace available to remaining members. Server deletion is owner-only, immediate, and not recoverable; it removes the server snapshot, memberships, and invite records. Leaving or deleting does not silently remove the device replica. The user can keep that replica read-only, export recovery data, or remove it as a separate choice.
+**Settings → Review sync issues or restore a backup → Export full recovery bundle** also includes changes waiting for upload, refused changes, and their errors. Use this version whenever the device and online copy disagree.
 
-An exported file is a user-held copy, not a server undelete service. Keep it somewhere outside the site data that the lifecycle action or browser cleanup will remove. See [Workspaces and collaboration](/guide/collaboration) for the guarded paths and final-owner rules.
+Save either file somewhere outside the browser or device whose data you are protecting.
 
-An import should be previewed before replacement. Validation checks the complete nested schema, IDs, quantities, conditions, constraints, duplicate codes, missing parents, parent cycles, item locations, plan references, history patches, and audit records. Treat warnings as review items and errors as blockers.
+## Recover refused or conflicting changes
 
-**Restore matching server & device** requires a signed-in workspace owner. After you choose a backup, Stowplan loads the matching authorized server workspace and shows that server revision's counts beside the incoming counts. Owner restore stays disabled if that comparison cannot be loaded. You must download the current server snapshot and explicitly confirm that you saved it before replacement unlocks. Immediately before committing, Stowplan reloads the server again; if its revision changed, the counts refresh, the saved-backup acknowledgment expires, and confirmation is cleared. The final write uses compare-and-swap so a concurrent edit stops the restore instead of being overwritten. The restored snapshot and its non-secret administrative audit record commit atomically; if the audit cannot be recorded, the restore does not commit.
+Open **Settings → Review sync issues or restore a backup**. The screen lists waiting and refused changes with the time and server message.
 
-The recovery screen uses the role and capabilities returned with the authorized server snapshot, even when that workspace has no replica on the device. A matching ID, an older local role, or the absence of a local replica never implies owner access. Server restore remains disabled while the signed-in account or its current owner capability is unknown. Editors and viewers can inspect and export an authorized comparison, but only an owner can replace the matching server workspace.
+Before changing anything, choose **Export full recovery bundle** and confirm that you saved the file. If your account can still read the online workspace, choose **Load authorized server copy** to compare without changing either copy.
 
-If the matching workspace already exists on this device, its separate counts and queued-change total are shown. Owner restore also requires an export of that exact device workspace plus an acknowledgment that the download was saved. A backup of some other currently open workspace does not unlock replacement. Both the matching workspace and the active workspace are checked again in the same IndexedDB transaction before local data changes.
+If your role permits edits, choose one of these guarded paths:
 
-**Open as separate local copy** works offline, assigns a fresh workspace id, preserves the currently active workspace, and initializes an independent server copy after a later sign-in. Use it for inspection or when you do not intend to replace the shared server workspace.
+- Type `REAPPLY` and choose **Reapply queued work on server copy** to rebuild unresolved device changes against the latest online copy. Work already accepted online is skipped.
+- Type `RESET` and choose **Reset this device to server copy** to discard the device queue and use the online version.
 
-## A blocked sync change
+Use `REAPPLY` when the local intent is still correct and authorized. Use `RESET` only when the online copy is the result you want and you have saved the recovery bundle.
 
-Open **Settings → Review sync issues or restore a backup**. The recovery screen exposes every pending or blocked command with its timestamp and server error. Before changing anything, export the full recovery bundle; unlike the ordinary workspace export, it contains the durable device queue too.
+If your role is now viewer or your membership ended, reset and reapply remain disabled. Keep the full recovery bundle, then either ask an owner to restore editor access or send a new invitation, or import the bundle and choose **Open as separate local copy** to preserve the device result as an independent workspace.
 
-The recovery uploader accepts either a portable workspace JSON export or a full `stowplan-recovery-v1` bundle. A full bundle's snapshot already includes the optimistic effects of its queued commands; the uploader verifies each queued command belongs to the workspace and is represented in activity or audit history before it allows recovery. It never silently replays that queue on top of the saved state.
+If validation, access, or a replayed change fails, Stowplan leaves the existing device copy in place and reports that nothing was changed.
 
-After signing in, **Load authorized server copy** is read-only. Download the full recovery bundle and confirm that you saved the file; starting a browser download alone does not unlock either destructive action. You then have two explicit choices:
+## Make routine backups
 
-- Type `REAPPLY` to rebuild only unresolved device commands with fresh field expectations on the current server copy. Commands already visible in server activity are skipped, so a lost response cannot duplicate them.
-- Type `RESET` to replace this device with the server copy and clear the local queue. Use this only after exporting the recovery bundle.
+Export before:
 
-Neither operation silently discards the current replica if validation or command replay fails.
+- clearing site data or uninstalling the app
+- removing a device copy that may be the only copy
+- leaving a shared workspace
+- deleting an online workspace
+- importing or restoring a different snapshot
+- attempting recovery of refused changes
 
-## Restore drill
+An exported file is a copy you control. It is not a server undelete service and does not preserve former memberships or invite links.
 
-1. Export production data and record its revision.
-2. Start an isolated local instance.
-3. Import and inspect the count comparison.
-4. Confirm several deeply nested locations, searches, plan steps, and activity records.
-5. Export again and compare structural counts.
+## Open a backup without replacing anything
 
-For D1, also use platform backups/time travel before remote migration. See the [Cloudflare runbook](/deploy/cloudflare#backup-restore-and-rollback).
+1. Open **Settings → Review sync issues or restore a backup**.
+2. Choose the JSON file.
+3. Review the validation report and the incoming workspace summary.
+4. Choose **Open as separate local copy**.
+
+This option gives the imported workspace a new identity, works offline, and leaves every existing device workspace unchanged. Use it to inspect a backup or recover its contents without replacing a shared workspace.
+
+## If this installation goes away
+
+Keep a portable JSON backup or full recovery bundle somewhere you control. Open **Recovery** on another trusted Stowplan installation, choose the file, review it, and choose **Open as separate local copy**.
+
+The imported copy receives a new workspace identity. Former memberships, invite links, and online backup do not move with it. Sign in to the new installation only after reviewing that installation's operator and data practices.
+
+## Restore a matching online workspace
+
+**Restore matching server & device** is available only to a signed-in owner. It replaces the matching online workspace and its matching device copy, so Stowplan requires several safeguards:
+
+1. Review the incoming and existing workspace summaries.
+2. Export the online workspace that would be replaced and confirm that you saved it.
+3. If a matching device copy exists, export its full recovery bundle too.
+4. Confirm the validation report.
+5. Choose **Restore matching server & device**.
+
+Immediately before replacement, Stowplan checks the online workspace again. If someone changed it during your review, the restore stops and refreshes the comparison instead of overwriting their work.
+
+Viewers and editors can inspect and export data they are allowed to read, but they cannot replace the matching online workspace.
+
+## After leaving or deletion
+
+Leaving a shared workspace or deleting its online copy does not silently erase the device copy. Stowplan offers to keep it read-only, export it, or remove it.
+
+Server workspace deletion is immediate and has no server undelete path. Read [Workspaces and sharing](/guide/collaboration) before choosing among the lifecycle actions.

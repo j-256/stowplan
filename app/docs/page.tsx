@@ -1,2 +1,53 @@
 import Link from "next/link";
-export default function InAppDocs(){const docsBase=process.env.NEXT_PUBLIC_DOCS_URL||"https://j-256.github.io/stowplan/";return <main className="admin-page"><header><div><p className="eyebrow">Offline quick guide</p><h1>Using Stowplan</h1></div><Link href="/">Back to organizer</Link></header><section><h2>1. Capture the physical truth</h2><p>Label a space, enter quantity + unit + item, add every nested container while you are looking at it, then mark the space counted. Use known empty only after checking it.</p></section><section><h2>2. Keep working offline</h2><p>Accepted changes are saved on this device before backup. The workspace home screen distinguishes device-only data from a successful online backup, shows the last backup time, and lists every pending or blocked change. Export before clearing browser data.</p></section><section><h2>3. Organize the hierarchy</h2><p>Spaces is the structural tree. Collapse branches or drag handles before, inside, or after another space; touch dragging and explicit parent controls are both supported. Inventory is the containerless all-items view, so ordering appears only after filtering it to one container.</p></section><section><h2>4. Correct mistakes safely</h2><p>Activity can undo or reapply one selected change, or undo/redo the latest N. Same-field conflicts stop for review instead of overwriting newer data.</p></section><section><h2>5. Switch, inspect, or remove workspaces</h2><p>Use the house icon or Settings → Workspaces and backup status. Each workspace card shows local and server state. Remove from this device never silently deletes a server copy, and warns when the device holds the only copy. Demo reset still replaces only that demo after confirmation.</p></section><section><h2>6. Test server administration</h2><p>The owner-only showcase has no server database. The full admin guide includes copy-and-paste Node + SQLite and local D1 test paths.</p><a href={`${docsBase.replace(/\/$/,"")}/guide/admin`}>Open the admin testing guide</a></section><section><h2>Full documentation</h2><p>The complete user, deployment, authentication, recovery, and maintainer guides are hosted independently on GitHub Pages and are available from the source repository.</p><a href={docsBase}>Open full documentation</a></section></main>}
+import {
+  FULL_DOCUMENTATION_URL,
+  USER_GUIDE_URL,
+} from "../../src/client/external-links";
+
+export default function InAppDocs() {
+  return <main className="admin-page">
+    <header>
+      <div>
+        <p className="eyebrow">Available offline</p>
+        <h1>Stowplan quick guide</h1>
+      </div>
+      <div>
+        <a
+          href={USER_GUIDE_URL}
+          rel="noreferrer"
+          target="_blank"
+        >
+          Open full user guide
+        </a>
+        <Link href="/">Back to organizer</Link>
+      </div>
+    </header>
+    <section>
+      <h2>Capture one space at a time</h2>
+      <p>Give a room, cabinet, drawer, box, or bin the same short ID as its physical label. Enter each distinct item as quantity, unit, and name. Add nested containers while you are looking at them, then choose <strong>Counted & next</strong> when the records are accurate enough to organize.</p>
+    </section>
+    <section>
+      <h2>Keep working without service</h2>
+      <p>Accepted changes are saved in this browser before online backup. A workspace already opened on this device stays available offline. Export before clearing browser data, uninstalling the app, or removing a device copy that may hold unsent work.</p>
+    </section>
+    <section>
+      <h2>Find and move things</h2>
+      <p>Use <strong>Spaces</strong> when you know the place and <strong>Inventory</strong> when you know the item. Search across the workspace, edit a record, or move all or part of its quantity. Reopen a counted space before changing what it contains.</p>
+    </section>
+    <section>
+      <h2>Correct a mistake</h2>
+      <p>Use <strong>Activity</strong> to undo or reapply a recent change. Stowplan stops an undo that would overwrite a newer edit to the same information. If online backup refuses local work, choose <strong>Review sync issues or restore a backup</strong> and export the full recovery bundle before resetting anything.</p>
+    </section>
+    <section>
+      <h2>Understand workspace actions</h2>
+      <p><strong>Remove from this device</strong> removes only this browser&apos;s copy. <strong>Leave shared workspace</strong> removes your membership. <strong>Delete server workspace</strong> permanently deletes the online copy and has no server undelete path.</p>
+    </section>
+    <section>
+      <h2>More help</h2>
+      <p>The full guide covers the kitchen demo, collaboration, backup states, recovery, account data, and every organizing view.</p>
+      <a href={FULL_DOCUMENTATION_URL} rel="noreferrer" target="_blank">
+        Open all documentation
+      </a>
+    </section>
+  </main>;
+}

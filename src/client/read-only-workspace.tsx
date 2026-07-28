@@ -8,6 +8,7 @@ import type {
   WorkspaceState,
 } from "../domain/types";
 import { workspacePath, type WorkspaceView } from "../domain/app-url";
+import { USER_GUIDE_URL } from "./external-links";
 import { ModalDialog } from "./modal-dialog";
 import styles from "./read-only-workspace.module.css";
 
@@ -507,7 +508,10 @@ function ReadOnlySettings({
       <a href="/recovery">Inspect sync issues and recovery options</a>
       <a href="/labels">Print text and QR labels</a>
       <h2>Help</h2>
-      <a href="/docs/">Read the offline guide</a>
+      <a href={USER_GUIDE_URL} rel="noreferrer" target="_blank">
+        Open full user guide
+      </a>
+      <a href="/docs/">Read the offline quick guide</a>
     </section>
   </div>;
 }

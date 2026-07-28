@@ -1,13 +1,43 @@
 # Spaces and inventory
 
-The hierarchy shown in **Capture** and **Spaces** is the structural truth: room → zone → cabinet → shelf → bin is valid, as is room → box → box. Stowplan prevents parent cycles and guards operations that affect a subtree.
+Use **Spaces** when you know the place you want to inspect. Use **Inventory** when you know the thing you want to find.
 
-Use conditions to describe storage, not items: food-safe, warm, humid, dry, dark, dimensions, and tags such as `easy-reach`. Use item constraints for requirements: avoid warmth, avoid humidity, food-only, required tags, and keep-together groups.
+## Find an item
 
-Every space can be renamed, recoded, retyped, moved to a different parent, reordered, dimensioned, archived, restored, or deleted after an exact subtree review. Capture and Spaces expose the same guarded hierarchy moves: drag a container over the top, middle, or bottom of another row to place it before, move it inside, or place it after, or use the root target to make it top-level. Both views can collapse branches without changing the saved structure. Touch dragging uses the same handle and drop cues, while Move dialogs and ordering controls provide accessible alternatives. Changing sibling display order remains available inside a completed parent because membership is unchanged. A move to another parent names every affected completed parent and requires confirmation before Stowplan atomically reopens those parents and completes the move.
+Open **Inventory** and search by name, category, tag, placement requirement, or note. The result shows the item's location path so you can follow the same room-to-container route in the physical world.
 
-On a phone, select a container in Capture to reveal a compact **Move** control. In Spaces, the selected row exposes **Earlier**, **Later**, **Edit details**, and **Move**. **Move** opens a focused dialog where you choose the parent and exact sibling position. If the move affects completed parents, the confirmation names them before anything changes. Direct jump controls above the stacked panels move between each hierarchy and its detail pane without making you scroll through both panes.
+Choose **Edit / move** to:
 
-**Inventory** is deliberately containerless by default. Search covers names, categories, tags, placement requirements, and notes across the whole workspace; sort by name, location path, or quantity. Tap **Edit / move** for a task-oriented editor: identity and amount first, structured organization second, optional placement and dimensions collapsed separately, and partial movement in its own placement card. Select several records for one explicit destination. Records already stored there stay put while the rest move, and a destination is disabled when every selected record is already there. Quantity moves split a record when only some units move and merge equivalent records at the destination. Reorder handles appear only after filtering Inventory to one container, where order has an unambiguous meaning.
+- change the everyday name, quantity, or unit
+- add categories, tags, frequency, or notes that improve later searches
+- record placement requirements only when they affect where the item may safely go
+- move all or part of the quantity to another space
+- delete the item record with confirmation
 
-Archive preserves history. Reviewed deletion is reserved for intentional removal of the entire location subtree and its item records.
+Select several records to move them to one destination together. Records already at that destination stay put. Moving a partial quantity creates a separate record at the destination; equivalent records combine.
+
+## Browse the physical hierarchy
+
+Open **Spaces** to follow rooms, zones, cabinets, shelves, boxes, bins, and containers. A hierarchy can be as simple or as deep as the physical layout requires.
+
+Select a space to inspect its details and direct contents. On a phone, the selected row exposes **Earlier**, **Later**, **Edit details**, and **Move**. The move dialog lets you choose the new parent and exact position without dragging.
+
+You can also drag a space before, inside, or after another row. Stowplan prevents a space from becoming its own parent or descendant.
+
+## Describe useful storage facts
+
+Space details can record conditions such as food safety, warmth, humidity, darkness, dimensions, and tags such as `easy-reach`. Item details can record requirements such as avoiding warmth, requiring food-safe storage, or staying with a group.
+
+Only record facts that help answer a question. Dimensions are useful when fit is uncertain; they are not a prerequisite for ordinary capture.
+
+## Keep completed spaces trustworthy
+
+Changing only the display order of siblings does not change what a completed parent contains. Moving a space to another parent does.
+
+When a move changes the membership of a counted or known-empty parent, Stowplan names each affected parent and asks before reopening it. The hierarchy move and those status changes happen together so the first-pass record does not claim more certainty than it has.
+
+## Archive or delete a space
+
+Archive a space when you want it out of ordinary views while preserving its history. Restore it later from the archived section.
+
+Delete only when the physical location and the records beneath it should be removed. Stowplan shows the affected subtree for review first. Deletion remains visible in **Activity** and can be undone while the needed history is available.

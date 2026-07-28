@@ -283,7 +283,7 @@ test(
     const serverName = `Server pantry ${safeBeta.namespace}`;
 
     await page.goto("/workspaces");
-    await page.getByLabel("New device workspace").fill(localName);
+    await page.getByLabel("Your workspace name").fill(localName);
     await page.getByRole("button", { exact: true, name: "Create" }).click();
     await expect(page.getByRole("heading", {
       exact: true,

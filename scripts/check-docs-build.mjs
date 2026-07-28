@@ -4,6 +4,11 @@ import path from "node:path";
 const output = path.resolve("docs/.vitepress/dist");
 const rawBase = process.env.DOCS_BASE ?? "/";
 const base = rawBase === "/" ? "/" : `/${rawBase.replace(/^\/+|\/+$/g, "")}/`;
+const applicationUrl = (
+  process.env.DOCS_APPLICATION_URL ||
+  "https://stowplan.jklein.dev"
+).replace(/\/+$/u, "");
+const demoUrl = `${applicationUrl}/demo`;
 
 async function filesBelow(directory) {
   const entries = await readdir(directory);
@@ -37,8 +42,18 @@ for (const file of files.filter((candidate) => candidate.endsWith(".html"))) {
   }
 }
 
+for (const relative of [
+  "index.html",
+  "guide/getting-started.html",
+]) {
+  const html = await readFile(path.join(output, relative), "utf8");
+  if (!html.includes(`href="${demoUrl}"`)) {
+    bad.push(`${relative}: direct demo link does not match ${demoUrl}`);
+  }
+}
+
 if (bad.length) {
-  throw new Error(`Documentation contains links outside ${base}:\n${bad.slice(0, 20).join("\n")}`);
+  throw new Error(`Documentation validation failed:\n${bad.slice(0, 20).join("\n")}`);
 }
 
 console.log(`Validated ${files.filter((file) => file.endsWith(".html")).length} documentation pages at ${base}.`);

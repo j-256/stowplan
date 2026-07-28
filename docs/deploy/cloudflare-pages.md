@@ -8,6 +8,7 @@ Dashboard settings:
 Build command: npm ci && npm run docs:build
 Build output directory: docs/.vitepress/dist
 Environment variable: DOCS_BASE=/
+Optional application link: DOCS_APPLICATION_URL=https://YOUR_STOWPLAN_ORIGIN
 Node version: 24.18.0
 ```
 

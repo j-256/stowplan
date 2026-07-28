@@ -21,6 +21,7 @@
 | `NEXT_PUBLIC_REPOSITORY_URL` | no | build/client | Quiet Help/About source link for forks |
 | `NEXT_PUBLIC_DOCS_URL` | no | build/client | Independently hosted full documentation link |
 | `DOCS_BASE` | docs build | build | `/repo/` for project Pages, `/` for root hosts |
+| `DOCS_APPLICATION_URL` | no | docs build | Application origin used by the docs site's direct demo links |
 | `DOCS_REPOSITORY_URL` | no | docs build | Source link; the Pages workflow derives it for forks |
 
 Commit only `.env.example`-style names and harmless defaults. OAuth secrets, session values, guest URLs, Access assertions, and exported production data are secrets.

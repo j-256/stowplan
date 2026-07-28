@@ -281,7 +281,7 @@ test("names a new workspace during first run", async ({ page }) => {
     "/account?returnTo=%2Fworkspaces",
   );
   await page.getByRole("textbox", {
-    name: "New device workspace",
+    name: "Your workspace name",
   }).fill("Jamie's apartment");
   await page.getByRole("button", { name: "Create" }).click();
 
@@ -418,6 +418,49 @@ test("names and links account-deletion workspace blockers", async ({
     workspaceId,
     workspaceLabel: workspaceName,
   }));
+});
+
+test("opens the kitchen demo directly without replacing another workspace", async ({
+  page,
+}) => {
+  await page.getByRole("textbox", {
+    name: "Your workspace name",
+  }).fill("Dana's move");
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page.getByRole("heading", {
+    exact: true,
+    name: "Capture",
+  })).toBeVisible();
+
+  await page.goto("/demo");
+  await expect(page.getByRole("heading", {
+    exact: true,
+    name: "Capture",
+  })).toBeVisible();
+  await expect(page).toHaveURL(
+    /\/workspaces\/kitchen-reset@ws_demo_[^/]+\/capture\/locations\/bx-09-appliance-parts@loc_box$/,
+  );
+  await expect(page.getByRole("heading", {
+    name: "BX-09 · Appliance parts",
+  })).toBeVisible();
+  await expect(page.getByText("Try one change", {
+    exact: true,
+  })).toBeVisible();
+  await expect(page.getByLabel("What is it?")).toBeVisible();
+  await expect(page.getByRole("link", {
+    name: "Open the step-by-step demo guide",
+  })).toHaveAttribute(
+    "href",
+    "https://j-256.github.io/stowplan/guide/getting-started",
+  );
+
+  await page.goto("/workspaces");
+  await expect(page.getByRole("heading", {
+    name: "Dana's move",
+  })).toBeVisible();
+  await expect(page.getByRole("heading", {
+    name: "Kitchen reset",
+  })).toBeVisible();
 });
 
 test("names label choices and toggles the complete selection", async ({ page }) => {
@@ -1373,11 +1416,11 @@ test("navigates every active surface with arrow keys while preserving native con
   })).toBe(true);
   expect(await page.evaluate(() => window.scrollY)).toBe(0);
   await page.keyboard.press("ArrowDown");
-  const adminGuide = page.getByRole("link", {
-    name: "Open the admin testing guide",
+  const fullGuide = page.getByRole("link", {
+    name: "Open full user guide",
   });
-  await expect(adminGuide).toBeFocused();
-  expect(await adminGuide.evaluate((element) => {
+  await expect(fullGuide).toBeFocused();
+  expect(await fullGuide.evaluate((element) => {
     const bounds = element.getBoundingClientRect();
     return bounds.top >= 0 && bounds.bottom <= innerHeight;
   })).toBe(true);
@@ -3901,10 +3944,9 @@ test("shows workspace backup state and removes only the device copy", async ({ p
     name: "Remove device copy",
   }).click();
   await expect(card).toHaveCount(0);
-  await expect(page.getByText(
-    "No workspaces yet. Create one above or open the kitchen demo.",
-    { exact: true },
-  )).toBeVisible();
+  await expect(page.getByRole("heading", {
+    name: "Try Stowplan with a ready-made kitchen",
+  })).toBeVisible();
 });
 
 test("removes an inactive device copy without switching the active workspace", async ({
@@ -3916,7 +3958,7 @@ test("removes an inactive device copy without switching the active workspace", a
   );
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await page.getByLabel("Workspaces and backup status").click();
-  await page.getByLabel("New device workspace").fill("Active workspace");
+  await page.getByLabel("New workspace").fill("Active workspace");
   await page.getByRole("button", {
     exact: true,
     name: "Create",
@@ -3974,7 +4016,7 @@ test("presents unavailable backup as device storage without crushing workspace t
   await page.evaluate(() => sessionStorage.clear());
   await page.reload();
 
-  await page.getByLabel("New device workspace").fill("Device home");
+  await page.getByLabel("Your workspace name").fill("Device home");
   await page.getByRole("button", { exact: true, name: "Create" }).click();
   await expect(page.getByRole("heading", {
     exact: true,
@@ -4023,7 +4065,7 @@ test("presents unavailable backup as device storage without crushing workspace t
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
   for (const control of [
     tools.getByLabel("Search workspaces"),
-    tools.getByLabel("New device workspace"),
+    tools.getByLabel("New workspace"),
     tools.getByRole("button", { exact: true, name: "Create" }),
     tools.getByRole("button", { name: "Open kitchen demo" }),
   ]) {
@@ -4046,7 +4088,7 @@ test("treats signed-out local backup as optional and dismisses its account hint"
   }));
   await page.reload();
 
-  await page.getByLabel("New device workspace").fill("Private device work");
+  await page.getByLabel("Your workspace name").fill("Private device work");
   await page.getByRole("button", { exact: true, name: "Create" }).click();
   await page.getByLabel("Friendly name").fill("Hall closet");
   await page.getByRole("button", { name: "Add first space" }).click();
@@ -4060,7 +4102,7 @@ test("treats signed-out local backup as optional and dismisses its account hint"
 
   await page.getByLabel("Workspaces and backup status").click();
   const optionalNotice = page.getByText(
-    "Remote backup and collaboration are optional. Sign in whenever you want to use them; local work stays on this device.",
+    "Remote backup and collaboration are optional. Signing in turns on online backup for the open workspace and sends other local changes waiting to upload; local copies stay in this browser.",
     { exact: true },
   );
   await expect(optionalNotice).toBeVisible();
@@ -4235,7 +4277,7 @@ test("does not label the active workspace as backing up while another workspace 
     await page.getByLabel("What is it?").fill("Background backup");
     await page.getByRole("button", { name: "Save & add next" }).click();
     await page.getByLabel("Workspaces and backup status").click();
-    await page.getByLabel("New device workspace").fill("Active workspace");
+    await page.getByLabel("New workspace").fill("Active workspace");
     await page.getByRole("button", { exact: true, name: "Create" }).click();
 
     await expect.poll(() => inactiveSyncObserved).toBe(true);

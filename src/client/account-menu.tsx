@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  BookOpen,
   CircleUserRound,
   LogIn,
   LogOut,
@@ -25,6 +26,7 @@ import {
   broadcastAccountChange,
   WORKSPACE_CHANNEL_NAME,
 } from "./account-channel";
+import { USER_GUIDE_URL } from "./external-links";
 
 export interface AccountMenuState {
   configured: boolean | null;
@@ -292,6 +294,15 @@ export function AccountMenu({
                   Sign in or connect
                 </a>
               </>}
+      <a
+        href={USER_GUIDE_URL}
+        onClick={() => setOpen(false)}
+        rel="noreferrer"
+        target="_blank"
+      >
+        <BookOpen aria-hidden="true" />
+        User guide
+      </a>
       {loadError && <p className="account-menu-error" role="alert">
         {loadError}
       </p>}
