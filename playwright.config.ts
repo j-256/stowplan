@@ -23,7 +23,10 @@ export default defineConfig({
   use: {
     baseURL: "https://localhost:3100",
     ignoreHTTPSErrors: true,
-    trace: "retain-on-failure",
+    // A retried run that eventually passes is reported as flaky but discarded by
+    // "retain-on-failure", which leaves intermittent failures with no evidence
+    // to diagnose. Keep the attempt that failed as well
+    trace: "retain-on-failure-and-retries",
   },
   webServer: {
     command:
