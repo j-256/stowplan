@@ -28,9 +28,6 @@ export default defineConfig({
         { text: "Offline & sync", link: "/guide/offline" }, { text: "Activity & rollback", link: "/guide/activity" },
         { text: "Backup & recovery", link: "/guide/recovery" }, { text: "Admin", link: "/guide/admin" },
       ]},
-      { text: "Manual QA", items: [
-        { text: "iPhone & iPad Safari", link: "/guide/safari-smoke" },
-      ]},
       { text: "Authentication", items: [
         { text: "Overview", link: "/auth/" }, { text: "Google OAuth", link: "/auth/google" },
         { text: "Cloudflare Access", link: "/auth/cloudflare-access" },
