@@ -281,6 +281,21 @@
   margin: 0;
 }
 
+.legal {
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+  justify-content: center;
+  margin-top: 2rem;
+  padding-top: 1rem;
+}
+
+.legal a {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
 .dialogActions {
   justify-content: flex-end;
 }

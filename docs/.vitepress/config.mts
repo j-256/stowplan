@@ -1,6 +1,7 @@
 import { defineConfig } from "vitepress";
 
 const DEMO_LINK_MARKER = "stowplan:demo";
+const PRIVACY_LINK_MARKER = "stowplan:privacy";
 const rawBase = process.env.DOCS_BASE ?? "/";
 const base = rawBase.startsWith("/") && rawBase.endsWith("/") ? rawBase : `/${rawBase.replace(/^\/+|\/+$/g, "")}/`;
 const applicationUrl = (
@@ -8,6 +9,10 @@ const applicationUrl = (
   "https://stowplan.jklein.dev"
 ).replace(/\/+$/u, "");
 const demoUrl = `${applicationUrl}/demo`;
+const privacyUrl = (
+  process.env.DOCS_PRIVACY_POLICY_URL ||
+  `${applicationUrl}/privacy`
+).replace(/\/+$/u, "");
 const repositoryUrl = process.env.DOCS_REPOSITORY_URL ?? "https://github.com/j-256/stowplan";
 
 export default defineConfig({
@@ -30,6 +35,10 @@ export default defineConfig({
       ) => {
         if (tokens[index].attrGet("href") === DEMO_LINK_MARKER) {
           tokens[index].attrSet("href", demoUrl);
+        } else if (
+          tokens[index].attrGet("href") === PRIVACY_LINK_MARKER
+        ) {
+          tokens[index].attrSet("href", privacyUrl);
         }
         return renderLinkOpen
           ? renderLinkOpen(
@@ -71,6 +80,7 @@ export default defineConfig({
       { text: "User guide", link: "/guide/getting-started" },
       { text: "Host and operate", link: "/deploy/" },
       { text: "Maintain", link: "/maintainers/architecture" },
+      { text: "Privacy", link: privacyUrl },
       { text: "Source", link: repositoryUrl },
     ],
     sidebar: [
@@ -84,6 +94,7 @@ export default defineConfig({
         { text: "Activity and undo", link: "/guide/activity" },
         { text: "Backup and recovery", link: "/guide/recovery" },
         { text: "Account, privacy, and data", link: "/guide/account-data" },
+        { text: "Privacy policy", link: privacyUrl },
       ] },
       { text: "Host and operate", items: [
         { text: "Deployment targets", link: "/deploy/" },
@@ -110,6 +121,6 @@ export default defineConfig({
     ],
     search: { provider: "local" },
     socialLinks: [{ icon: "github", link: repositoryUrl }],
-    footer: { message: "Released under AGPL-3.0-only", copyright: "Copyright © 2026 James Klein (j-256)" },
+    footer: { message: "A Strange Lasers project. Released under AGPL-3.0-only", copyright: "Copyright © 2026 James Klein (j-256)" },
   },
 });

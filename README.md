@@ -82,7 +82,7 @@ The GitHub Pages workflow deliberately builds and link-checks the docs under `/s
 
 ## Security and privacy
 
-Inventory is private application data. APIs are uncached and workspace-scoped; session values, provider tokens, Access assertions, guest URLs, secrets, and production exports must never be logged or committed. Read [SECURITY.md](SECURITY.md) before reporting a vulnerability.
+Inventory is private application data. APIs are uncached and workspace-scoped; session values, provider tokens, Access assertions, guest URLs, secrets, and production exports must never be logged or committed. Read the official hosted service's [privacy policy](https://stowplan.jklein.dev/privacy) and [SECURITY.md](SECURITY.md) before reporting a vulnerability.
 
 ## Contributing
 
@@ -90,4 +90,4 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md). Changes must
 
 ## License
 
-Stowplan is licensed under `AGPL-3.0-only`. Network operators of modified versions must offer the corresponding source for the running version. Copyright © 2026 James Klein (j-256).
+Stowplan is a Strange Lasers project. It is licensed under `AGPL-3.0-only`. Network operators of modified versions must offer the corresponding source for the running version. Copyright © 2026 James Klein (j-256).

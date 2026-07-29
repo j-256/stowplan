@@ -14,7 +14,11 @@ import {
   workspaceHubCardMatches,
   type WorkspaceHubCard,
 } from "./workspace-hub-state";
-import { USER_GUIDE_URL } from "./external-links";
+import {
+  PRIVACY_POLICY_URL,
+  SOURCE_REPOSITORY_URL,
+  USER_GUIDE_URL,
+} from "./external-links";
 import { ModalDialog } from "./modal-dialog";
 import styles from "./workspace-hub.module.css";
 
@@ -492,6 +496,11 @@ export function WorkspaceHub({
         Load more
       </button>
     </div>}
+
+    <footer className={styles.legal}>
+      <a href={PRIVACY_POLICY_URL}>Privacy policy</a>
+      <a href={SOURCE_REPOSITORY_URL}>Source</a>
+    </footer>
 
     <ModalDialog
       description={removeCard

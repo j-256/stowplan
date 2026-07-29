@@ -1,0 +1,165 @@
+.page {
+  margin: auto;
+  max-width: 940px;
+  padding: clamp(18px, 4vw, 48px);
+}
+
+.header,
+.footer {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 22px;
+  justify-content: space-between;
+}
+
+.header {
+  border-bottom: 1px solid var(--line);
+  margin-bottom: clamp(30px, 7vw, 72px);
+  padding-bottom: 16px;
+}
+
+.policy {
+  line-height: 1.7;
+}
+
+.policy > h1 {
+  margin-bottom: 8px;
+}
+
+.policy > p,
+.policy > section {
+  max-width: 780px;
+}
+
+.policy section {
+  margin-top: 42px;
+}
+
+.policy h2 {
+  font-size: 1.35rem;
+  margin-bottom: 12px;
+}
+
+.policy h3 {
+  font-size: 1rem;
+  margin: 24px 0 7px;
+}
+
+.policy p,
+.policy li {
+  color: var(--muted);
+}
+
+.policy p a,
+.policy li a {
+  display: inline;
+  min-height: 0;
+}
+
+.policy li::marker {
+  color: var(--clay);
+}
+
+.effective {
+  font: 600 12px "DM Mono", monospace;
+}
+
+.tableWrap {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  margin: 18px 0;
+  overflow-x: auto;
+}
+
+.tableWrap table {
+  border-collapse: collapse;
+  min-width: 660px;
+  width: 100%;
+}
+
+.tableWrap th,
+.tableWrap td {
+  border-bottom: 1px solid var(--line);
+  padding: 12px 14px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.tableWrap th {
+  background: var(--sage2);
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.tableWrap tr:last-child td {
+  border-bottom: 0;
+}
+
+.footer {
+  border-top: 1px solid var(--line);
+  margin-top: clamp(40px, 8vw, 80px);
+  padding-top: 18px;
+}
+
+@media (max-width: 560px) {
+  .header,
+  .footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .tableWrap {
+    border: 0;
+    overflow: visible;
+  }
+
+  .tableWrap table,
+  .tableWrap tbody,
+  .tableWrap tr,
+  .tableWrap td {
+    display: block;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .tableWrap thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .tableWrap tbody {
+    display: grid;
+    gap: 10px;
+  }
+
+  .tableWrap tr {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  .tableWrap td {
+    display: grid;
+    grid-template-columns: 74px minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .tableWrap td::before {
+    color: var(--ink);
+    content: attr(data-label);
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .tableWrap td:last-child {
+    border-bottom: 0;
+  }
+}

@@ -463,6 +463,50 @@ test("opens the kitchen demo directly without replacing another workspace", asyn
   })).toBeVisible();
 });
 
+test("publishes the hosted service privacy policy", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("main").getByRole("link", {
+    name: "Privacy policy",
+  })).toHaveAttribute(
+    "href",
+    "https://stowplan.jklein.dev/privacy",
+  );
+  await page.goto("/privacy");
+  await expect(page.getByRole("heading", {
+    exact: true,
+    name: "Privacy policy",
+  })).toBeVisible();
+  await expect(page.getByText("Effective July 28, 2026")).toBeVisible();
+  await expect(page.getByText(
+    "Strange Lasers operates this service.",
+  )).toBeVisible();
+  await expect(page.getByRole("heading", {
+    name: "Browser storage and cookies",
+  })).toBeVisible();
+  await expect(page.getByRole("link", {
+    name: "privacy@strangelasers.com",
+  }).first()).toHaveAttribute(
+    "href",
+    "mailto:privacy@strangelasers.com",
+  );
+  await expect(page.getByRole("link", {
+    name: "Return to Stowplan",
+  })).toHaveAttribute("href", "/");
+  expect(await page.evaluate(
+    () => document.documentElement.scrollWidth <= window.innerWidth,
+  )).toBe(true);
+  const accessibility = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa"])
+    .analyze();
+  expect(
+    accessibility.violations.filter(
+      violation =>
+        violation.impact === "critical" ||
+        violation.impact === "serious",
+    ),
+  ).toEqual([]);
+});
+
 test("names label choices and toggles the complete selection", async ({ page }) => {
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await expect(page.getByRole("heading", {
@@ -1122,6 +1166,12 @@ test("keeps account and administration controls easy to find", async ({
   await expect(userMenu.getByRole("link", {
     name: "Administration",
   })).toHaveCount(0);
+  await expect(userMenu.getByRole("link", {
+    name: "Privacy policy",
+  })).toHaveAttribute(
+    "href",
+    "https://stowplan.jklein.dev/privacy",
+  );
   const accessibility = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa"])
     .analyze();
@@ -1407,20 +1457,20 @@ test("navigates every active surface with arrow keys while preserving native con
     window.scrollTo(0, 0);
   });
   await page.keyboard.press("ArrowDown");
-  const back = page.getByRole("link", { name: "Back to organizer" });
-  await expect(back).toBeFocused();
-  expect(await back.evaluate((element) => {
+  const fullGuide = page.getByRole("link", {
+    name: "Open full user guide",
+  });
+  await expect(fullGuide).toBeFocused();
+  expect(await fullGuide.evaluate((element) => {
     const styles = getComputedStyle(element);
     return Number.parseFloat(styles.outlineWidth) > 0 &&
       styles.outlineStyle !== "none";
   })).toBe(true);
   expect(await page.evaluate(() => window.scrollY)).toBe(0);
   await page.keyboard.press("ArrowDown");
-  const fullGuide = page.getByRole("link", {
-    name: "Open full user guide",
-  });
-  await expect(fullGuide).toBeFocused();
-  expect(await fullGuide.evaluate((element) => {
+  const back = page.getByRole("link", { name: "Back to organizer" });
+  await expect(back).toBeFocused();
+  expect(await back.evaluate((element) => {
     const bounds = element.getBoundingClientRect();
     return bounds.top >= 0 && bounds.bottom <= innerHeight;
   })).toBe(true);

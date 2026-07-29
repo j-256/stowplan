@@ -3,6 +3,7 @@
 import {
   BookOpen,
   CircleUserRound,
+  LockKeyhole,
   LogIn,
   LogOut,
   ShieldCheck,
@@ -26,7 +27,10 @@ import {
   broadcastAccountChange,
   WORKSPACE_CHANNEL_NAME,
 } from "./account-channel";
-import { USER_GUIDE_URL } from "./external-links";
+import {
+  PRIVACY_POLICY_URL,
+  USER_GUIDE_URL,
+} from "./external-links";
 
 export interface AccountMenuState {
   configured: boolean | null;
@@ -302,6 +306,13 @@ export function AccountMenu({
       >
         <BookOpen aria-hidden="true" />
         User guide
+      </a>
+      <a
+        href={PRIVACY_POLICY_URL}
+        onClick={() => setOpen(false)}
+      >
+        <LockKeyhole aria-hidden="true" />
+        Privacy policy
       </a>
       {loadError && <p className="account-menu-error" role="alert">
         {loadError}

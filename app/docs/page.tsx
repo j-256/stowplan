@@ -1,6 +1,7 @@
 import Link from "next/link";
 import {
   FULL_DOCUMENTATION_URL,
+  PRIVACY_POLICY_URL,
   USER_GUIDE_URL,
 } from "../../src/client/external-links";
 
@@ -47,6 +48,9 @@ export default function InAppDocs() {
       <p>The full guide covers the kitchen demo, collaboration, backup states, recovery, account data, and every organizing view.</p>
       <a href={FULL_DOCUMENTATION_URL} rel="noreferrer" target="_blank">
         Open all documentation
+      </a>
+      <a href={PRIVACY_POLICY_URL}>
+        Read the privacy policy
       </a>
     </section>
   </main>;

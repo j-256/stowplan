@@ -17,7 +17,10 @@ import {
 } from "../../src/client/account-channel";
 import { AccountDeletion } from "../../src/client/account-deletion";
 import { AccountSessions } from "../../src/client/account-sessions";
-import { ACCOUNT_DATA_URL } from "../../src/client/external-links";
+import {
+  ACCOUNT_DATA_URL,
+  PRIVACY_POLICY_URL,
+} from "../../src/client/external-links";
 import { GoogleSignIn } from "../../src/client/google-sign-in";
 import styles from "./account.module.css";
 
@@ -397,12 +400,15 @@ export default function Account() {
               <p>{configured
                 ? "Sign in to create or update the online backup of the workspace open in this browser and upload waiting changes from other local workspaces. Local copies remain in this browser. You can also collaborate in workspaces where your account is a member."
                 : "This deployment has no server database. Local organizing remains fully available; use the Node + SQLite or Cloudflare + D1 runbook to test server features."}</p>
-              {configured && <p className="muted">
-                Installation administrators can inspect and administer server-backed workspace data without workspace membership.{" "}
+              {configured && <div className={styles.dataDisclosure}>
+                <p>Installation administrators can inspect and administer server-backed workspace data without workspace membership.</p>
                 <a href={ACCOUNT_DATA_URL} rel="noreferrer" target="_blank">
                   How Stowplan stores and administers online data
                 </a>
-              </p>}
+                <a href={PRIVACY_POLICY_URL}>
+                  Privacy policy
+                </a>
+              </div>}
               {providers.includes("development") && <form action={developmentSignIn} className="dev-signin">
                 <h2>Local development sign-in</h2>
                 <label>Name<input name="name" defaultValue="Local Owner" required /></label>

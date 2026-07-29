@@ -13,4 +13,4 @@ The domain, planner, command/history engine, sync protocol, and `SnapshotStore` 
 
 The documentation site is independent: GitHub Pages is canonical and costs no Worker requests; Cloudflare Pages or any static host is compatible.
 
-Every deployment needs HTTPS in production because session cookies are `Secure`. Persist the database, set `AUTH_BASE_URL`, configure at least one identity adapter, and test `/api/health`, login, local capture, sync, export, and admin access before inviting users.
+Every deployment needs HTTPS in production because session cookies are `Secure`. Persist the database, set `AUTH_BASE_URL`, configure at least one identity adapter, publish an operator-specific privacy policy, and test `/api/health`, login, local capture, sync, export, and admin access before inviting users. The included official-host policy is not reusable by another operator because infrastructure, retention, contact details, and legal responsibilities differ.

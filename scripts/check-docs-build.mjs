@@ -9,6 +9,10 @@ const applicationUrl = (
   "https://stowplan.jklein.dev"
 ).replace(/\/+$/u, "");
 const demoUrl = `${applicationUrl}/demo`;
+const privacyUrl = (
+  process.env.DOCS_PRIVACY_POLICY_URL ||
+  `${applicationUrl}/privacy`
+).replace(/\/+$/u, "");
 
 async function filesBelow(directory) {
   const entries = await readdir(directory);
@@ -49,6 +53,16 @@ for (const relative of [
   const html = await readFile(path.join(output, relative), "utf8");
   if (!html.includes(`href="${demoUrl}"`)) {
     bad.push(`${relative}: direct demo link does not match ${demoUrl}`);
+  }
+}
+
+for (const relative of [
+  "index.html",
+  "guide/account-data.html",
+]) {
+  const html = await readFile(path.join(output, relative), "utf8");
+  if (!html.includes(`href="${privacyUrl}"`)) {
+    bad.push(`${relative}: privacy policy link does not match ${privacyUrl}`);
   }
 }
 

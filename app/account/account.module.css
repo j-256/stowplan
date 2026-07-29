@@ -90,6 +90,17 @@
   gap: 8px;
 }
 
+.dataDisclosure {
+  border-block: 1px solid var(--line);
+  margin-block: 20px;
+  padding-block: 16px;
+}
+
+.dataDisclosure > p {
+  color: var(--muted);
+  line-height: 1.55;
+}
+
 @media (max-width: 540px) {
   .guestActions {
     grid-template-columns: 1fr;

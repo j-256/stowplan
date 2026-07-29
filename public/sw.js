@@ -1,4 +1,4 @@
-const CACHE = "stowplan-shell-v9";
+const CACHE = "stowplan-shell-v10";
 const CACHE_PREFIX = "stowplan-shell-";
 const SHELL = [
   "/",
@@ -8,6 +8,7 @@ const SHELL = [
   "/labels",
   "/recovery",
   "/offline",
+  "/privacy",
   "/manifest.webmanifest",
   "/favicon.svg",
   "/icon-192.png",

@@ -25,6 +25,6 @@ features:
 
 The demo creates a ready-made kitchen workspace so you can capture an item, inspect a cabinet, search the inventory, and try a move plan without setting anything up. When you are ready to organize your own space, the [getting-started guide](/guide/getting-started) follows the same path with the labels you have on hand.
 
-Stowplan works without an account. Signing in keeps the browser copy and can add an online server copy for backup and sharing. Authorized workspace members, installation administrators, and the host may be able to access that server copy. Read [Account, privacy, and data](/guide/account-data) before using online features.
+Stowplan works without an account. Signing in keeps the browser copy and can add an online server copy for backup and sharing. Authorized workspace members, installation administrators, and the host may be able to access that server copy. Read [Account, privacy, and data](/guide/account-data) and the hosted service's [privacy policy](stowplan:privacy) before using online features.
 
 Want to run Stowplan for a household, team, or community? Start with [Host and operate](/deploy/). Technical design, API, testing, and contributor material live under [Maintain](/maintainers/architecture).

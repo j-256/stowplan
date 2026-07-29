@@ -26,6 +26,7 @@ jobs:
         env:
           DOCS_APPLICATION_URL: ${{ vars.DOCS_APPLICATION_URL }}
           DOCS_BASE: /${{ github.event.repository.name }}/
+          DOCS_PRIVACY_POLICY_URL: ${{ vars.DOCS_PRIVACY_POLICY_URL }}
           DOCS_REPOSITORY_URL: ${{ github.server_url }}/${{ github.repository }}
       - uses: actions/upload-pages-artifact@v5
         with:

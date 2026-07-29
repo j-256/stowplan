@@ -20,8 +20,10 @@
 | `AUTH_DEV_ALLOWED_HOSTS` | isolated development only | server | Optional comma-separated extra hostnames for development authentication; the production hostname remains forbidden |
 | `NEXT_PUBLIC_REPOSITORY_URL` | no | build/client | Quiet Help/About source link for forks |
 | `NEXT_PUBLIC_DOCS_URL` | no | build/client | Independently hosted full documentation link |
+| `NEXT_PUBLIC_PRIVACY_POLICY_URL` | public deployment | build/client | Privacy policy linked from the app and sign-in surface |
 | `DOCS_BASE` | docs build | build | `/repo/` for project Pages, `/` for root hosts |
 | `DOCS_APPLICATION_URL` | no | docs build | Application origin used by the docs site's direct demo links |
+| `DOCS_PRIVACY_POLICY_URL` | public deployment | docs build | Privacy policy linked from documentation; defaults to `/privacy` on `DOCS_APPLICATION_URL` |
 | `DOCS_REPOSITORY_URL` | no | docs build | Source link; the Pages workflow derives it for forks |
 
 Commit only `.env.example`-style names and harmless defaults. OAuth secrets, session values, guest URLs, Access assertions, and exported production data are secrets.
@@ -47,3 +49,5 @@ Sites reads its binding name from `.openai/hosting.json`; keep it aligned with t
 `cloudflare/access.json` and `cloudflare/edge-rules.json` contain portable desired state without account, zone, application, policy, identity-provider, or audience IDs. The reconciliation scripts discover those IDs through authenticated API reads.
 
 The client receives only `NEXT_PUBLIC_*` values. Adding that prefix to a secret permanently exposes it in built JavaScript.
+
+Every public operator must publish a policy that identifies that operator and accurately describes the chosen host, authentication provider, browser storage, server data, service providers, retention, deletion, user rights, and contact route. Set `NEXT_PUBLIC_PRIVACY_POLICY_URL` and `DOCS_PRIVACY_POLICY_URL` to that policy. The policy included at `stowplan.jklein.dev/privacy` covers only the official hosted service and is not a policy for forks.

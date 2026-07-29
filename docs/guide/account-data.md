@@ -2,7 +2,7 @@
 
 You can use Stowplan without an account. Signing in adds online backup and sharing, but it also sends workspace data to the installation's server. This page explains that choice in terms of what is stored, who can access it, and what removal actions do.
 
-This describes the behavior built into Stowplan. If you use an installation run by someone else, that operator also controls its infrastructure, backups, access policy, and published privacy terms.
+This describes the behavior built into Stowplan. The official hosted service publishes its [privacy policy](stowplan:privacy). If you use an installation run by someone else, that operator also controls its infrastructure, backups, access policy, and published privacy terms.
 
 ## Device-only and signed-in use
 
