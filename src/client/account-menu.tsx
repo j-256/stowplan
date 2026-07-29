@@ -6,6 +6,7 @@ import {
   LockKeyhole,
   LogIn,
   LogOut,
+  ScrollText,
   ShieldCheck,
   UserRound,
 } from "lucide-react";
@@ -29,6 +30,7 @@ import {
 } from "./account-channel";
 import {
   PRIVACY_POLICY_URL,
+  TERMS_OF_SERVICE_URL,
   USER_GUIDE_URL,
 } from "./external-links";
 
@@ -313,6 +315,13 @@ export function AccountMenu({
       >
         <LockKeyhole aria-hidden="true" />
         Privacy policy
+      </a>
+      <a
+        href={TERMS_OF_SERVICE_URL}
+        onClick={() => setOpen(false)}
+      >
+        <ScrollText aria-hidden="true" />
+        Terms of Service
       </a>
       {loadError && <p className="account-menu-error" role="alert">
         {loadError}

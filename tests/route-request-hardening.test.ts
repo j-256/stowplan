@@ -8,6 +8,10 @@ import {
   GUEST_INVITATION_RETURN_TO_MAX_CHARACTERS,
   GUEST_INVITATION_TOKEN_MAX_CHARACTERS,
 } from "../src/domain/app-url";
+import {
+  CURRENT_TERMS_VERSION,
+  SESSION_PERSISTENCE,
+} from "../src/shared/terms";
 
 const mocks = vi.hoisted(() => ({
   adminMutation: vi.fn(),
@@ -20,6 +24,9 @@ const mocks = vi.hoisted(() => ({
   markSessionReauthenticated: vi.fn(),
   provider: vi.fn(),
   runtimeEnv: vi.fn(),
+  sessionCookie: vi.fn(
+    () => "__Host-stowplan_session=test",
+  ),
   verifyAccess: vi.fn(),
 }));
 
@@ -38,7 +45,7 @@ vi.mock("../src/server/auth", async (importOriginal) => ({
   issueSession: mocks.issueSession,
   markSessionReauthenticated: mocks.markSessionReauthenticated,
   provider: mocks.provider,
-  sessionCookie: vi.fn(() => "__Host-stowplan_session=test"),
+  sessionCookie: mocks.sessionCookie,
   verifyAccess: mocks.verifyAccess,
 }));
 
@@ -195,6 +202,9 @@ describe("private route request hardening", () => {
           subject: "provider-subject",
         },
         returnTo: "/account",
+        sessionPersistence:
+          SESSION_PERSISTENCE.BROWSER_SESSION,
+        termsVersion: CURRENT_TERMS_VERSION,
       });
       mocks.createOrLinkUser.mockRejectedValueOnce(
         new ApiProblem(
@@ -223,6 +233,58 @@ describe("private route request hardening", () => {
       }
     },
   );
+
+  it("records the bound Terms version and applies the bound cookie persistence", async () => {
+    mocks.finishOAuth.mockResolvedValueOnce({
+      intent: "sign-in",
+      linkIntent: null,
+      profile: {
+        displayName: "New user",
+        email: "new-user@example.com",
+        provider: "google",
+        subject: "new-user-google",
+      },
+      returnTo: "/account",
+      sessionPersistence:
+        SESSION_PERSISTENCE.BROWSER_SESSION,
+      termsVersion: CURRENT_TERMS_VERSION,
+    });
+    mocks.createOrLinkUser.mockResolvedValueOnce({
+      displayName: "New user",
+      email: "new-user@example.com",
+      expiresAt: "",
+      globalRole: "user",
+      userId: "usr_new",
+    });
+    mocks.issueSession.mockResolvedValueOnce({
+      maxAge: 2_592_000,
+      raw: "opaque-session",
+      replacedSessionIds: [],
+      sessionId: "ses_new",
+    });
+    const response = await getOAuthCallback(
+      new Request(
+        `https://stowplan.test/api/auth/google/callback?state=${"d".repeat(64)}&code=code`,
+      ),
+      { params: Promise.resolve({ provider: "google" }) },
+    );
+
+    expect(response.status).toBe(302);
+    expect(mocks.createOrLinkUser).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({
+        provider: "google",
+        subject: "new-user-google",
+      }),
+      { termsVersion: CURRENT_TERMS_VERSION },
+    );
+    expect(mocks.sessionCookie).toHaveBeenCalledWith(
+      "opaque-session",
+      2_592_000,
+      SESSION_PERSISTENCE.BROWSER_SESSION,
+    );
+  });
 
   it("marks only the exact current session after subject-bound Google reauthentication", async () => {
     mocks.provider.mockReturnValueOnce({

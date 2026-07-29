@@ -135,6 +135,36 @@ test("renders the privacy policy route", async () => {
   assert.match(html, /privacy@strangelasers\.com/);
 });
 
+test("renders the Terms of Service route", async () => {
+  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
+  workerUrl.searchParams.set("terms-route-test", `${process.pid}-${Date.now()}`);
+  const { default: worker } = await import(workerUrl.href);
+  const response = await worker.fetch(
+    new Request("http://localhost/terms", {
+      headers: { accept: "text/html" },
+    }),
+    {
+      ASSETS: {
+        fetch: async () => new Response("Not found", { status: 404 }),
+      },
+    },
+    {
+      waitUntil() {},
+      passThroughOnException() {},
+    },
+  );
+
+  assert.equal(response.status, 200);
+  assert.match(
+    response.headers.get("content-type") ?? "",
+    /^text\/html\b/i,
+  );
+  const html = await response.text();
+  assert.match(html, /Terms of Service/);
+  assert.match(html, /Strange Lasers/);
+  assert.match(html, /legal@strangelasers\.com/);
+});
+
 test("passes the Sites D1 binding from the Worker environment to server routes", async () => {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("sites-binding-test", `${process.pid}-${Date.now()}`);
@@ -193,6 +223,7 @@ test("keeps private APIs out of the service-worker cache and ships install icons
   assert.match(worker, /SHELL\.includes\(withoutTrailingSlash\)/);
   assert.match(worker, /"\/demo"/);
   assert.match(worker, /"\/privacy"/);
+  assert.match(worker, /"\/terms"/);
   const manifest = JSON.parse(readFileSync(new URL("../public/manifest.webmanifest", import.meta.url), "utf8"));
   assert.deepEqual(manifest.icons.slice(0, 2).map((icon) => icon.sizes), ["192x192", "512x512"]);
 });

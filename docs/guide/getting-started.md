@@ -58,7 +58,7 @@ A counted or known-empty space is read-only so later edits cannot silently make 
 
 ## Continue from another device
 
-You can use Stowplan entirely on one device without an account. Signing in creates or updates an online copy of the open workspace and also attempts to upload waiting changes from other local workspaces. Read [Account, privacy, and data](/guide/account-data) before choosing online backup.
+You can use Stowplan entirely on one device without an account. Signing in creates or updates an online copy of the open workspace and also attempts to upload waiting changes from other local workspaces. Read [Account, privacy, and data](/guide/account-data) and the installation's legal terms before choosing online backup.
 
 For a shared workspace, the owner sends an invite link. Open it, sign in if needed, review the offered role, and choose **Accept invitation**. See [Workspaces and sharing](/guide/collaboration) for roles, invitations, and leaving.
 

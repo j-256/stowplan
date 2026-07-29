@@ -678,7 +678,7 @@ test("opens the kitchen demo directly without replacing another workspace", asyn
   })).toBeVisible();
 });
 
-test("publishes the hosted service privacy policy", async ({ page }) => {
+test("publishes the hosted service legal policies", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("main").getByRole("link", {
     name: "Privacy policy",
@@ -686,12 +686,18 @@ test("publishes the hosted service privacy policy", async ({ page }) => {
     "href",
     "https://stowplan.jklein.dev/privacy",
   );
+  await expect(page.getByRole("main").getByRole("link", {
+    name: "Terms of Service",
+  })).toHaveAttribute(
+    "href",
+    "https://stowplan.jklein.dev/terms",
+  );
   await page.goto("/privacy");
   await expect(page.getByRole("heading", {
     exact: true,
     name: "Privacy policy",
   })).toBeVisible();
-  await expect(page.getByText("Effective July 28, 2026")).toBeVisible();
+  await expect(page.getByText("Effective July 29, 2026")).toBeVisible();
   await expect(page.getByText(
     "Strange Lasers operates this service.",
   )).toBeVisible();
@@ -715,6 +721,38 @@ test("publishes the hosted service privacy policy", async ({ page }) => {
     .analyze();
   expect(
     accessibility.violations.filter(
+      violation =>
+        violation.impact === "critical" ||
+        violation.impact === "serious",
+    ),
+  ).toEqual([]);
+
+  await page.goto("/terms");
+  await expect(page.getByRole("heading", {
+    exact: true,
+    name: "Terms of Service",
+  })).toBeVisible();
+  await expect(page.getByText("Effective July 29, 2026")).toBeVisible();
+  await expect(page.getByText(
+    "Strange Lasers operates this service.",
+  )).toBeVisible();
+  await expect(page.getByRole("link", {
+    name: "legal@strangelasers.com",
+  }).first()).toHaveAttribute(
+    "href",
+    "mailto:legal@strangelasers.com",
+  );
+  await expect(page.getByRole("link", {
+    name: "Return to Stowplan",
+  })).toHaveAttribute("href", "/");
+  expect(await page.evaluate(
+    () => document.documentElement.scrollWidth <= window.innerWidth,
+  )).toBe(true);
+  const termsAccessibility = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa"])
+    .analyze();
+  expect(
+    termsAccessibility.violations.filter(
       violation =>
         violation.impact === "critical" ||
         violation.impact === "serious",
@@ -2041,6 +2079,12 @@ test("keeps account and administration controls easy to find", async ({
   })).toHaveAttribute(
     "href",
     "https://stowplan.jklein.dev/privacy",
+  );
+  await expect(userMenu.getByRole("link", {
+    name: "Terms of Service",
+  })).toHaveAttribute(
+    "href",
+    "https://stowplan.jklein.dev/terms",
   );
   const accessibility = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa"])

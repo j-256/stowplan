@@ -18,6 +18,12 @@ import {
   OAUTH_TURNSTILE_ACTION,
   type SessionAuthenticationProvider,
 } from "../shared/authentication";
+import {
+  CURRENT_TERMS_VERSION,
+  isSessionPersistence,
+  SESSION_PERSISTENCE,
+  type SessionPersistence,
+} from "../shared/terms";
 import { revokeAccountSession } from "./account-sessions";
 import {
   accountCreationRefusal,
@@ -81,6 +87,7 @@ const TURNSTILE_TEST_SITE_KEYS = new Set([
 ]);
 const SESSION_COOKIE_NAME = "__Host-stowplan_session";
 const RECENT_IDENTITY_LINK_AUTHENTICATION_MS = 10 * 60 * 1_000;
+const TERMS_VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
 
 function bytes(size=32){const b=new Uint8Array(size);crypto.getRandomValues(b);return b}
 function token(size=32){return Array.from(bytes(size),b=>b.toString(16).padStart(2,"0")).join("")}
@@ -519,8 +526,22 @@ export class InvitationError extends Error {
   }
 }
 
-export function sessionCookie(raw: string, maxAge: number) {
-  return `${SESSION_COOKIE_NAME}=${raw}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
+export function sessionCookie(
+  raw: string,
+  maxAge: number,
+  persistence: SessionPersistence,
+) {
+  const attributes = [
+    `${SESSION_COOKIE_NAME}=${raw}`,
+    "Path=/",
+    "HttpOnly",
+    "Secure",
+    "SameSite=Lax",
+  ];
+  if (persistence === SESSION_PERSISTENCE.PERSISTENT) {
+    attributes.push(`Max-Age=${maxAge}`);
+  }
+  return attributes.join("; ");
 }
 export function clearSessionCookie() {
   return `${SESSION_COOKIE_NAME}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;
@@ -555,6 +576,7 @@ export interface CreateOrLinkUserOptions {
   linkIntent?: AuthenticatedIdentityLinkIntent;
   requireRecentAuthentication?: boolean;
   requireExistingIdentity?: boolean;
+  termsVersion?: string;
 }
 
 async function activeIdentityLinkTarget(
@@ -615,8 +637,15 @@ export async function createOrLinkUser(
   const providerId = profile.provider.trim();
   const subject = profile.subject.trim();
   const displayName = profile.displayName.trim() || email;
+  const termsVersion = options.termsVersion;
   if (!providerId || !subject || !email) {
     throw new Error("Provider identity lacks required fields");
+  }
+  if (
+    termsVersion !== undefined
+    && !TERMS_VERSION_PATTERN.test(termsVersion)
+  ) {
+    throw new Error("Terms version is invalid");
   }
   if (!identityEnforcementConfigured(env)) {
     throw new Error("Identity enforcement is not configured");
@@ -669,11 +698,27 @@ export async function createOrLinkUser(
     ) {
       throw new Error("Provider identity belongs to another account");
     }
-    await db.prepare(
+    const statements: Statement[] = [db.prepare(
       `UPDATE identities
        SET email = ?, last_used_at = ?
        WHERE provider = ? AND provider_subject = ?`,
-    ).bind(email, now, providerId, subject).run();
+    ).bind(email, now, providerId, subject)];
+    if (termsVersion) {
+      statements.push(db.prepare(
+        `UPDATE users
+         SET terms_version=?, terms_accepted_at=?
+         WHERE user_id=?
+           AND status='active'
+           AND deleted_at IS NULL`,
+      ).bind(termsVersion, now, existingIdentity.user_id));
+    }
+    const updates = await db.batch(statements);
+    if (
+      updates.length !== statements.length
+      || updates.some((result) => !result.success)
+    ) {
+      throw new Error("Provider identity could not be updated");
+    }
     return {
       displayName: existingIdentity.display_name,
       email: existingIdentity.email,
@@ -800,9 +845,18 @@ export async function createOrLinkUser(
       db.prepare(
         `INSERT INTO users(
            user_id, email, display_name, global_role, status, created_at,
-           updated_at, last_seen_at
-         ) VALUES(?,?,?,'user','active',?,?,?)`,
-      ).bind(id, email, displayName, now, now, now),
+           updated_at, last_seen_at, terms_version, terms_accepted_at
+         ) VALUES(?,?,?,'user','active',?,?,?,?,?)`,
+      ).bind(
+        id,
+        email,
+        displayName,
+        now,
+        now,
+        now,
+        termsVersion ?? null,
+        termsVersion ? now : null,
+      ),
       db.prepare(
         `INSERT INTO identities(
            identity_id,user_id,provider,provider_subject,email,created_at,
@@ -1759,26 +1813,45 @@ interface OAuthTransactionEnvelope {
   linkSessionId: string | null;
   linkUserId: string | null;
   nonce: string;
+  sessionPersistence: SessionPersistence | null;
+  termsVersion: string | null;
   verifier: string;
-  version: 1;
+  version: 1 | 2;
 }
 
-export interface OAuthStartOptions {
-  intent?: OAuthIntent;
-  linkIntent?: AuthenticatedIdentityLinkIntent;
-}
+export type OAuthStartOptions = {
+  intent: "sign-in";
+  linkIntent?: never;
+  sessionPersistence: SessionPersistence;
+  termsVersion: string;
+} | {
+  intent: "link" | "reauthenticate";
+  linkIntent: AuthenticatedIdentityLinkIntent;
+  sessionPersistence?: never;
+  termsVersion?: never;
+};
 
 export interface OAuthStartResult {
   authorizationUrl: string;
   bindingCookie: string;
 }
 
-export interface OAuthFinishResult {
-  intent: OAuthIntent;
-  linkIntent: AuthenticatedIdentityLinkIntent | null;
+interface OAuthFinishResultBase {
   profile: ProviderProfile;
   returnTo: string;
 }
+
+export type OAuthFinishResult = OAuthFinishResultBase & ({
+  intent: "sign-in";
+  linkIntent: null;
+  sessionPersistence: SessionPersistence;
+  termsVersion: string;
+} | {
+  intent: "link" | "reauthenticate";
+  linkIntent: AuthenticatedIdentityLinkIntent;
+  sessionPersistence: null;
+  termsVersion: null;
+});
 
 interface TurnstileSiteverifyResult {
   action?: unknown;
@@ -1958,7 +2031,7 @@ function transactionEnvelope(
   }
   if (
     !isObjectRecord(parsed)
-    || parsed.version !== 1
+    || (parsed.version !== 1 && parsed.version !== 2)
     || !OAUTH_TOKEN_PATTERN.test(String(parsed.bindingHash ?? ""))
     || !OAUTH_TOKEN_PATTERN.test(String(parsed.nonce ?? ""))
     || !PKCE_VERIFIER_PATTERN.test(String(parsed.verifier ?? ""))
@@ -1972,6 +2045,13 @@ function transactionEnvelope(
   }
   const linkUserId = parsed.linkUserId;
   const linkSessionId = parsed.linkSessionId;
+  const legacyTransaction = parsed.version === 1;
+  const sessionPersistence = legacyTransaction
+    ? null
+    : parsed.sessionPersistence;
+  const termsVersion = legacyTransaction
+    ? null
+    : parsed.termsVersion;
   if (
     (
       parsed.intent !== "sign-in"
@@ -1986,6 +2066,23 @@ function transactionEnvelope(
       parsed.intent === "sign-in"
       && (linkUserId !== null || linkSessionId !== null)
     )
+    || (
+      legacyTransaction
+      && parsed.intent === "sign-in"
+    )
+    || (
+      !legacyTransaction
+      && parsed.intent === "sign-in"
+      && (
+        termsVersion !== CURRENT_TERMS_VERSION
+        || !isSessionPersistence(sessionPersistence)
+      )
+    )
+    || (
+      !legacyTransaction
+      && parsed.intent !== "sign-in"
+      && (termsVersion !== null || sessionPersistence !== null)
+    )
   ) {
     throw new Error("OAuth transaction intent is malformed");
   }
@@ -1995,8 +2092,11 @@ function transactionEnvelope(
     linkSessionId: linkSessionId as string | null,
     linkUserId: linkUserId as string | null,
     nonce: String(parsed.nonce),
+    sessionPersistence:
+      sessionPersistence as SessionPersistence | null,
+    termsVersion: termsVersion as string | null,
     verifier: String(parsed.verifier),
-    version: 1,
+    version: parsed.version,
   };
 }
 
@@ -2146,12 +2246,27 @@ export async function beginOAuth(
   oauthProvider: OAuthProvider,
   base: string,
   returnTo: string,
-  options: OAuthStartOptions = {},
+  options: OAuthStartOptions,
 ): Promise<OAuthStartResult> {
   await maintainAuthRecords(db);
-  const intent = options.intent ?? "sign-in";
+  const intent = options.intent;
   if (
-    (intent !== "sign-in") !== Boolean(options.linkIntent)
+    (
+      intent === "sign-in"
+      && (
+        options.linkIntent
+        || options.termsVersion !== CURRENT_TERMS_VERSION
+        || !isSessionPersistence(options.sessionPersistence)
+      )
+    )
+    || (
+      intent !== "sign-in"
+      && (
+        !options.linkIntent
+        || "termsVersion" in options
+        || "sessionPersistence" in options
+      )
+    )
   ) {
     throw new Error("Authenticated OAuth intent is incomplete");
   }
@@ -2177,8 +2292,14 @@ export async function beginOAuth(
     linkSessionId: options.linkIntent?.sessionId ?? null,
     linkUserId: options.linkIntent?.userId ?? null,
     nonce,
+    sessionPersistence: intent === "sign-in"
+      ? options.sessionPersistence
+      : null,
+    termsVersion: intent === "sign-in"
+      ? options.termsVersion
+      : null,
     verifier,
-    version: 1,
+    version: 2,
   };
   await db.prepare(
     `INSERT INTO oauth_states(
@@ -2419,17 +2540,26 @@ export async function finishOAuth(
     oauthProvider,
     transaction.nonce,
   );
+  if (transaction.intent === "sign-in") {
+    return {
+      intent: transaction.intent,
+      linkIntent: null,
+      profile,
+      returnTo: row.return_to,
+      sessionPersistence: transaction.sessionPersistence!,
+      termsVersion: transaction.termsVersion!,
+    };
+  }
   return {
     intent: transaction.intent,
-    linkIntent: transaction.intent === "link"
-      || transaction.intent === "reauthenticate"
-      ? {
-          sessionId: transaction.linkSessionId!,
-          userId: transaction.linkUserId!,
-        }
-      : null,
+    linkIntent: {
+      sessionId: transaction.linkSessionId!,
+      userId: transaction.linkUserId!,
+    },
     profile,
     returnTo: row.return_to,
+    sessionPersistence: null,
+    termsVersion: null,
   };
 }
 

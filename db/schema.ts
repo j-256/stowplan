@@ -57,6 +57,8 @@ export const users = sqliteTable("users", {
   updatedAt: text("updated_at").notNull(),
   lastSeenAt: text("last_seen_at"),
   deletedAt: text("deleted_at"),
+  termsVersion: text("terms_version"),
+  termsAcceptedAt: text("terms_accepted_at"),
 }, (table) => [
   check("users_global_role_check", sql`${table.globalRole} in ('admin', 'user')`),
   check(

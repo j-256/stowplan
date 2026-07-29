@@ -23,6 +23,7 @@ import { runtimeEnv } from "../../../../src/server/runtime";
 import {
   SESSION_AUTHENTICATION_PROVIDER,
 } from "../../../../src/shared/authentication";
+import { SESSION_PERSISTENCE } from "../../../../src/shared/terms";
 
 const SYNTHETIC_DEVELOPMENT_EMAIL_PATTERN =
   /^[^@\s]+@example\.test$/;
@@ -155,7 +156,11 @@ export async function POST(request: Request) {
       { user },
       {
         headers: {
-          "set-cookie": sessionCookie(session.raw, session.maxAge),
+          "set-cookie": sessionCookie(
+            session.raw,
+            session.maxAge,
+            SESSION_PERSISTENCE.PERSISTENT,
+          ),
         },
       },
     );

@@ -2,7 +2,7 @@
 
 You can use Stowplan without an account. Signing in adds online backup and sharing, but it also sends workspace data to the installation's server. This page explains that choice in terms of what is stored, who can access it, and what removal actions do.
 
-This describes the behavior built into Stowplan. The official hosted service publishes its [privacy policy](stowplan:privacy). If you use an installation run by someone else, that operator also controls its infrastructure, backups, access policy, and published privacy terms.
+This describes the behavior built into Stowplan. The official hosted service publishes its [Privacy Policy](stowplan:privacy) and [Terms of Service](stowplan:terms). If you use an installation run by someone else, that operator also controls its infrastructure, backups, access policy, and published legal terms.
 
 ## Device-only and signed-in use
 
@@ -23,7 +23,7 @@ After sign-in, Stowplan attempts to create or update an online copy of the works
 
 The online workspace contains the data needed to reproduce and collaborate on it, including workspace and location names, physical-label codes, hierarchy, item records and details, plans, Activity and undo history that is still retained, and synchronization records.
 
-The account server also stores account and security information such as display name, email, linked sign-in identity identifiers, app sessions, invite and membership records, coarse network information, browser or device descriptions, timestamps, and security audit events. Stowplan requests Google's `openid`, `email`, and `profile` scopes for Google sign-in.
+The account server also stores account and security information such as display name, email, linked sign-in identity identifiers, the accepted Terms version and time, app sessions, invite and membership records, coarse network information, browser or device descriptions, timestamps, and security audit events. Stowplan requests Google's `openid`, `email`, and `profile` scopes for Google sign-in.
 
 Stowplan does not request Google offline access and does not keep Google access or refresh tokens after sign-in completes.
 
@@ -38,6 +38,8 @@ The hosting operator and people with infrastructure or backup access may have ad
 ## Sessions and account access
 
 The Account page keeps its return action at the top. Before sign-in, the available sign-in controls appear before the expandable online-data and privacy explanation. After sign-in, workspace collaboration appears before session management and account deletion; opening Account from a workspace also provides a direct return to that workspace's access controls.
+
+Google sign-in asks you to agree to the installation's Terms and acknowledge its Privacy Policy. A separate, optional **Keep me signed in after I close the browser** choice lets the secure session cookie remain beyond the browser session. Leave it unchecked when you want a browser-session cookie. In either case, the server session has a fixed expiry and can be revoked sooner.
 
 Open **Account and sessions** from the user menu to review signed-in browsers and devices. A session record can show its browser or device description, coarse network, creation time, approximate last server activity, expiry, and revocation time.
 

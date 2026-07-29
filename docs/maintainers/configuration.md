@@ -21,9 +21,11 @@
 | `NEXT_PUBLIC_REPOSITORY_URL` | no | build/client | Quiet Help/About source link for forks |
 | `NEXT_PUBLIC_DOCS_URL` | no | build/client | Independently hosted full documentation link |
 | `NEXT_PUBLIC_PRIVACY_POLICY_URL` | public deployment | build/client | Privacy policy linked from the app and sign-in surface |
+| `NEXT_PUBLIC_TERMS_OF_SERVICE_URL` | public deployment | build/client | Terms linked from the app and required sign-in agreement |
 | `DOCS_BASE` | docs build | build | `/repo/` for project Pages, `/` for root hosts |
 | `DOCS_APPLICATION_URL` | no | docs build | Application origin used by the docs site's direct demo links |
 | `DOCS_PRIVACY_POLICY_URL` | public deployment | docs build | Privacy policy linked from documentation; defaults to `/privacy` on `DOCS_APPLICATION_URL` |
+| `DOCS_TERMS_OF_SERVICE_URL` | public deployment | docs build | Terms linked from documentation; defaults to `/terms` on `DOCS_APPLICATION_URL` |
 | `DOCS_REPOSITORY_URL` | no | docs build | Source link; the Pages workflow derives it for forks |
 
 Commit only `.env.example`-style names and harmless defaults. OAuth secrets, session values, guest URLs, Access assertions, and exported production data are secrets.
@@ -50,4 +52,4 @@ Sites reads its binding name from `.openai/hosting.json`; keep it aligned with t
 
 The client receives only `NEXT_PUBLIC_*` values. Adding that prefix to a secret permanently exposes it in built JavaScript.
 
-Every public operator must publish a policy that identifies that operator and accurately describes the chosen host, authentication provider, browser storage, server data, service providers, retention, deletion, user rights, and contact route. Set `NEXT_PUBLIC_PRIVACY_POLICY_URL` and `DOCS_PRIVACY_POLICY_URL` to that policy. The policy included at `stowplan.jklein.dev/privacy` covers only the official hosted service and is not a policy for forks.
+Every public operator must publish a policy that identifies that operator and accurately describes the chosen host, authentication provider, browser storage, server data, service providers, retention, deletion, user rights, and contact route. Set `NEXT_PUBLIC_PRIVACY_POLICY_URL` and `DOCS_PRIVACY_POLICY_URL` to that policy. A public operator should also review or replace the Terms, set `NEXT_PUBLIC_TERMS_OF_SERVICE_URL` and `DOCS_TERMS_OF_SERVICE_URL`, and update `CURRENT_TERMS_VERSION` whenever a new agreement is required. The bundled Privacy Policy and Terms cover only the official hosted service and are not reusable legal terms for forks.

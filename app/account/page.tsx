@@ -20,6 +20,7 @@ import { AccountSessions } from "../../src/client/account-sessions";
 import {
   ACCOUNT_DATA_URL,
   PRIVACY_POLICY_URL,
+  TERMS_OF_SERVICE_URL,
 } from "../../src/client/external-links";
 import { GoogleSignIn } from "../../src/client/google-sign-in";
 import styles from "./account.module.css";
@@ -440,6 +441,9 @@ export default function Account() {
                   </a>
                   <a href={PRIVACY_POLICY_URL}>
                     Privacy policy
+                  </a>
+                  <a href={TERMS_OF_SERVICE_URL}>
+                    Terms of Service
                   </a>
                 </div>
               </details>}

@@ -4,10 +4,20 @@ import Script from "next/script";
 import {
   useCallback,
   useEffect,
+  useId,
   useRef,
   useState,
 } from "react";
 import { OAUTH_TURNSTILE_ACTION } from "../shared/authentication";
+import {
+  SESSION_PERSISTENCE,
+  TERMS_ACCEPTANCE_VALUE,
+} from "../shared/terms";
+import {
+  PRIVACY_POLICY_URL,
+  TERMS_OF_SERVICE_URL,
+} from "./external-links";
+import styles from "./google-sign-in.module.css";
 
 interface TurnstileOptions {
   action: string;
@@ -65,10 +75,17 @@ export function GoogleSignIn({
 }: GoogleSignInProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const widgetIdRef = useRef<string | null>(null);
+  const persistentSignInId = useId();
+  const termsInputId = useId();
+  const termsLabelId = useId();
   const [message, setMessage] = useState("");
+  const [persistentSignIn, setPersistentSignIn] =
+    useState(false);
   const [startIntent, setStartIntent] = useState(intent);
   const [submitting, setSubmitting] = useState(false);
+  const [termsAccepted, setTermsAccepted] = useState(false);
   const [token, setToken] = useState("");
+  const ordinarySignIn = intent === "sign-in";
 
   const renderWidget = useCallback(() => {
     if (
@@ -142,9 +159,28 @@ export function GoogleSignIn({
       );
       return;
     }
+    if (ordinarySignIn && !termsAccepted) {
+      setMessage(
+        "Accept the Terms of Service before continuing.",
+      );
+      return;
+    }
     setMessage("");
     setSubmitting(true);
     try {
+      const form = new URLSearchParams({
+        "cf-turnstile-response": token,
+        intent: startIntent,
+      });
+      if (ordinarySignIn) {
+        form.set("termsAccepted", TERMS_ACCEPTANCE_VALUE);
+        form.set(
+          "sessionPersistence",
+          persistentSignIn
+            ? SESSION_PERSISTENCE.PERSISTENT
+            : SESSION_PERSISTENCE.BROWSER_SESSION,
+        );
+      }
       const response = await fetch(
         `/api/auth/google/start?returnTo=${encodeURIComponent(
           startIntent === "reauthenticate" && intent === "link"
@@ -152,10 +188,7 @@ export function GoogleSignIn({
             : returnTo,
         )}`,
         {
-          body: new URLSearchParams({
-            "cf-turnstile-response": token,
-            intent: startIntent,
-          }),
+          body: form,
           headers: {
             "content-type":
               "application/x-www-form-urlencoded",
@@ -225,11 +258,57 @@ export function GoogleSignIn({
       src={TURNSTILE_SCRIPT_URL}
       strategy="afterInteractive"
     />
-    <form onSubmit={startGoogle}>
+    <form className={styles.form} onSubmit={startGoogle}>
       <div ref={containerRef} />
+      {ordinarySignIn && <div className={styles.choices}>
+        <div className={styles.choice}>
+          <input
+            aria-labelledby={termsLabelId}
+            checked={termsAccepted}
+            id={termsInputId}
+            onChange={(event) =>
+              setTermsAccepted(event.currentTarget.checked)}
+            type="checkbox"
+          />
+          <span id={termsLabelId}>
+            I agree to the <a
+              href={TERMS_OF_SERVICE_URL}
+              rel="noreferrer"
+              target="_blank"
+            >
+              Terms of Service
+            </a> and acknowledge the <a
+              href={PRIVACY_POLICY_URL}
+              rel="noreferrer"
+              target="_blank"
+            >
+              Privacy Policy
+            </a>.
+          </span>
+        </div>
+        <label className={styles.choice}>
+          <input
+            checked={persistentSignIn}
+            id={persistentSignInId}
+            onChange={(event) =>
+              setPersistentSignIn(event.currentTarget.checked)}
+            type="checkbox"
+          />
+          <span>
+            Keep me signed in after I close the browser
+          </span>
+        </label>
+        <small>
+          Leave this unchecked to use a browser-session cookie.
+        </small>
+      </div>}
       <button
         className="auth-button"
-        disabled={!token || submitting}
+        disabled={
+          !token
+          || submitting
+          || (ordinarySignIn && !termsAccepted)
+        }
         type="submit"
       >
         {submitting

@@ -3,10 +3,11 @@ import Link from "next/link";
 import {
   FULL_DOCUMENTATION_URL,
   SOURCE_REPOSITORY_URL,
+  TERMS_OF_SERVICE_URL,
 } from "../../src/client/external-links";
 import styles from "./privacy.module.css";
 
-const EFFECTIVE_DATE = "July 28, 2026";
+const EFFECTIVE_DATE = "July 29, 2026";
 const PRIVACY_CONTACT_EMAIL = "privacy@strangelasers.com";
 
 export const metadata: Metadata = {
@@ -18,6 +19,7 @@ export default function PrivacyPolicy() {
   return <main className={styles.page}>
     <header className={styles.header}>
       <Link href="/">Open Stowplan</Link>
+      <a href={TERMS_OF_SERVICE_URL}>Terms of Service</a>
       <a href={FULL_DOCUMENTATION_URL}>User guide</a>
     </header>
     <article className={styles.policy}>
@@ -47,7 +49,7 @@ export default function PrivacyPolicy() {
 
         <h3>Account and sign-in information</h3>
         <p>If you use Google sign-in, Google provides a stable account identifier, email address, and display name after you approve the sign-in. Stowplan requests only the <code>openid</code>, <code>email</code>, and <code>profile</code> scopes. Stowplan does not retain Google&apos;s access token, refresh token, or ID token after sign-in completes.</p>
-        <p>The service stores account and security records such as internal identifiers, linked sign-in identities, role and account status, session-token hashes, session and sign-in times, browser or device descriptions, shortened network prefixes, invitation records, quota records, and security or administrative audit events. The raw Stowplan session value stays in a secure, HTTP-only browser cookie.</p>
+        <p>The service stores account and security records such as internal identifiers, linked sign-in identities, role and account status, the accepted Terms version and acceptance time, session-token hashes, session and sign-in times, browser or device descriptions, shortened network prefixes, invitation records, quota records, and security or administrative audit events. The raw Stowplan session value stays in a secure, HTTP-only browser cookie.</p>
 
         <h3>Hosting and security information</h3>
         <p>When you visit the hosted service, your browser sends request information such as its network address, requested path, time, browser headers, and security signals to OpenAI and Cloudflare so they can deliver and protect the site. In Stowplan&apos;s application database, session and security records use a shortened network prefix and limited browser description rather than a full stored network address, but provider logs may contain additional request data.</p>
@@ -65,7 +67,7 @@ export default function PrivacyPolicy() {
 
       <section>
         <h2>Browser storage and cookies</h2>
-        <p>Stowplan uses browser storage and cookies needed to provide the service. It does not use non-essential advertising or analytics cookies.</p>
+        <p>Stowplan uses browser storage and cookies needed to provide features you request, remember your choices, and protect the service. It does not use non-essential advertising or analytics cookies. The Google sign-in form asks separately before allowing the session cookie to remain after the browser session.</p>
         <div className={styles.tableWrap}>
           <table>
             <thead>
@@ -94,7 +96,7 @@ export default function PrivacyPolicy() {
               <tr>
                 <td data-label="Storage"><code>__Host-stowplan_session</code></td>
                 <td data-label="Purpose">Keeps a signed-in account authenticated</td>
-                <td data-label="Duration">Normally 30 days unless you sign out, revoke it, delete the account, or the service changes the configured lifetime</td>
+                <td data-label="Duration">The browser session unless you choose to stay signed in; a persistent cookie lasts until the app session expires, normally within 30 days, or until you sign out, revoke it, or delete the account</td>
               </tr>
               <tr>
                 <td data-label="Storage"><code>__Secure-stowplan_oauth_*</code></td>
@@ -134,8 +136,8 @@ export default function PrivacyPolicy() {
           <li>Browser copies remain until you remove them or clear this site&apos;s browser data</li>
           <li>Online workspace content remains while the workspace exists; an owner or administrator can delete the online workspace immediately through Stowplan</li>
           <li>Account profiles and linked identity information remain while an account is active or disabled; account deletion or banning redacts those records, subject to the retained non-secret records described below</li>
-          <li>A normal app session expires after 30 days, and its server record becomes eligible for cleanup 30 days later; OAuth sign-in lifecycle records become eligible 24 hours after their 10-minute expiry, and invitation records become eligible 30 days after expiry</li>
-          <li>Security and administrative audit events have no automatic expiry and may be retained indefinitely; non-secret deletion receipts and keyed abuse-prevention digests may also remain as long as needed to preserve service integrity, prevent abuse, resolve disputes, or meet legal obligations</li>
+          <li>A normal app session expires after 30 days even when its browser cookie ends sooner, and its server record becomes eligible for cleanup 30 days later; OAuth sign-in lifecycle records become eligible 24 hours after their 10-minute expiry, and invitation records become eligible 30 days after expiry</li>
+          <li>Security and administrative audit events have no automatic expiry and may be retained indefinitely; Terms acceptance versions and times, non-secret deletion receipts, and keyed abuse-prevention digests may also remain as long as needed to preserve service integrity, prevent abuse, resolve disputes, or meet legal obligations</li>
           <li>Hosting logs, security records, and provider backups follow provider retention rules and may persist after an in-app deletion until they age out of protected systems</li>
         </ul>
         <p>If you leave a shared workspace or an owner removes you, your server membership and online access end, but the workspace and content you added remain available to remaining members. Any copy already stored on your device is retained read-only and is no longer backed up until you export or remove it.</p>
@@ -169,6 +171,7 @@ export default function PrivacyPolicy() {
     </article>
     <footer className={styles.footer}>
       <a href={SOURCE_REPOSITORY_URL}>View Stowplan source</a>
+      <a href={TERMS_OF_SERVICE_URL}>Terms of Service</a>
       <Link href="/">Return to Stowplan</Link>
     </footer>
   </main>;

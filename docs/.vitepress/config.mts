@@ -2,6 +2,7 @@ import { defineConfig } from "vitepress";
 
 const DEMO_LINK_MARKER = "stowplan:demo";
 const PRIVACY_LINK_MARKER = "stowplan:privacy";
+const TERMS_LINK_MARKER = "stowplan:terms";
 const rawBase = process.env.DOCS_BASE ?? "/";
 const base = rawBase.startsWith("/") && rawBase.endsWith("/") ? rawBase : `/${rawBase.replace(/^\/+|\/+$/g, "")}/`;
 const applicationUrl = (
@@ -12,6 +13,10 @@ const demoUrl = `${applicationUrl}/demo`;
 const privacyUrl = (
   process.env.DOCS_PRIVACY_POLICY_URL ||
   `${applicationUrl}/privacy`
+).replace(/\/+$/u, "");
+const termsUrl = (
+  process.env.DOCS_TERMS_OF_SERVICE_URL ||
+  `${applicationUrl}/terms`
 ).replace(/\/+$/u, "");
 const repositoryUrl = process.env.DOCS_REPOSITORY_URL ?? "https://github.com/j-256/stowplan";
 
@@ -45,6 +50,10 @@ export default defineConfig({
           tokens[index].attrGet("href") === PRIVACY_LINK_MARKER
         ) {
           tokens[index].attrSet("href", privacyUrl);
+        } else if (
+          tokens[index].attrGet("href") === TERMS_LINK_MARKER
+        ) {
+          tokens[index].attrSet("href", termsUrl);
         }
         return renderLinkOpen
           ? renderLinkOpen(
@@ -87,6 +96,7 @@ export default defineConfig({
       { text: "Host and operate", link: "/deploy/" },
       { text: "Maintain", link: "/maintainers/architecture" },
       { text: "Privacy", link: privacyUrl },
+      { text: "Terms", link: termsUrl },
       { text: "Source", link: repositoryUrl },
     ],
     sidebar: [
@@ -101,6 +111,7 @@ export default defineConfig({
         { text: "Backup and recovery", link: "/guide/recovery" },
         { text: "Account, privacy, and data", link: "/guide/account-data" },
         { text: "Privacy policy", link: privacyUrl },
+        { text: "Terms of Service", link: termsUrl },
       ] },
       { text: "Host and operate", items: [
         { text: "Deployment targets", link: "/deploy/" },

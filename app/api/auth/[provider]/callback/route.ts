@@ -134,17 +134,19 @@ export async function GET(
       env.DB,
       env,
       result.profile,
-      result.intent === "link"
+      result.intent === "sign-in"
         ? {
-            linkIntent: result.linkIntent!,
-            requireRecentAuthentication: true,
+            termsVersion: result.termsVersion,
           }
-        : result.intent === "reauthenticate"
+        : result.intent === "link"
           ? {
-              linkIntent: result.linkIntent!,
-              requireExistingIdentity: true,
+              linkIntent: result.linkIntent,
+              requireRecentAuthentication: true,
             }
-        : undefined,
+          : {
+              linkIntent: result.linkIntent,
+              requireExistingIdentity: true,
+            },
     );
     if (
       result.intent === "reauthenticate"
@@ -173,10 +175,14 @@ export async function GET(
       location: new URL(result.returnTo, base).toString(),
     });
     headers.append("set-cookie", bindingClearCookie);
-    if (session) {
+    if (session && result.intent === "sign-in") {
       headers.append(
         "set-cookie",
-        sessionCookie(session.raw, session.maxAge),
+        sessionCookie(
+          session.raw,
+          session.maxAge,
+          result.sessionPersistence,
+        ),
       );
     }
     return new Response(null, {

@@ -13,6 +13,10 @@ const privacyUrl = (
   process.env.DOCS_PRIVACY_POLICY_URL ||
   `${applicationUrl}/privacy`
 ).replace(/\/+$/u, "");
+const termsUrl = (
+  process.env.DOCS_TERMS_OF_SERVICE_URL ||
+  `${applicationUrl}/terms`
+).replace(/\/+$/u, "");
 
 async function filesBelow(directory) {
   const entries = await readdir(directory);
@@ -63,6 +67,9 @@ for (const relative of [
   const html = await readFile(path.join(output, relative), "utf8");
   if (!html.includes(`href="${privacyUrl}"`)) {
     bad.push(`${relative}: privacy policy link does not match ${privacyUrl}`);
+  }
+  if (!html.includes(`href="${termsUrl}"`)) {
+    bad.push(`${relative}: Terms link does not match ${termsUrl}`);
   }
 }
 

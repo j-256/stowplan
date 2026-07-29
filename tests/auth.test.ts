@@ -38,6 +38,10 @@ import {
 import {
   PUBLIC_LAUNCH_LIMITS,
 } from "../src/shared/governance-policy";
+import {
+  CURRENT_TERMS_VERSION,
+  SESSION_PERSISTENCE,
+} from "../src/shared/terms";
 import { numberedMigrationDatabase } from "./helpers/sqlite-d1";
 import { TEST_AUTH_ENV } from "./helpers/auth";
 
@@ -45,14 +49,31 @@ function database() {
   return numberedMigrationDatabase().database;
 }
 
+const SIGN_IN_OAUTH_OPTIONS = Object.freeze({
+  intent: "sign-in" as const,
+  sessionPersistence: SESSION_PERSISTENCE.BROWSER_SESSION,
+  termsVersion: CURRENT_TERMS_VERSION,
+});
+
 function bindingValue(cookie: string): string {
   return cookie.split(";", 1)[0]?.split("=", 2)[1] ?? "";
 }
 
 describe("authentication",()=>{
-  it("uses a host-only session cookie and rejects duplicate values", () => {
-    expect(sessionCookie("opaque", 3_600)).toMatch(
+  it("uses host-only session and persistent cookies and rejects duplicate values", () => {
+    expect(sessionCookie(
+      "opaque",
+      3_600,
+      SESSION_PERSISTENCE.PERSISTENT,
+    )).toMatch(
       /^__Host-stowplan_session=opaque; Path=\/; HttpOnly; Secure; SameSite=Lax; Max-Age=3600$/u,
+    );
+    expect(sessionCookie(
+      "opaque",
+      3_600,
+      SESSION_PERSISTENCE.BROWSER_SESSION,
+    )).toBe(
+      "__Host-stowplan_session=opaque; Path=/; HttpOnly; Secure; SameSite=Lax",
     );
     expect(cookieValue(
       new Request("https://example.test", {
@@ -187,6 +208,7 @@ describe("authentication",()=>{
       oauthProvider,
       "https://stowplan.example",
       "/spaces",
+      SIGN_IN_OAUTH_OPTIONS,
     );
     const state = new URL(
       start.authorizationUrl,
@@ -203,7 +225,18 @@ describe("authentication",()=>{
     expect(before.verifier_ciphertext).not.toBe("");
     const transaction = JSON.parse(
       before.verifier_ciphertext,
-    ) as { verifier: string };
+    ) as {
+      sessionPersistence: string;
+      termsVersion: string;
+      verifier: string;
+      version: number;
+    };
+    expect(transaction).toMatchObject({
+      sessionPersistence:
+        SESSION_PERSISTENCE.BROWSER_SESSION,
+      termsVersion: CURRENT_TERMS_VERSION,
+      version: 2,
+    });
 
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(null, { status: 503 }),
@@ -253,6 +286,7 @@ describe("authentication",()=>{
       oauthProvider,
       "https://stowplan.example",
       "/",
+      SIGN_IN_OAUTH_OPTIONS,
     );
     const state = new URL(start.authorizationUrl)
       .searchParams.get("state")!;
@@ -276,6 +310,81 @@ describe("authentication",()=>{
       verifier_ciphertext: expect.not.stringMatching(/^$/u),
     });
   });
+  it("restarts legacy sign-in states while preserving legacy authenticated intents", async () => {
+    const oauthProvider = {
+      authorizationUrl:
+        "https://accounts.google.com/o/oauth2/v2/auth",
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      id: "google" as const,
+      scopes: "openid email profile",
+      tokenUrl: "https://oauth2.googleapis.com/token",
+    };
+    const legacyTransaction = async (
+      options: Parameters<typeof beginOAuth>[4],
+    ) => {
+      const { database: db, sqlite } = numberedMigrationDatabase();
+      const start = await beginOAuth(
+        db,
+        oauthProvider,
+        "https://stowplan.example",
+        "/account",
+        options,
+      );
+      const row = sqlite.prepare(
+        "SELECT verifier_ciphertext FROM oauth_states",
+      ).get() as { verifier_ciphertext: string };
+      const envelope = JSON.parse(
+        row.verifier_ciphertext,
+      ) as Record<string, unknown>;
+      envelope.version = 1;
+      delete envelope.sessionPersistence;
+      delete envelope.termsVersion;
+      sqlite.prepare(
+        "UPDATE oauth_states SET verifier_ciphertext=?",
+      ).run(JSON.stringify(envelope));
+      return { db, start };
+    };
+    const signIn = await legacyTransaction(
+      SIGN_IN_OAUTH_OPTIONS,
+    );
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    await expect(finishOAuth(
+      signIn.db,
+      oauthProvider,
+      "https://stowplan.example",
+      new URL(signIn.start.authorizationUrl)
+        .searchParams.get("state")!,
+      "authorization-code",
+      bindingValue(signIn.start.bindingCookie),
+    )).rejects.toThrow("OAuth transaction is invalid");
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    const link = await legacyTransaction({
+      intent: "link",
+      linkIntent: {
+        sessionId: "ses_existing",
+        userId: "usr_existing",
+      },
+    });
+    fetchSpy.mockResolvedValueOnce(
+      new Response(null, { status: 503 }),
+    );
+    try {
+      await expect(finishOAuth(
+        link.db,
+        oauthProvider,
+        "https://stowplan.example",
+        new URL(link.start.authorizationUrl)
+          .searchParams.get("state")!,
+        "authorization-code",
+        bindingValue(link.start.bindingCookie),
+      )).rejects.toThrow("OAuth token exchange failed");
+      expect(fetchSpy).toHaveBeenCalledOnce();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
   it("reports Google signing-key outages as temporary unavailability", async () => {
     const db = database();
     const { privateKey } = await generateKeyPair("RS256");
@@ -293,6 +402,7 @@ describe("authentication",()=>{
       oauthProvider,
       "https://stowplan.example",
       "/account",
+      SIGN_IN_OAUTH_OPTIONS,
     );
     const authorization = new URL(start.authorizationUrl);
     const nonce = authorization.searchParams.get("nonce")!;
@@ -409,7 +519,7 @@ describe("authentication",()=>{
                 userId: "usr_existing",
               },
             }
-          : undefined,
+          : SIGN_IN_OAUTH_OPTIONS,
       );
       const authorization = new URL(start.authorizationUrl);
       const nonce = authorization.searchParams.get("nonce")!;
@@ -457,6 +567,9 @@ describe("authentication",()=>{
 
     await expect(complete()).resolves.toMatchObject({
       intent: "sign-in",
+      sessionPersistence:
+        SESSION_PERSISTENCE.BROWSER_SESSION,
+      termsVersion: CURRENT_TERMS_VERSION,
       profile: {
         displayName: "Test Person",
         email: "person@example.com",
@@ -474,6 +587,8 @@ describe("authentication",()=>{
         sessionId: "ses_existing",
         userId: "usr_existing",
       },
+      sessionPersistence: null,
+      termsVersion: null,
     });
     await expect(complete({
       azp: null,
@@ -570,6 +685,63 @@ describe("authentication",()=>{
 
     expect(unlisted.globalRole).toBe("user");
     expect(configured.globalRole).toBe("user");
+  });
+  it("records Terms acceptance for new and returning accounts", async () => {
+    const { database: db, sqlite } = numberedMigrationDatabase();
+    const returningProfile = {
+      displayName: "Returning user",
+      email: "returning@example.com",
+      provider: "google",
+      subject: "returning-google-subject",
+    };
+    const returning = await createOrLinkUser(
+      db,
+      TEST_AUTH_ENV,
+      returningProfile,
+    );
+    expect(sqlite.prepare(
+      `SELECT terms_version, terms_accepted_at
+       FROM users
+       WHERE user_id=?`,
+    ).get(returning.userId)).toEqual({
+      terms_accepted_at: null,
+      terms_version: null,
+    });
+
+    await createOrLinkUser(
+      db,
+      TEST_AUTH_ENV,
+      returningProfile,
+      { termsVersion: CURRENT_TERMS_VERSION },
+    );
+    expect(sqlite.prepare(
+      `SELECT terms_version, terms_accepted_at
+       FROM users
+       WHERE user_id=?`,
+    ).get(returning.userId)).toEqual({
+      terms_accepted_at: expect.any(String),
+      terms_version: CURRENT_TERMS_VERSION,
+    });
+
+    const newcomer = await createOrLinkUser(
+      db,
+      TEST_AUTH_ENV,
+      {
+        displayName: "New user",
+        email: "new@example.com",
+        provider: "google",
+        subject: "new-google-subject",
+      },
+      { termsVersion: CURRENT_TERMS_VERSION },
+    );
+    expect(sqlite.prepare(
+      `SELECT terms_version, terms_accepted_at
+       FROM users
+       WHERE user_id=?`,
+    ).get(newcomer.userId)).toEqual({
+      terms_accepted_at: expect.any(String),
+      terms_version: CURRENT_TERMS_VERSION,
+    });
   });
   it("never promotes an existing account during sign-in", async () => {
     const { database: db, sqlite } = numberedMigrationDatabase();

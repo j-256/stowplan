@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CONTROL_REQUEST_MAX_BYTES } from "../src/server/request-body";
 import { ACCOUNT_CONTEXT_HEADER } from "../src/shared/account-context";
+import {
+  CURRENT_TERMS_VERSION,
+  SESSION_PERSISTENCE,
+} from "../src/shared/terms";
 
 const OWNER_ACCOUNT_ID = "usr_owner";
 
@@ -175,6 +179,9 @@ describe("control route request limits", () => {
           body: new URLSearchParams({
             "cf-turnstile-response": "turnstile-token",
             intent: "sign-in",
+            sessionPersistence:
+              SESSION_PERSISTENCE.BROWSER_SESSION,
+            termsAccepted: "true",
           }),
           headers: {
             "content-type":
@@ -209,8 +216,71 @@ describe("control route request limits", () => {
       {
         intent: "sign-in",
         linkIntent: undefined,
+        sessionPersistence:
+          SESSION_PERSISTENCE.BROWSER_SESSION,
+        termsVersion: CURRENT_TERMS_VERSION,
       },
     );
+  });
+
+  it("requires Terms acceptance before browser verification or OAuth allocation", async () => {
+    const response = await postOAuthStart(
+      new Request(
+        "https://stowplan.test/api/auth/google/start",
+        {
+          body: new URLSearchParams({
+            "cf-turnstile-response": "turnstile-token",
+            intent: "sign-in",
+            sessionPersistence:
+              SESSION_PERSISTENCE.BROWSER_SESSION,
+          }),
+          headers: {
+            "content-type":
+              "application/x-www-form-urlencoded",
+          },
+          method: "POST",
+        },
+      ),
+      { params: Promise.resolve({ provider: "google" }) },
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      code: "TERMS_REQUIRED",
+      error: "Accept the Terms of Service before continuing",
+    });
+    expect(mocks.verifyTurnstile).not.toHaveBeenCalled();
+    expect(mocks.beginOAuth).not.toHaveBeenCalled();
+  });
+
+  it("refuses an invalid session-persistence choice before browser verification", async () => {
+    const response = await postOAuthStart(
+      new Request(
+        "https://stowplan.test/api/auth/google/start",
+        {
+          body: new URLSearchParams({
+            "cf-turnstile-response": "turnstile-token",
+            intent: "sign-in",
+            sessionPersistence: "forever",
+            termsAccepted: "true",
+          }),
+          headers: {
+            "content-type":
+              "application/x-www-form-urlencoded",
+          },
+          method: "POST",
+        },
+      ),
+      { params: Promise.resolve({ provider: "google" }) },
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      code: "INVALID_REQUEST",
+      error: "OAuth start fields are invalid",
+    });
+    expect(mocks.verifyTurnstile).not.toHaveBeenCalled();
+    expect(mocks.beginOAuth).not.toHaveBeenCalled();
   });
 
   it("does not allocate OAuth state after a failed browser check", async () => {
@@ -227,6 +297,9 @@ describe("control route request limits", () => {
           body: new URLSearchParams({
             "cf-turnstile-response": "invalid-token",
             intent: "sign-in",
+            sessionPersistence:
+              SESSION_PERSISTENCE.BROWSER_SESSION,
+            termsAccepted: "true",
           }),
           headers: {
             "content-type":

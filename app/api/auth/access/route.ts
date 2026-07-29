@@ -16,6 +16,7 @@ import { runtimeEnv } from "../../../../src/server/runtime";
 import {
   SESSION_AUTHENTICATION_PROVIDER,
 } from "../../../../src/shared/authentication";
+import { SESSION_PERSISTENCE } from "../../../../src/shared/terms";
 
 const ACCESS_MIGRATION_SESSION_TTL_SECONDS = 2 * 60 * 60;
 
@@ -90,7 +91,11 @@ export async function POST(request: Request) {
       { user },
       {
         headers: {
-          "set-cookie": sessionCookie(session.raw, session.maxAge),
+          "set-cookie": sessionCookie(
+            session.raw,
+            session.maxAge,
+            SESSION_PERSISTENCE.PERSISTENT,
+          ),
         },
       },
     );

@@ -1,0 +1,44 @@
+.form {
+  display: grid;
+  gap: 10px;
+}
+
+.choices {
+  display: grid;
+  gap: 12px;
+  margin-top: 4px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+}
+
+.choice {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.choice input {
+  width: 24px;
+  height: 24px;
+  margin: 0;
+  accent-color: var(--sage);
+}
+
+.choices .choice a {
+  display: inline;
+  width: auto;
+  min-height: 0;
+  margin: 0;
+}
+
+.choices small {
+  padding-left: 33px;
+  line-height: 1.45;
+}

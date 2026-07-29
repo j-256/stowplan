@@ -21,6 +21,12 @@ import {
   RequestBodyTooLargeError,
 } from "../../../../../src/server/request-body";
 import { runtimeEnv } from "../../../../../src/server/runtime";
+import {
+  CURRENT_TERMS_VERSION,
+  isSessionPersistence,
+  TERMS_ACCEPTANCE_VALUE,
+  type SessionPersistence,
+} from "../../../../../src/shared/terms";
 
 const OAUTH_START_REQUEST_MAX_BYTES = 4 * 1_024;
 const OAUTH_START_CONTENT_TYPE =
@@ -108,6 +114,51 @@ export async function POST(
       );
     }
     const intent = requestedIntent as OAuthIntent;
+    let sessionPersistence: SessionPersistence | null = null;
+    if (intent === "sign-in") {
+      const termsAcceptedValues = form.getAll(
+        "termsAccepted",
+      );
+      if (
+        termsAcceptedValues.length !== 1
+        || termsAcceptedValues[0] !== TERMS_ACCEPTANCE_VALUE
+      ) {
+        return privateJson(
+          {
+            code: "TERMS_REQUIRED",
+            error: "Accept the Terms of Service before continuing",
+          },
+          { status: 400 },
+        );
+      }
+      const persistenceValues = form.getAll(
+        "sessionPersistence",
+      );
+      if (
+        persistenceValues.length !== 1
+        || !isSessionPersistence(persistenceValues[0])
+      ) {
+        return privateJson(
+          {
+            code: "INVALID_REQUEST",
+            error: "OAuth start fields are invalid",
+          },
+          { status: 400 },
+        );
+      }
+      sessionPersistence = persistenceValues[0];
+    } else if (
+      form.has("termsAccepted")
+      || form.has("sessionPersistence")
+    ) {
+      return privateJson(
+        {
+          code: "INVALID_REQUEST",
+          error: "OAuth start fields are invalid",
+        },
+        { status: 400 },
+      );
+    }
     const url = new URL(request.url);
     const base = authenticationBaseUrl(env, request.url);
     if (!base) {
@@ -152,15 +203,19 @@ export async function POST(
       configuredProvider,
       base,
       oauthReturnTo(url.searchParams.get("returnTo")),
-      {
-        intent,
-        linkIntent: principal
-          ? {
-              sessionId: principal.sessionId,
-              userId: principal.userId,
-            }
-          : undefined,
-      },
+      intent === "sign-in"
+        ? {
+            intent,
+            sessionPersistence: sessionPersistence!,
+            termsVersion: CURRENT_TERMS_VERSION,
+          }
+        : {
+            intent,
+            linkIntent: {
+              sessionId: principal!.sessionId,
+              userId: principal!.userId,
+            },
+          },
     );
     return privateJson(
       { authorizationUrl: result.authorizationUrl },

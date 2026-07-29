@@ -17,6 +17,7 @@ import {
 import {
   PRIVACY_POLICY_URL,
   SOURCE_REPOSITORY_URL,
+  TERMS_OF_SERVICE_URL,
   USER_GUIDE_URL,
 } from "./external-links";
 import { ModalDialog } from "./modal-dialog";
@@ -504,6 +505,7 @@ export function WorkspaceHub({
 
     <footer className={styles.legal}>
       <a href={PRIVACY_POLICY_URL}>Privacy policy</a>
+      <a href={TERMS_OF_SERVICE_URL}>Terms of Service</a>
       <a href={SOURCE_REPOSITORY_URL}>Source</a>
     </footer>
 

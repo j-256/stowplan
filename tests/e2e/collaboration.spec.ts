@@ -207,6 +207,88 @@ test("offers the temporary Access migration handoff only when enabled", async ({
   await expect((await migrationRequest).method()).toBe("POST");
 });
 
+test("keeps Terms acceptance separate from persistent Google sign-in", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    window.turnstile = {
+      remove: () => undefined,
+      render: (_container, options) => {
+        queueMicrotask(() => options.callback(
+          "synthetic-turnstile-token",
+        ));
+        return "synthetic-widget";
+      },
+      reset: () => undefined,
+    };
+  });
+  await page.route("**/api/auth/me", (route) => route.fulfill({
+    body: JSON.stringify({
+      accessMigrationAvailable: false,
+      configured: true,
+      hasLinkedGoogleIdentity: false,
+      providers: ["google"],
+      turnstileSiteKey: "1x00000000000000000000AA",
+      user: null,
+    }),
+    contentType: "application/json",
+    status: 200,
+  }));
+  await page.route(
+    "**/api/auth/google/start*",
+    (route) => route.fulfill({
+      body: JSON.stringify({
+        code: "AUTHENTICATION_UNAVAILABLE",
+        error: "Synthetic stop after request capture",
+      }),
+      contentType: "application/json",
+      status: 503,
+    }),
+  );
+  await page.goto("/account");
+
+  const continueButton = page.getByRole("button", {
+    exact: true,
+    name: "Continue with Google",
+  });
+  const termsAgreement = page.getByRole("checkbox", {
+    name: /I agree to the Terms of Service/u,
+  });
+  const persistentSignIn = page.getByRole("checkbox", {
+    name: "Keep me signed in after I close the browser",
+  });
+  await expect(termsAgreement).not.toBeChecked();
+  await expect(persistentSignIn).not.toBeChecked();
+  await expect(continueButton).toBeDisabled();
+  const agreementRow = termsAgreement.locator("..");
+  await expect(agreementRow.getByRole("link", {
+    name: "Terms of Service",
+  })).toHaveAttribute(
+    "href",
+    "https://stowplan.jklein.dev/terms",
+  );
+  await expect(agreementRow.getByRole("link", {
+    name: "Privacy Policy",
+  })).toHaveAttribute(
+    "href",
+    "https://stowplan.jklein.dev/privacy",
+  );
+
+  await termsAgreement.check();
+  await expect(continueButton).toBeEnabled();
+  await persistentSignIn.check();
+  const startRequest = page.waitForRequest(
+    request => new URL(request.url()).pathname ===
+      "/api/auth/google/start",
+  );
+  await continueButton.click();
+  const form = new URLSearchParams(
+    (await startRequest).postData() ?? "",
+  );
+  expect(form.get("termsAccepted")).toBe("true");
+  expect(form.get("sessionPersistence")).toBe("persistent");
+});
+
 for (const {
   afterLabel,
   error,

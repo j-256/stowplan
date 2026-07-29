@@ -3,6 +3,7 @@ import Link from "next/link";
 import {
   PRIVACY_POLICY_URL,
   SOURCE_REPOSITORY_URL,
+  TERMS_OF_SERVICE_URL,
   USER_GUIDE_URL,
 } from "../src/client/external-links";
 import RedirectKnownVisitor from "../src/client/redirect-known-visitor";
@@ -64,6 +65,7 @@ export function Hero() {
     <footer className={styles.footer}>
       <a href={USER_GUIDE_URL} rel="noreferrer" target="_blank">User guide</a>
       <a href={PRIVACY_POLICY_URL}>Privacy policy</a>
+      <a href={TERMS_OF_SERVICE_URL}>Terms of Service</a>
       <a href={SOURCE_REPOSITORY_URL} rel="noreferrer" target="_blank">Source</a>
     </footer>
   </main>;

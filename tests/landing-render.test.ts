@@ -28,9 +28,10 @@ describe("landing hero", () => {
     expect(markup).toContain("Make fewer physical moves");
   });
 
-  it("links out to the guide, privacy policy, and source", () => {
+  it("links out to the guide, legal policies, and source", () => {
     expect(markup).toContain("User guide");
     expect(markup).toContain("Privacy policy");
+    expect(markup).toContain("Terms of Service");
     expect(markup).toContain("Source");
   });
 });

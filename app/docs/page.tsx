@@ -2,6 +2,7 @@ import Link from "next/link";
 import {
   FULL_DOCUMENTATION_URL,
   PRIVACY_POLICY_URL,
+  TERMS_OF_SERVICE_URL,
   USER_GUIDE_URL,
 } from "../../src/client/external-links";
 
@@ -55,6 +56,9 @@ export default function InAppDocs() {
       </a>
       <a href={PRIVACY_POLICY_URL}>
         Read the privacy policy
+      </a>
+      <a href={TERMS_OF_SERVICE_URL}>
+        Read the Terms of Service
       </a>
     </section>
   </main>;
