@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   capabilitiesForWorkspaceRole,
   deviceOnlyWorkspaceAccess,
+  hasForeignPendingWork,
   normalizeServerWorkspaceSummary,
   normalizeWorkspaceAccessState,
   requireWorkspaceWriteAccess,
@@ -243,6 +244,46 @@ describe("workspace access", () => {
       manageAccess: false,
       read: true,
       write: false,
+    });
+  });
+
+  describe("hasForeignPendingWork", () => {
+    it("does not treat an unstamped pending entry as foreign", () => {
+      // A self-authored edit enqueued before the account id is stamped carries a
+      // null account. It must not read as another account's pending work, which
+      // would lock the workspace read-only.
+      expect(hasForeignPendingWork(
+        [{ accountId: null, status: "pending" }],
+        "usr_self",
+      )).toBe(false);
+    });
+
+    it("treats a concretely different account as foreign", () => {
+      expect(hasForeignPendingWork(
+        [{ accountId: "usr_other", status: "pending" }],
+        "usr_self",
+      )).toBe(true);
+    });
+
+    it("ignores entries authored by the current account", () => {
+      expect(hasForeignPendingWork(
+        [{ accountId: "usr_self", status: "pending" }],
+        "usr_self",
+      )).toBe(false);
+    });
+
+    it("ignores non-pending entries even from another account", () => {
+      expect(hasForeignPendingWork(
+        [{ accountId: "usr_other", status: "blocked" }],
+        "usr_self",
+      )).toBe(false);
+    });
+
+    it("is false when there is no signed-in account", () => {
+      expect(hasForeignPendingWork(
+        [{ accountId: "usr_other", status: "pending" }],
+        null,
+      )).toBe(false);
     });
   });
 });

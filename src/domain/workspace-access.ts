@@ -256,6 +256,23 @@ export function workspaceAccountIdsMatch(
   return optionalString(left) === optionalString(right);
 }
 
+// Pending outbox work counts as foreign only when it carries a concrete account
+// id that differs from the signed-in account. An entry with no account id is a
+// self-authored edit enqueued before its account was stamped, not another
+// account's work, so it must not lock the workspace read-only.
+export function hasForeignPendingWork(
+  outbox: ReadonlyArray<{ accountId?: string | null; status: string }>,
+  accountId: string | null | undefined,
+): boolean {
+  const currentAccountId = optionalString(accountId);
+  if (!currentAccountId) return false;
+  return outbox.some((entry) => {
+    if (entry.status !== "pending") return false;
+    const entryAccountId = optionalString(entry.accountId);
+    return entryAccountId !== null && entryAccountId !== currentAccountId;
+  });
+}
+
 export function workspaceAccessForAccount(
   value: unknown,
   accountId: string | null | undefined,

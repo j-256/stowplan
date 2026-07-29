@@ -11,6 +11,7 @@ import type {
   WorkspaceState,
 } from "../domain/types";
 import {
+  hasForeignPendingWork,
   normalizeServerWorkspaceSummary,
   normalizeWorkspaceAccessState,
   requireWorkspaceWriteAccess,
@@ -183,15 +184,12 @@ function visibleWorkspaceAccess(
     confirmedTerminalAccess ?? replica.authorization,
     accountId,
   );
-  const hasForeignPending = Boolean(
-    accountId &&
-      replica.outbox.some(
-        (entry) =>
-          entry.status === "pending" &&
-          !workspaceAccountIdsMatch(entry.accountId, accountId),
-      ),
-  );
-  if (access.kind !== "server" || !hasForeignPending) return access;
+  if (
+    access.kind !== "server" ||
+    !hasForeignPendingWork(replica.outbox, accountId)
+  ) {
+    return access;
+  }
   return normalizeWorkspaceAccessState({
     ...access,
     accountId,
