@@ -18,6 +18,7 @@ import {
   mutateWorkspaceReplica,
   mutateWorkspaceReplicaIfWritable,
   normalizeLocalReplica,
+  outboxEntryAccountId,
   readActiveServerWorkspaceCatalogAccount,
   readReplica,
   readServerWorkspaceCatalog,
@@ -347,6 +348,20 @@ describe("local replica", () => {
     expect(selectPendingSyncBatch([
       { envelope: queued.envelope, status: "pending" },
     ], "user_b")).toEqual([]);
+  });
+  it("stamps a queued edit with the signed-in account", () => {
+    // Attribution must follow the signed-in account, not whether the workspace
+    // authorization has resolved to server-kind yet. Keying off the resolved
+    // kind is what let a self-authored edit enqueue unattributed and later read
+    // as another account's work.
+    expect(outboxEntryAccountId("usr_self")).toBe("usr_self");
+  });
+  it("leaves a queued edit unattributed when no account is signed in", () => {
+    expect(outboxEntryAccountId(null)).toBeUndefined();
+    expect(outboxEntryAccountId(undefined)).toBeUndefined();
+  });
+  it("treats a blank account id as unattributed", () => {
+    expect(outboxEntryAccountId("  ")).toBeUndefined();
   });
   it("keeps inactive local workspaces available for switching",async()=>{const first=createEmptyState("First"),second=createEmptyState("Second");await writeReplica({state:first,outbox:[],updatedAt:"2026-07-22T00:00:00.000Z"});await writeReplica({state:second,outbox:[],updatedAt:"2026-07-22T01:00:00.000Z"});expect((await readReplica())?.state.workspace.id).toBe(second.workspace.id);expect((await readWorkspaceReplica(first.workspace.id))?.state.workspace.name).toBe("First");expect((await listWorkspaceReplicas()).map(workspace=>workspace.name)).toEqual(["Second","First"])});
   it("reconciles inactive workspaces that still have pending changes", () => {

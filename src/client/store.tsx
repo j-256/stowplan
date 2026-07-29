@@ -30,6 +30,7 @@ import {
   mergeServerWorkspaceCatalog,
   mutateReplica,
   mutateWorkspaceReplica,
+  outboxEntryAccountId,
   readActiveServerWorkspaceCatalogAccount,
   readServerWorkspaceCatalog,
   readWorkspaceReplica,
@@ -1320,9 +1321,10 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
             outbox: [
               ...current.outbox,
               {
-                accountId: visibleAuthorization.kind === "server"
-                  ? visibleAuthorization.accountId
-                  : undefined,
+                // Attribute the entry to the account the write was just
+                // authorized for, matching the requireWorkspaceWriteAccess
+                // check above, so it is never stored unattributed
+                accountId: outboxEntryAccountId(accountIdRef.current),
                 envelope: effectiveEnvelope,
                 status: "pending",
               },

@@ -103,6 +103,18 @@ export interface ReconciliationTarget {
   workspaceId: string;
 }
 
+// Attribution for a newly queued outbox entry. It follows the signed-in account
+// whenever one exists, rather than whether the workspace authorization has
+// resolved to server-kind: an edit queued during that settling window would
+// otherwise be stored unattributed and later mistaken for another account's work.
+export function outboxEntryAccountId(
+  accountId: string | null | undefined,
+): string | undefined {
+  return typeof accountId === "string" && accountId.trim()
+    ? accountId
+    : undefined;
+}
+
 export function selectPendingSyncBatch(
   outbox: readonly OutboxEntry[],
   accountId?: string | null,
