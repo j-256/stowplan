@@ -10,6 +10,17 @@ A mobile-first, local-first organizer for rooms, cabinets, drawers, boxes, bins,
 
 [Try the ready-made kitchen](https://stowplan.jklein.dev/demo) or read the [user guide](https://j-256.github.io/stowplan/guide/getting-started). The demo needs no account and does not replace another workspace already stored in the browser.
 
+![Capture: a nested space tree for the kitchen demo beside a container detail pane with a first-pass coverage bar, item entry, and counted items](screenshots/capture.png)
+
+<details>
+<summary>More views: Plan, Inventory</summary>
+
+![Plan: explainable move recommendations with a planning-readiness summary and a Generate move plan action](screenshots/plan.png)
+
+![Inventory: structured, searchable inventory across the demo's spaces](screenshots/inventory.png)
+
+</details>
+
 ## Why Stowplan
 
 - Container-first onboarding distinguishes uncounted, in-progress, known-empty, and counted spaces.

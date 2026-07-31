@@ -28,6 +28,7 @@
     "test:node-smoke": "node scripts/smoke-node.mjs",
     "test:next-dev-smoke": "node scripts/smoke-next-dev.mjs",
     "test:e2e": "playwright test",
+    "screenshots": "node scripts/screenshots.mjs",
     "test:coverage": "vitest run --coverage",
     "typecheck": "tsc --noEmit",
     "validate:artifact": "bash scripts/validate-artifact.sh",
