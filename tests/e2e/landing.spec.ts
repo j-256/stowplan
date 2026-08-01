@@ -10,7 +10,9 @@ test.describe("landing page", () => {
       page.getByRole("heading", { level: 1, name: "Stowplan" }),
     ).toBeVisible();
     await page.getByRole("link", { name: "Try the kitchen demo" }).click();
-    await expect(page).toHaveURL(/\/demo$/);
+    // /demo immediately client-redirects onward into the demo workspace, so
+    // assert the settled capture deep-link rather than the transient /demo URL
+    await expect(page).toHaveURL(/\/workspaces\/.*ws_demo/);
   });
 
   test("redirects a returning visitor with local workspaces to the hub", async ({

@@ -267,7 +267,7 @@ async function reopenCaptureLocation(
 }
 
 test.beforeEach(async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/workspaces");
   await page.evaluate(() => new Promise<void>((resolve) => {
     const request = indexedDB.deleteDatabase("stowplan-v1");
     request.onsuccess = request.onerror = request.onblocked = () => resolve();

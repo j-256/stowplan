@@ -9,7 +9,7 @@ const OWNER_HEADERS = {
 };
 
 test.beforeEach(async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/workspaces");
   await page.evaluate((databaseName) => new Promise<void>((resolve) => {
     const request = indexedDB.deleteDatabase(databaseName);
     request.onsuccess = request.onerror = request.onblocked = () => resolve();

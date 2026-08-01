@@ -254,7 +254,7 @@ async function workspaceAccess(
 }
 
 async function resetBrowserStorage(page: Page): Promise<void> {
-  await page.goto("/");
+  await page.goto("/workspaces");
   await page.evaluate((databaseName) => new Promise<void>(
     (resolve, reject) => {
       const request = indexedDB.deleteDatabase(databaseName);
