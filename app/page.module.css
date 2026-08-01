@@ -1,0 +1,71 @@
+.page {
+  margin: auto;
+  max-width: 960px;
+  padding: clamp(18px, 4vw, 48px);
+}
+
+.hero {
+  padding: clamp(48px, 12vw, 128px) 0 clamp(32px, 7vw, 72px);
+  text-align: center;
+}
+
+.hero h1 {
+  font-size: clamp(2.6rem, 8vw, 4.2rem);
+  line-height: 1.05;
+  margin: 6px 0 0;
+}
+
+.subhead {
+  font-size: clamp(1.15rem, 3.2vw, 1.6rem);
+  margin: 18px auto 0;
+  max-width: 640px;
+}
+
+.supporting {
+  color: var(--muted);
+  margin: 14px auto 0;
+  max-width: 620px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: center;
+  margin-top: clamp(28px, 6vw, 44px);
+}
+
+.values {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  margin-top: clamp(24px, 6vw, 56px);
+}
+
+.value {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 20px;
+}
+
+.value h2 {
+  font-size: 1.05rem;
+  margin: 0 0 8px;
+}
+
+.value p {
+  color: var(--muted);
+  line-height: 1.6;
+  margin: 0;
+}
+
+.footer {
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 22px;
+  justify-content: center;
+  margin-top: clamp(40px, 8vw, 80px);
+  padding-top: 18px;
+}
