@@ -22,7 +22,13 @@ export default defineConfig({
   cleanUrls: true,
   lastUpdated: true,
   ignoreDeadLinks: false,
-  head: [["meta", { name: "theme-color", content: "#536954" }]],
+  head: [
+    // Both forms, base-prefixed so they resolve under a deployment subpath:
+    // .ico for crawlers/legacy that still prefer it, .svg for modern browsers.
+    ["link", { rel: "icon", type: "image/svg+xml", href: `${base}favicon.svg` }],
+    ["link", { rel: "icon", type: "image/x-icon", href: `${base}favicon.ico` }],
+    ["meta", { name: "theme-color", content: "#536954" }],
+  ],
   markdown: {
     config(markdown) {
       const renderLinkOpen = markdown.renderer.rules.link_open;
