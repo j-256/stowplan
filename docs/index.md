@@ -34,12 +34,13 @@ Want to run Stowplan for a household, team, or community? Start with [Host and o
 Captured from the built-in kitchen demo.
 
 <script setup>
+import { withBase } from 'vitepress'
 import { ref, onMounted } from 'vue'
 
 const shots = [
-  { src: '/screenshots/capture.png', mobile: '/screenshots/capture-mobile.png', caption: 'Capture: walk a container at a time, counting as you go.' },
-  { src: '/screenshots/plan.png', mobile: '/screenshots/plan-mobile.png', caption: 'Plan: weighted priorities and an explainable move plan.' },
-  { src: '/screenshots/inventory.png', mobile: '/screenshots/inventory-mobile.png', caption: 'Inventory: search every space at once, not box by box.' },
+  { src: withBase('/screenshots/capture.png'), mobile: withBase('/screenshots/capture-mobile.png'), caption: 'Capture: walk a container at a time, counting as you go.' },
+  { src: withBase('/screenshots/plan.png'), mobile: withBase('/screenshots/plan-mobile.png'), caption: 'Plan: weighted priorities and an explainable move plan.' },
+  { src: withBase('/screenshots/inventory.png'), mobile: withBase('/screenshots/inventory-mobile.png'), caption: 'Inventory: search every space at once, not box by box.' },
 ]
 
 // Start on the middle slide so both neighbors show symmetrically on load.
