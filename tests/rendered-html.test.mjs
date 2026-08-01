@@ -17,9 +17,9 @@ function filesBelow(directory, prefix = "") {
   }).sort();
 }
 
-test("renders development preview metadata", async () => {
+test("renders the landing hero at the site root", async () => {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
-  workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
+  workerUrl.searchParams.set("landing-route-test", `${process.pid}-${Date.now()}`);
   const { default: worker } = await import(workerUrl.href);
 
   const response = await worker.fetch(
@@ -42,10 +42,9 @@ test("renders development preview metadata", async () => {
     response.headers.get("content-type") ?? "",
     /^text\/html\b/i,
   );
-  assert.match(response.headers.get("content-security-policy") ?? "", /frame-ancestors 'none'/);
-  assert.equal(response.headers.get("x-frame-options"), "DENY");
-  assert.equal(response.headers.get("x-content-type-options"), "nosniff");
-  assert.match(await response.text(), developmentPreviewMeta);
+  const html = await response.text();
+  assert.match(html, /Find what you packed without opening every box\./);
+  assert.match(html, /Organize one space at a time/);
 });
 
 test("renders canonical workspace view routes", async () => {
@@ -73,6 +72,9 @@ test("renders canonical workspace view routes", async () => {
     response.headers.get("content-type") ?? "",
     /^text\/html\b/i,
   );
+  assert.match(response.headers.get("content-security-policy") ?? "", /frame-ancestors 'none'/);
+  assert.equal(response.headers.get("x-frame-options"), "DENY");
+  assert.equal(response.headers.get("x-content-type-options"), "nosniff");
   assert.match(await response.text(), developmentPreviewMeta);
 });
 
