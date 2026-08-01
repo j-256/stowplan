@@ -182,7 +182,8 @@ test("keeps private APIs out of the service-worker cache and ships install icons
   assert.match(worker, /request\.mode === "navigate"/);
   assert.match(worker, /url\.pathname === "\/demo"/);
   assert.match(worker, /url\.pathname\.startsWith\("\/workspaces\/"\)/);
-  assert.match(worker, /caches\.match\("\/"\)/);
+  assert.match(worker, /caches\.match\("\/workspaces"\)/);
+  assert.match(worker, /"\/workspaces"/);
   assert.match(worker, /event\.waitUntil\(installShell\(\)/);
   assert.match(worker, /cache\.put\(cacheKey, response\.clone\(\)\)/);
   assert.match(worker, /key\.startsWith\(CACHE_PREFIX\)/);

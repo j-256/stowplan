@@ -1,8 +1,9 @@
-const CACHE = "stowplan-shell-v10";
+const CACHE = "stowplan-shell-v11";
 const CACHE_PREFIX = "stowplan-shell-";
 const SHELL = [
   "/",
   "/demo",
+  "/workspaces",
   "/docs",
   "/docs/",
   "/labels",
@@ -98,7 +99,7 @@ self.addEventListener("fetch", (event) => {
         const cached = await caches.match(cacheKey);
         if (cached) return cached;
         if (navigation && appNavigation) {
-          const shell = await caches.match("/");
+          const shell = await caches.match("/workspaces");
           if (shell) return shell;
         }
         if (navigation) return caches.match("/offline");
