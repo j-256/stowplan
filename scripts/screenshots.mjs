@@ -39,17 +39,24 @@ const DB_PATH = join(ROOT, 'test-results', 'screenshots.sqlite');
 const PORT = 3100;
 const BASE = `https://localhost:${PORT}`;
 const HEALTH = `${BASE}/api/health`;
-// Desktop framing that matches the e2e "desktop-chromium" project: wide enough
-// for the multi-pane capture layout, tall enough to show a location's queue.
-const VIEWPORT = { width: 1440, height: 960 };
+
+// Two capture passes. The docs carousel serves the mobile image below 640px via
+// <picture>, so the app is shown in whichever layout that device actually uses.
+//   - desktop: wide enough for the multi-pane capture layout.
+//   - mobile: a phone width, but taller than a real handset so each view's key
+//     content fits in one uniform-ratio crop without clipping mid-element.
+const PROFILES = [
+  { key: 'desktop', suffix: '', viewport: { width: 1440, height: 960 } },
+  { key: 'mobile', suffix: '-mobile', viewport: { width: 390, height: 900 } },
+];
 
 // The demo lands on Capture; Plan and Inventory are the other primary surfaces,
 // reachable from the seeded workspace URL prefix. An optional prepare(page) runs
 // after the view loads, for view-specific setup before the shot.
 const VIEWS = [
-  { file: 'capture.png', suffix: null }, // where /demo already is
+  { name: 'capture', suffix: null }, // where /demo already is
   {
-    file: 'plan.png',
+    name: 'plan',
     suffix: '/plan',
     // "Plan priorities" is a collapsed <details> by default, so it reads as an
     // empty box in a static shot. Expand it so the priority sliders are visible.
@@ -58,7 +65,7 @@ const VIEWS = [
       if (await summary.count()) await summary.click();
     },
   },
-  { file: 'inventory.png', suffix: '/inventory' },
+  { name: 'inventory', suffix: '/inventory' },
 ];
 
 // Mirror the env the Playwright config passes to the same server command.
@@ -119,44 +126,62 @@ async function main() {
       // The ephemeral TLS cert is not trusted; accept it (mirrors the e2e config).
       args: ['--ignore-certificate-errors'],
     });
-    const context = await browserInstance.newContext({
-      viewport: VIEWPORT,
-      deviceScaleFactor: 2, // retina: capture rows and item editors stay sharp
-      ignoreHTTPSErrors: true,
-      // The app's default theme is "system"; dark here makes it resolve to dark.
-      colorScheme: 'dark',
-    });
-    const page = await context.newPage();
-
-    // Seed + open the demo. It redirects into the Kitchen reset workspace and
-    // lands on Capture; the heading is the ready signal.
-    await page.goto(`${BASE}/demo`);
-    await page.getByRole('heading', { name: 'Capture', exact: true }).waitFor();
-
-    // The seeded workspace id is in the URL: /workspaces/<slug@id>/capture/...
-    // Everything up to and including the id is the prefix the other views hang off.
-    const match = page.url().match(/\/workspaces\/[^/]+/);
-    if (!match) throw new Error(`unexpected demo URL: ${page.url()}`);
-    const prefix = `${BASE}${match[0]}`;
 
     console.log('capturing into', OUT);
-    for (const view of VIEWS) {
-      if (view.suffix) {
-        await page.goto(`${prefix}${view.suffix}`);
-        // Each primary surface has an exact-match heading equal to its label.
-        const heading = view.suffix.replace('/', '').replace(/^\w/, (c) => c.toUpperCase());
-        await page.getByRole('heading', { name: heading, exact: true }).waitFor();
+    for (const profile of PROFILES) {
+      // A fresh context per profile gives a clean IndexedDB, so /demo re-seeds
+      // the same kitchen at this profile's viewport.
+      const context = await browserInstance.newContext({
+        viewport: profile.viewport,
+        deviceScaleFactor: 2, // retina: capture rows and item editors stay sharp
+        ignoreHTTPSErrors: true,
+        // The app's default theme is "system"; dark here makes it resolve to dark.
+        colorScheme: 'dark',
+      });
+      const page = await context.newPage();
+
+      // Seed + open the demo. It redirects into the Kitchen reset workspace and
+      // lands on Capture; the heading is the ready signal.
+      await page.goto(`${BASE}/demo`);
+      await page.getByRole('heading', { name: 'Capture', exact: true }).waitFor();
+
+      // The seeded workspace id is in the URL: /workspaces/<slug@id>/capture/...
+      // Everything up to and including the id is the prefix other views hang off.
+      const match = page.url().match(/\/workspaces\/[^/]+/);
+      if (!match) throw new Error(`unexpected demo URL: ${page.url()}`);
+      const prefix = `${BASE}${match[0]}`;
+
+      for (const view of VIEWS) {
+        if (view.suffix) {
+          await page.goto(`${prefix}${view.suffix}`);
+          // Each primary surface has an exact-match heading equal to its label.
+          const heading = view.suffix.replace('/', '').replace(/^\w/, (c) => c.toUpperCase());
+          await page.getByRole('heading', { name: heading, exact: true }).waitFor();
+        }
+        if (view.prepare) await view.prepare(page);
+        // Let the pane settle (list virtualization / layout) before the shot.
+        await page.waitForTimeout(400);
+        // The demo programmatically focuses a row in the container detail pane,
+        // which draws that panel's :focus-visible outline -- an odd "why is this
+        // highlighted" artifact in a static shot. Blur AFTER the settle, since a
+        // post-layout effect re-focuses the row; blurring before it would be undone.
+        await page.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
+        // Reset any scrolled container to its top. On mobile the app scrolls an
+        // inner <main> (not the window); a programmatic focus can leave it partway
+        // down, which clips the sticky header. Start every shot at the true top.
+        await page.evaluate(() => {
+          window.scrollTo(0, 0);
+          for (const el of document.querySelectorAll('*')) {
+            if (el.scrollTop > 0) el.scrollTop = 0;
+          }
+        });
+        await page.waitForTimeout(150);
+        const file = `${view.name}${profile.suffix}.png`;
+        await page.screenshot({ path: join(OUT, file), fullPage: false });
+        console.log('  wrote', file);
       }
-      if (view.prepare) await view.prepare(page);
-      // Let the pane settle (list virtualization / layout) before the shot.
-      await page.waitForTimeout(400);
-      // The demo programmatically focuses a row in the container detail pane,
-      // which draws that panel's :focus-visible outline -- an odd "why is this
-      // highlighted" artifact in a static shot. Blur AFTER the settle, since a
-      // post-layout effect re-focuses the row; blurring before it would be undone.
-      await page.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
-      await page.screenshot({ path: join(OUT, view.file), fullPage: false });
-      console.log('  wrote', view.file);
+
+      await context.close();
     }
 
     await browserInstance.close();
