@@ -55,6 +55,90 @@ test("shows an action-specific error for an empty account status response", asyn
   );
 });
 
+test("puts account navigation and sign-in before online-data details", async ({
+  page,
+}) => {
+  await page.route("**/api/auth/me", (route) => route.fulfill({
+    body: JSON.stringify({
+      accessMigrationAvailable: false,
+      configured: true,
+      hasLinkedGoogleIdentity: false,
+      providers: ["development"],
+      turnstileSiteKey: null,
+      user: null,
+    }),
+    contentType: "application/json",
+    status: 200,
+  }));
+  await page.goto("/account?returnTo=%2Fworkspaces");
+
+  const back = page.getByRole("link", { name: "Back to Stowplan" });
+  const signIn = page.getByRole("button", { name: "Sign in locally" });
+  const disclosure = page.getByText("Online data and privacy", {
+    exact: true,
+  });
+  await expect(back).toBeVisible();
+  await expect(signIn).toBeVisible();
+  await expect(disclosure).toBeVisible();
+  const [backBox, signInBox, disclosureBox] = await Promise.all([
+    back.boundingBox(),
+    signIn.boundingBox(),
+    disclosure.boundingBox(),
+  ]);
+  expect(backBox).not.toBeNull();
+  expect(signInBox).not.toBeNull();
+  expect(disclosureBox).not.toBeNull();
+  expect(backBox!.y).toBeLessThan(signInBox!.y);
+  expect(signInBox!.y).toBeLessThan(disclosureBox!.y);
+});
+
+test("puts workspace continuation before sessions and account deletion", async ({
+  page,
+}) => {
+  await page.route("**/api/auth/me", (route) => route.fulfill({
+    body: JSON.stringify({
+      accessMigrationAvailable: false,
+      configured: true,
+      hasLinkedGoogleIdentity: false,
+      providers: ["development"],
+      turnstileSiteKey: null,
+      user: {
+        displayName: OWNER_NAME,
+        email: OWNER_EMAIL,
+        expiresAt: "2099-07-26T00:00:00.000Z",
+        globalRole: "user",
+        userId: OWNER_ID,
+      },
+    }),
+    contentType: "application/json",
+    status: 200,
+  }));
+  await page.goto(
+    "/account?workspace=ws_shared&returnTo=%2Fworkspaces%2Fshared-home%40ws_shared%2Fsettings",
+  );
+
+  const manageAccess = page.getByRole("link", {
+    name: "Manage workspace access",
+  });
+  const sessions = page.getByRole("heading", { name: "Your sessions" });
+  const deletion = page.getByRole("heading", {
+    name: "Delete server account",
+  });
+  await expect(manageAccess).toBeVisible();
+  await expect(sessions).toBeVisible();
+  await expect(deletion).toBeVisible();
+  const [manageBox, sessionsBox, deletionBox] = await Promise.all([
+    manageAccess.boundingBox(),
+    sessions.boundingBox(),
+    deletion.boundingBox(),
+  ]);
+  expect(manageBox).not.toBeNull();
+  expect(sessionsBox).not.toBeNull();
+  expect(deletionBox).not.toBeNull();
+  expect(manageBox!.y).toBeLessThan(sessionsBox!.y);
+  expect(sessionsBox!.y).toBeLessThan(deletionBox!.y);
+});
+
 test("does not exchange an Access identity for an ordinary account session", async ({
   page,
 }) => {

@@ -1,6 +1,6 @@
 "use client";
 
-import { ShieldCheck } from "lucide-react";
+import { ArrowLeft, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import {
@@ -349,6 +349,9 @@ export default function Account() {
 
   return <main className="onboarding account">
     <section>
+      <nav aria-label="Account navigation" className={styles.navigation}>
+        <Link href={returnTo}><ArrowLeft /> Back to Stowplan</Link>
+      </nav>
       <p className="eyebrow">Identity & backup</p>
       <h1>{user ? `Signed in as ${user.displayName}` : "Connect Stowplan"}</h1>
       {!loaded
@@ -362,26 +365,19 @@ export default function Account() {
                   <small>{user.globalRole} account, session expires {new Date(user.expiresAt).toLocaleString()}</small>
                 </span>
               </p>
-              <AccountSessions
-                accountId={user.userId}
-                onSignOut={signOut}
-              />
-              <AccountDeletion
-                accountId={user.userId}
-                onDeleted={accountDeleted}
-                turnstileSiteKey={turnstileSiteKey}
-              />
               <section className={styles.guestPanel}>
                 <h2>Workspace collaboration</h2>
                 <p>Member roles, invite-link enrollment expiry and revocation, leaving, and server deletion are managed from the workspace access page.</p>
                 {workspace
-                  ? <Link href={workspacePath({
+                  ? <Link className={styles.workspaceAction} href={workspacePath({
                       view: "access",
                       workspaceId: workspace,
                     })}>
                       Manage workspace access
                     </Link>
-                  : <small>Open Account from a workspace to reach its access page.</small>}
+                  : <Link href="/workspaces">
+                      Choose a workspace to manage
+                    </Link>}
               </section>
               <div className={styles.accountActions}>
                 {user.globalRole === "admin" && <Link href="/admin">Open admin control panel</Link>}
@@ -395,20 +391,20 @@ export default function Account() {
                     siteKey={turnstileSiteKey}
                   />}
               </div>
+              <AccountSessions
+                accountId={user.userId}
+                onSignOut={signOut}
+              />
+              <AccountDeletion
+                accountId={user.userId}
+                onDeleted={accountDeleted}
+                turnstileSiteKey={turnstileSiteKey}
+              />
             </>
           : <>
               <p>{configured
                 ? "Sign in to create or update the online backup of the workspace open in this browser and upload waiting changes from other local workspaces. Local copies remain in this browser. You can also collaborate in workspaces where your account is a member."
                 : "This deployment has no server database. Local organizing remains fully available; use the Node + SQLite or Cloudflare + D1 runbook to test server features."}</p>
-              {configured && <div className={styles.dataDisclosure}>
-                <p>Installation administrators can inspect and administer server-backed workspace data without workspace membership.</p>
-                <a href={ACCOUNT_DATA_URL} rel="noreferrer" target="_blank">
-                  How Stowplan stores and administers online data
-                </a>
-                <a href={PRIVACY_POLICY_URL}>
-                  Privacy policy
-                </a>
-              </div>}
               {providers.includes("development") && <form action={developmentSignIn} className="dev-signin">
                 <h2>Local development sign-in</h2>
                 <label>Name<input name="name" defaultValue="Local Owner" required /></label>
@@ -435,10 +431,21 @@ export default function Account() {
                 />}
               {configured && !providers.length &&
                 <p className="muted">The database is ready, but no sign-in provider is enabled. Local development sign-in requires <code>AUTH_DEV_ENABLED=true</code>; it creates a session immediately and never sends an email code.</p>}
+              {configured && <details className={styles.dataDisclosure}>
+                <summary>Online data and privacy</summary>
+                <div>
+                  <p>Installation administrators can inspect and administer server-backed workspace data without workspace membership.</p>
+                  <a href={ACCOUNT_DATA_URL} rel="noreferrer" target="_blank">
+                    How Stowplan stores and administers online data
+                  </a>
+                  <a href={PRIVACY_POLICY_URL}>
+                    Privacy policy
+                  </a>
+                </div>
+              </details>}
               <p className="muted">Invite URLs expire and can be redeemed once; the resulting workspace membership remains until the member leaves or is removed.</p>
             </>}
       {message && <output aria-live="polite">{message}</output>}
-      <Link href={returnTo}>Back to Stowplan</Link>
     </section>
   </main>;
 }

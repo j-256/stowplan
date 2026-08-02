@@ -37,6 +37,8 @@ The hosting operator and people with infrastructure or backup access may have ad
 
 ## Sessions and account access
 
+The Account page keeps its return action at the top. Before sign-in, the available sign-in controls appear before the expandable online-data and privacy explanation. After sign-in, workspace collaboration appears before session management and account deletion; opening Account from a workspace also provides a direct return to that workspace's access controls.
+
 Open **Account and sessions** from the user menu to review signed-in browsers and devices. A session record can show its browser or device description, coarse network, creation time, approximate last server activity, expiry, and revocation time.
 
 Choose **Revoke session** to remove another session's server access, or **Sign out this session** for the current browser. Revoking a session does not erase workspace copies or waiting changes already stored on that device.

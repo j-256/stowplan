@@ -1,3 +1,19 @@
+.navigation {
+  margin-bottom: 20px;
+}
+
+.navigation > a {
+  color: var(--ink);
+  gap: 8px;
+  text-decoration: none;
+  width: max-content;
+}
+
+.navigation svg {
+  flex: none;
+  width: 18px;
+}
+
 .identity {
   align-items: center;
   background: var(--sage2);
@@ -52,6 +68,16 @@
   width: 18px;
 }
 
+.guestPanel .workspaceAction {
+  background: var(--sage);
+  border: 1px solid var(--sage);
+  border-radius: 10px;
+  color: var(--panel);
+  font-weight: 700;
+  padding: 10px 14px;
+  text-decoration: none;
+}
+
 .guestResult {
   background: var(--bg);
   border: 1px solid var(--line);
@@ -93,15 +119,31 @@
 .dataDisclosure {
   border-block: 1px solid var(--line);
   margin-block: 20px;
-  padding-block: 16px;
 }
 
-.dataDisclosure > p {
+.dataDisclosure > summary {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  font-weight: 700;
+  min-height: 52px;
+  padding-block: 4px;
+}
+
+.dataDisclosure > div {
+  padding-bottom: 16px;
+}
+
+.dataDisclosure > div > p {
   color: var(--muted);
   line-height: 1.55;
 }
 
 @media (max-width: 540px) {
+  .navigation > a {
+    width: 100%;
+  }
+
   .guestActions {
     grid-template-columns: 1fr;
   }
