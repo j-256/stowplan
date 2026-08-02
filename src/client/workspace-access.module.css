@@ -27,15 +27,13 @@
 }
 
 .hero h1,
-.sectionHeader h2,
-.summary h2 {
+.sectionHeader h2 {
   margin: 0;
   overflow-wrap: anywhere;
 }
 
 .hero p:last-child,
-.sectionHeader p:last-child,
-.summary p:last-child {
+.sectionHeader p:last-child {
   color: var(--muted);
   margin-bottom: 0;
 }
@@ -120,10 +118,67 @@
 }
 
 .summary {
+  overflow: hidden;
+  padding: 0;
+}
+
+.summary > summary {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  list-style: none;
+  min-height: 56px;
+  padding: 0.8rem 1rem;
+}
+
+.summary > summary::-webkit-details-marker {
+  display: none;
+}
+
+.summary > summary::after {
+  border-bottom: 2px solid currentColor;
+  border-right: 2px solid currentColor;
+  content: "";
+  flex: none;
+  height: 0.5rem;
+  margin-right: 0.2rem;
+  transform: rotate(45deg);
+  width: 0.5rem;
+}
+
+.summary[open] > summary::after {
+  transform: rotate(225deg);
+}
+
+.summary > summary > span {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.summary > summary strong,
+.summary > summary small {
+  overflow-wrap: anywhere;
+}
+
+.summary > summary small,
+.summaryBody > p {
+  color: var(--muted);
+}
+
+.summaryBody {
   align-items: start;
+  border-top: 1px solid var(--line);
   display: grid;
   gap: 1rem;
   grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  padding: clamp(1rem, 3vw, 1.5rem);
+}
+
+.summaryBody > p {
+  margin: 0;
 }
 
 .capabilities {
@@ -438,7 +493,7 @@
 }
 
 @media (max-width: 880px) {
-  .summary {
+  .summaryBody {
     grid-template-columns: minmax(0, 1fr);
   }
 

@@ -40,7 +40,7 @@ The final active owner cannot leave, be removed, or become a lower role. Transfe
 
 ## Invite someone
 
-An owner opens **Workspace access**, chooses viewer or editor access, sets an expiry, and chooses **Create invite link**.
+An owner opens **Workspace access**. Invitation controls come first: choose viewer or editor access, set an expiry, and choose **Create invite link**. Expand **Owner role permissions** when you need to review the full capability summary; member role controls follow the invitation list.
 
 The full invite URL appears only in the creation dialog. Copy or share it before choosing **Done**. A link preview or scanner may open the page safely; only **Accept invitation** enrolls the signed-in person.
 

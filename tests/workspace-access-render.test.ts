@@ -305,6 +305,11 @@ describe("workspace access surface", () => {
     expect(markup).toContain("Members");
     expect(markup).toContain("Transfer ownership");
     expect(markup).toContain("Create invite link");
+    expect(markup).toContain("<details");
+    expect(markup).toContain("Owner role permissions");
+    expect(markup.indexOf('id="guest-links-title"')).toBeLessThan(
+      markup.indexOf('id="members-title"'),
+    );
     expect(markup).toContain(`min="${GUEST_LINK_EXPIRY_HOURS.minimum}"`);
     expect(markup).toContain(`max="${GUEST_LINK_EXPIRY_HOURS.maximum}"`);
     expect(markup).toContain("Active");

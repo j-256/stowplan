@@ -1112,159 +1112,27 @@ function WorkspaceAccessContent({
       </section>}
 
     {!terminalKind &&
-      <section className={styles.summary} aria-labelledby="access-summary-title">
-        <div>
-          <p className="eyebrow">Current permission</p>
-          <h2 id="access-summary-title">{roleLabel(access.role)} role</h2>
+      <details className={styles.summary}>
+        <summary>
+          <span>
+            <strong>{roleLabel(access.role)} role permissions</strong>
+            <small>Review what you can do in this workspace</small>
+          </span>
+        </summary>
+        <div className={styles.summaryBody}>
           <p>{accessExplanation(access.role)}</p>
+          <dl className={styles.capabilities}>
+            <div><dt>Read</dt><dd>{access.capabilities.read ? "Allowed" : "Unavailable"}</dd></div>
+            <div><dt>Edit workspace</dt><dd>{access.capabilities.write ? "Allowed" : "Read-only"}</dd></div>
+            <div><dt>Manage access</dt><dd>{access.capabilities.manageAccess ? "Allowed" : "Owner-only"}</dd></div>
+            <div><dt>Leave workspace</dt><dd>{access.capabilities.leave ? "Allowed" : "Guarded"}</dd></div>
+            <div><dt>Delete server copy</dt><dd>{access.capabilities.delete ? "Allowed" : "Owner-only"}</dd></div>
+          </dl>
         </div>
-        <dl className={styles.capabilities}>
-          <div><dt>Read</dt><dd>{access.capabilities.read ? "Allowed" : "Unavailable"}</dd></div>
-          <div><dt>Edit workspace</dt><dd>{access.capabilities.write ? "Allowed" : "Read-only"}</dd></div>
-          <div><dt>Manage access</dt><dd>{access.capabilities.manageAccess ? "Allowed" : "Owner-only"}</dd></div>
-          <div><dt>Leave workspace</dt><dd>{access.capabilities.leave ? "Allowed" : "Guarded"}</dd></div>
-          <div><dt>Delete server copy</dt><dd>{access.capabilities.delete ? "Allowed" : "Owner-only"}</dd></div>
-        </dl>
-      </section>}
+      </details>}
 
     {!terminalKind && (canManageAccess
       ? <>
-          <section className={styles.section} aria-labelledby="members-title">
-            <header className={styles.sectionHeader}>
-              <div>
-                <p className="eyebrow">Collaboration</p>
-                <h2 id="members-title">Members</h2>
-                <p>Role changes take effect only after the server confirms them.</p>
-              </div>
-              {usage &&
-                <span className={styles.quota}>
-                  {usage.members.used} of {usage.members.limit} members
-                </span>}
-            </header>
-
-            <form className={styles.searchForm} onSubmit={searchMembers}>
-              <label>
-                <span>Search members</span>
-                <input
-                  maxLength={120}
-                  onChange={(event) =>
-                    setMemberQuery(event.currentTarget.value)}
-                  type="search"
-                  value={memberQuery}
-                />
-              </label>
-              <button
-                disabled={busyKey === "member-search"}
-                type="submit"
-              >
-                Search
-              </button>
-            </form>
-
-            <ul className={styles.memberList}>
-              {visibleMembers.map((member) => {
-                const ownMembership = member.userId === currentUserId;
-                const finalOwner = member.role === "owner" &&
-                  ownerCount <= 1;
-                return <li key={member.userId}>
-                  <div className={styles.memberIdentity}>
-                    <strong>{memberName(member)}</strong>
-                    <span>{member.email ?? "Email unavailable"}</span>
-                    <small>
-                      {member.identityKind === "guest"
-                        ? "Guest identity"
-                        : "Account member"}
-                      {ownMembership ? " · You" : ""}
-                      {` · Joined ${formatTimestamp(member.createdAt)}`}
-                    </small>
-                  </div>
-                  <label className={styles.roleControl}>
-                    <span>Role for {memberName(member)}</span>
-                    <select
-                      aria-describedby={finalOwner
-                        ? `final-owner-${member.userId}`
-                        : undefined}
-                      disabled={ownMembership ||
-                        busyKey === `member-role:${member.userId}`}
-                      onChange={(event) => {
-                        const role = event.currentTarget.value as WorkspaceRole;
-                        if (role !== member.role) {
-                          setFeedback(null);
-                          setPendingRoleChange({ member, role });
-                        }
-                      }}
-                      value={member.role}
-                    >
-                      {MEMBER_ROLES.map((role) =>
-                        <option key={role} value={role}>
-                          {roleLabel(role)}
-                        </option>)}
-                    </select>
-                  </label>
-                  <div className={styles.memberActions}>
-                    {!ownMembership && member.role !== "owner" &&
-                      <button
-                        onClick={() => {
-                          setFeedback(null);
-                          setPendingTransfer(member);
-                        }}
-                        type="button"
-                      >
-                        Transfer ownership
-                      </button>}
-                    {!ownMembership &&
-                      <button
-                        className={styles.danger}
-                        disabled={finalOwner}
-                        onClick={() => {
-                          setFeedback(null);
-                          setPendingRemoval(member);
-                        }}
-                        type="button"
-                      >
-                        Remove
-                      </button>}
-                  </div>
-                  {ownMembership &&
-                    <small className={styles.memberNote}>
-                      Use the guarded ownership transfer or leave action to change your own access.
-                    </small>}
-                  {finalOwner &&
-                    <small
-                      className={styles.memberNote}
-                      id={`final-owner-${member.userId}`}
-                    >
-                      The final owner cannot be demoted or removed.
-                    </small>}
-                </li>;
-              })}
-            </ul>
-            {listsLoading && memberResult === null
-              ? <p className={styles.empty} role="status">Loading members...</p>
-              : visibleMembers.length === 0 &&
-              <p className={styles.empty}>No members match this search.</p>}
-            {memberResult?.page.hasMore && memberResult.page.nextCursor &&
-              <button
-                className={styles.loadMore}
-                disabled={busyKey === "members-more"}
-                onClick={() => void perform(
-                  "members-more",
-                  () => actions.loadMoreMembers(
-                    memberResult.page.nextCursor!,
-                  ),
-                  "Could not load more workspace members",
-                )}
-                type="button"
-              >
-                {busyKey === "members-more" ? "Loading..." : "Load more members"}
-              </button>}
-            {memberResult?.page.hasMore &&
-              !memberResult.page.nextCursor &&
-              <p className={styles.alert} role="alert">
-                More members exist, but the continuation cursor is unavailable. Refresh access before treating this list as complete.
-              </p>}
-          </section>
-
           <section className={styles.section} aria-labelledby="guest-links-title">
             <header className={styles.sectionHeader}>
               <div>
@@ -1406,6 +1274,142 @@ function WorkspaceAccessContent({
               !guestLinkResult.page.nextCursor &&
               <p className={styles.alert} role="alert">
                 More invite links exist, but the continuation cursor is unavailable. Refresh access before treating this list as complete.
+              </p>}
+          </section>
+
+          <section className={styles.section} aria-labelledby="members-title">
+            <header className={styles.sectionHeader}>
+              <div>
+                <p className="eyebrow">Collaboration</p>
+                <h2 id="members-title">Members</h2>
+                <p>Role changes take effect only after the server confirms them.</p>
+              </div>
+              {usage &&
+                <span className={styles.quota}>
+                  {usage.members.used} of {usage.members.limit} members
+                </span>}
+            </header>
+
+            <form className={styles.searchForm} onSubmit={searchMembers}>
+              <label>
+                <span>Search members</span>
+                <input
+                  maxLength={120}
+                  onChange={(event) =>
+                    setMemberQuery(event.currentTarget.value)}
+                  type="search"
+                  value={memberQuery}
+                />
+              </label>
+              <button
+                disabled={busyKey === "member-search"}
+                type="submit"
+              >
+                Search
+              </button>
+            </form>
+
+            <ul className={styles.memberList}>
+              {visibleMembers.map((member) => {
+                const ownMembership = member.userId === currentUserId;
+                const finalOwner = member.role === "owner" &&
+                  ownerCount <= 1;
+                return <li key={member.userId}>
+                  <div className={styles.memberIdentity}>
+                    <strong>{memberName(member)}</strong>
+                    <span>{member.email ?? "Email unavailable"}</span>
+                    <small>
+                      {member.identityKind === "guest"
+                        ? "Guest identity"
+                        : "Account member"}
+                      {ownMembership ? " · You" : ""}
+                      {` · Joined ${formatTimestamp(member.createdAt)}`}
+                    </small>
+                  </div>
+                  <label className={styles.roleControl}>
+                    <span>Role for {memberName(member)}</span>
+                    <select
+                      aria-describedby={finalOwner
+                        ? `final-owner-${member.userId}`
+                        : undefined}
+                      disabled={ownMembership ||
+                        busyKey === `member-role:${member.userId}`}
+                      onChange={(event) => {
+                        const role = event.currentTarget.value as WorkspaceRole;
+                        if (role !== member.role) {
+                          setFeedback(null);
+                          setPendingRoleChange({ member, role });
+                        }
+                      }}
+                      value={member.role}
+                    >
+                      {MEMBER_ROLES.map((role) =>
+                        <option key={role} value={role}>
+                          {roleLabel(role)}
+                        </option>)}
+                    </select>
+                  </label>
+                  <div className={styles.memberActions}>
+                    {!ownMembership && member.role !== "owner" &&
+                      <button
+                        onClick={() => {
+                          setFeedback(null);
+                          setPendingTransfer(member);
+                        }}
+                        type="button"
+                      >
+                        Transfer ownership
+                      </button>}
+                    {!ownMembership &&
+                      <button
+                        className={styles.danger}
+                        disabled={finalOwner}
+                        onClick={() => {
+                          setFeedback(null);
+                          setPendingRemoval(member);
+                        }}
+                        type="button"
+                      >
+                        Remove
+                      </button>}
+                  </div>
+                  {ownMembership &&
+                    <small className={styles.memberNote}>
+                      Use the guarded ownership transfer or leave action to change your own access.
+                    </small>}
+                  {finalOwner &&
+                    <small
+                      className={styles.memberNote}
+                      id={`final-owner-${member.userId}`}
+                    >
+                      The final owner cannot be demoted or removed.
+                    </small>}
+                </li>;
+              })}
+            </ul>
+            {listsLoading && memberResult === null
+              ? <p className={styles.empty} role="status">Loading members...</p>
+              : visibleMembers.length === 0 &&
+              <p className={styles.empty}>No members match this search.</p>}
+            {memberResult?.page.hasMore && memberResult.page.nextCursor &&
+              <button
+                className={styles.loadMore}
+                disabled={busyKey === "members-more"}
+                onClick={() => void perform(
+                  "members-more",
+                  () => actions.loadMoreMembers(
+                    memberResult.page.nextCursor!,
+                  ),
+                  "Could not load more workspace members",
+                )}
+                type="button"
+              >
+                {busyKey === "members-more" ? "Loading..." : "Load more members"}
+              </button>}
+            {memberResult?.page.hasMore &&
+              !memberResult.page.nextCursor &&
+              <p className={styles.alert} role="alert">
+                More members exist, but the continuation cursor is unavailable. Refresh access before treating this list as complete.
               </p>}
           </section>
         </>
