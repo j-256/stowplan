@@ -1,3 +1,4 @@
+export * from "./activity";
 export * from "./commands";
 export * from "./demo";
 export * from "./errors";

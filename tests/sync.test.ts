@@ -445,6 +445,111 @@ describe("synchronization", () => {
         expect(pasta?.quantity).toBe(12);
     });
 
+    it("accepts a stale undo after an unrelated remote edit to the same item", async () => {
+        const initial = editableDemoState();
+        const store = new MemorySnapshotStore([initial]);
+        const changed = await synchronize(store, initial.workspace.id, [
+            createEnvelope(
+                initial,
+                {
+                    type: "item.update",
+                    id: "item_pasta",
+                    changes: { quantity: 7 },
+                },
+                { id: "cmd_history_sync_quantity" },
+            ),
+        ]);
+        const activityId = changed.snapshot.activities.at(-1)!.id;
+        const staleUndo = createEnvelope(
+            changed.snapshot,
+            { type: "history.undo", activityId },
+            { id: "cmd_history_sync_undo", actorId: "user_undo" },
+        );
+        const remoteNotes = createEnvelope(
+            changed.snapshot,
+            {
+                type: "item.update",
+                id: "item_pasta",
+                changes: { notes: "Remote note after quantity" },
+            },
+            { id: "cmd_history_sync_notes", actorId: "user_remote" },
+        );
+        const remotelyChanged = await synchronize(
+            store,
+            initial.workspace.id,
+            [remoteNotes],
+        );
+        const versionBeforeUndo = remotelyChanged.snapshot.items.find(
+            (item) => item.id === "item_pasta",
+        )!.version;
+
+        const undone = await synchronize(
+            store,
+            initial.workspace.id,
+            [staleUndo],
+        );
+        expect(undone.receipts[0]).toMatchObject({ status: "applied" });
+        expect(undone.snapshot.items.find((item) => item.id === "item_pasta"))
+            .toMatchObject({
+                notes: "Remote note after quantity",
+                quantity: 6,
+                version: versionBeforeUndo + 1,
+            });
+        expect(undone.snapshot.audit.at(-1)).toMatchObject({
+            actorId: "user_undo",
+            targetActivityIds: [activityId],
+            type: "undo",
+        });
+    });
+
+    it("rejects a stale undo after a remote edit to the same meaningful field", async () => {
+        const initial = editableDemoState();
+        const store = new MemorySnapshotStore([initial]);
+        const changed = await synchronize(store, initial.workspace.id, [
+            createEnvelope(
+                initial,
+                {
+                    type: "item.update",
+                    id: "item_pasta",
+                    changes: { quantity: 7 },
+                },
+                { id: "cmd_history_sync_first_quantity" },
+            ),
+        ]);
+        const activityId = changed.snapshot.activities.at(-1)!.id;
+        const staleUndo = createEnvelope(
+            changed.snapshot,
+            { type: "history.undo", activityId },
+            { id: "cmd_history_sync_conflicting_undo" },
+        );
+        const remoteQuantity = createEnvelope(
+            changed.snapshot,
+            {
+                type: "item.update",
+                id: "item_pasta",
+                changes: { quantity: 8 },
+            },
+            { id: "cmd_history_sync_second_quantity" },
+        );
+        await synchronize(store, initial.workspace.id, [remoteQuantity]);
+
+        const rejected = await synchronize(
+            store,
+            initial.workspace.id,
+            [staleUndo],
+        );
+        expect(rejected.receipts[0]).toMatchObject({
+            conflicts: [expect.objectContaining({ field: "quantity" })],
+            status: "rejected",
+        });
+        expect(rejected.snapshot.items.find((item) => item.id === "item_pasta")?.quantity)
+            .toBe(8);
+        expect(rejected.snapshot.activities.find(
+            (activity) => activity.id === activityId,
+        )?.status).toBe("applied");
+        expect(rejected.snapshot.audit).toEqual([]);
+    });
+
     it("pauses stale same-field edits for review", async () => {
         const initial = editableDemoState();
         const store = new MemorySnapshotStore([initial]);

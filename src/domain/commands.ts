@@ -1,3 +1,4 @@
+import { meaningfulActivityPatches } from "./activity";
 import { ConflictError, DomainError } from "./errors";
 import { isLegacyCompatibleIssue, validateSnapshot } from "./import";
 import type {
@@ -1834,9 +1835,10 @@ function historyConflicts(
 ): SyncConflict[] {
     const conflicts: SyncConflict[] = [];
     const working = clone(state);
+    const meaningfulPatches = meaningfulActivityPatches(activity.patches);
     const patches = direction === "undo"
-        ? reversePatches(activity.patches)
-        : activity.patches;
+        ? reversePatches(meaningfulPatches)
+        : meaningfulPatches;
     for (const fieldPatch of patches) {
         const current = readPatchValue(
             working,
@@ -1870,6 +1872,32 @@ function reversePatches(patches: FieldPatch[]): FieldPatch[] {
     }));
 }
 
+function touchHistoryRecords(
+    state: WorkspaceState,
+    patches: readonly FieldPatch[],
+    timestamp: string,
+): void {
+    const itemIds = new Set<string>();
+    const locationIds = new Set<string>();
+    for (const fieldPatch of patches) {
+        if (!fieldPatch.path) continue;
+        if (fieldPatch.target === "item") itemIds.add(fieldPatch.id);
+        if (fieldPatch.target === "location") locationIds.add(fieldPatch.id);
+    }
+    for (const itemId of itemIds) {
+        const item = state.items.find((candidate) => candidate.id === itemId);
+        if (!item) continue;
+        item.version = nextItemVersion(item);
+        item.updatedAt = timestamp;
+    }
+    for (const locationId of locationIds) {
+        const location = state.locations.find(
+            (candidate) => candidate.id === locationId,
+        );
+        if (location) location.updatedAt = timestamp;
+    }
+}
+
 function applyHistoryAction(
     state: WorkspaceState,
     envelope: CommandEnvelope,
@@ -1896,8 +1924,12 @@ function applyHistoryAction(
         if (conflicts.length) {
             throw new ConflictError(`Cannot ${direction} ${activity.label}`, conflicts);
         }
-        const patches = direction === "undo" ? reversePatches(activity.patches) : activity.patches;
+        const meaningfulPatches = meaningfulActivityPatches(activity.patches);
+        const patches = direction === "undo"
+            ? reversePatches(meaningfulPatches)
+            : meaningfulPatches;
         applyPatches(working, patches);
+        touchHistoryRecords(working, meaningfulPatches, envelope.timestamp);
         const stored = working.activities.find((candidate) => candidate.id === activity.id) as ActivityRecord;
         stored.status = direction === "undo" ? "undone" : "applied";
         stored.undoneAt = direction === "undo" ? envelope.timestamp : null;
@@ -2047,7 +2079,7 @@ export function applyCommand(
         commandId: envelope.id,
         id: `activity_${envelope.id}`,
         label: change.label,
-        patches: change.patches,
+        patches: meaningfulActivityPatches(change.patches),
         status: "applied",
         subjectIds: [...new Set(change.subjectIds)],
         timestamp: envelope.timestamp,

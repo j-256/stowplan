@@ -1129,6 +1129,261 @@ describe("organizer command engine", () => {
 });
 
 describe("field-aware history", () => {
+    it("undoes an older item field without overwriting a later unrelated edit", () => {
+        let state = makeLocationsEditable(createDemoState(), "loc_warm");
+        const itemId = "item_pasta";
+        const original = structuredClone(
+            state.items.find((item) => item.id === itemId)!,
+        );
+        const quantityTimestamp = "2026-07-22T12:01:00.000Z";
+        const notesTimestamp = "2026-07-22T12:02:00.000Z";
+        const undoTimestamp = "2026-07-22T12:03:00.000Z";
+        const reapplyTimestamp = "2026-07-22T12:04:00.000Z";
+        const quantityResult = applyCommand(
+            state,
+            createEnvelope(
+                state,
+                { type: "item.update", id: itemId, changes: { quantity: 7 } },
+                { id: "cmd_item_quantity", timestamp: quantityTimestamp },
+            ),
+        );
+        state = quantityResult.state;
+        expect(quantityResult.activity?.patches.map((candidate) => candidate.path))
+            .toEqual(["quantity"]);
+
+        state = applyCommand(
+            state,
+            createEnvelope(
+                state,
+                { type: "item.update", id: itemId, changes: { notes: "Later note" } },
+                { id: "cmd_item_notes", timestamp: notesTimestamp },
+            ),
+        ).state;
+        const beforeUndo = structuredClone(
+            state.items.find((item) => item.id === itemId)!,
+        );
+        const undone = applyCommand(
+            state,
+            createEnvelope(
+                state,
+                {
+                    type: "history.undo",
+                    activityId: quantityResult.activity!.id,
+                },
+                { id: "cmd_item_quantity_undo", timestamp: undoTimestamp },
+            ),
+        );
+        state = undone.state;
+        expect(state.items.find((item) => item.id === itemId)).toMatchObject({
+            notes: "Later note",
+            quantity: original.quantity,
+            updatedAt: undoTimestamp,
+            version: beforeUndo.version + 1,
+        });
+        expect(undone.audit).toMatchObject({
+            targetActivityIds: [quantityResult.activity!.id],
+            type: "undo",
+        });
+
+        state = applyCommand(
+            state,
+            createEnvelope(
+                state,
+                {
+                    type: "history.reapply",
+                    activityId: quantityResult.activity!.id,
+                },
+                { id: "cmd_item_quantity_reapply", timestamp: reapplyTimestamp },
+            ),
+        ).state;
+        expect(state.items.find((item) => item.id === itemId)).toMatchObject({
+            notes: "Later note",
+            quantity: 7,
+            updatedAt: reapplyTimestamp,
+            version: beforeUndo.version + 2,
+        });
+    });
+
+    it("undoes an older location field without overwriting a later unrelated edit", () => {
+        let state = makeLocationsEditable(createDemoState(), "loc_warm");
+        const locationId = "loc_warm";
+        const originalName = state.locations.find(
+            (location) => location.id === locationId,
+        )!.name;
+        const nameTimestamp = "2026-07-22T12:05:00.000Z";
+        const descriptionTimestamp = "2026-07-22T12:06:00.000Z";
+        const undoTimestamp = "2026-07-22T12:07:00.000Z";
+        const reapplyTimestamp = "2026-07-22T12:08:00.000Z";
+        const nameResult = applyCommand(
+            state,
+            createEnvelope(
+                state,
+                {
+                    type: "location.update",
+                    id: locationId,
+                    changes: { name: "Warm pantry" },
+                },
+                { id: "cmd_location_name", timestamp: nameTimestamp },
+            ),
+        );
+        state = nameResult.state;
+        expect(nameResult.activity?.patches.map((candidate) => candidate.path))
+            .toEqual(["name"]);
+
+        state = applyCommand(
+            state,
+            createEnvelope(
+                state,
+                {
+                    type: "location.update",
+                    id: locationId,
+                    changes: { description: "Later description" },
+                },
+                { id: "cmd_location_description", timestamp: descriptionTimestamp },
+            ),
+        ).state;
+        state = applyCommand(
+            state,
+            createEnvelope(
+                state,
+                {
+                    type: "history.undo",
+                    activityId: nameResult.activity!.id,
+                },
+                { id: "cmd_location_name_undo", timestamp: undoTimestamp },
+            ),
+        ).state;
+        expect(state.locations.find((location) => location.id === locationId))
+            .toMatchObject({
+                description: "Later description",
+                name: originalName,
+                updatedAt: undoTimestamp,
+            });
+
+        state = applyCommand(
+            state,
+            createEnvelope(
+                state,
+                {
+                    type: "history.reapply",
+                    activityId: nameResult.activity!.id,
+                },
+                { id: "cmd_location_name_reapply", timestamp: reapplyTimestamp },
+            ),
+        ).state;
+        expect(state.locations.find((location) => location.id === locationId))
+            .toMatchObject({
+                description: "Later description",
+                name: "Warm pantry",
+                updatedAt: reapplyTimestamp,
+            });
+    });
+
+    it("ignores generated bookkeeping patches retained in legacy activity", () => {
+        let state = makeLocationsEditable(createDemoState(), "loc_warm");
+        const itemId = "item_pasta";
+        const original = structuredClone(
+            state.items.find((item) => item.id === itemId)!,
+        );
+        const changeTimestamp = "2026-07-22T12:09:00.000Z";
+        const laterTimestamp = "2026-07-22T12:10:00.000Z";
+        const undoTimestamp = "2026-07-22T12:11:00.000Z";
+        const changed = applyCommand(
+            state,
+            createEnvelope(
+                state,
+                { type: "item.update", id: itemId, changes: { quantity: 7 } },
+                { id: "cmd_legacy_quantity", timestamp: changeTimestamp },
+            ),
+        );
+        state = changed.state;
+        const changedItem = state.items.find((item) => item.id === itemId)!;
+        const activity = state.activities.find(
+            (candidate) => candidate.id === changed.activity!.id,
+        )!;
+        activity.patches = [
+            ...activity.patches.filter(
+                (candidate) =>
+                    candidate.path !== "updatedAt" && candidate.path !== "version",
+            ),
+            {
+                after: changedItem.updatedAt,
+                before: original.updatedAt,
+                id: itemId,
+                path: "updatedAt",
+                target: "item",
+            },
+            {
+                after: changedItem.version,
+                before: original.version,
+                id: itemId,
+                path: "version",
+                target: "item",
+            },
+        ];
+        state = applyCommand(
+            state,
+            createEnvelope(
+                state,
+                { type: "item.update", id: itemId, changes: { notes: "Later note" } },
+                { id: "cmd_after_legacy", timestamp: laterTimestamp },
+            ),
+        ).state;
+        const versionBeforeUndo = state.items.find(
+            (item) => item.id === itemId,
+        )!.version;
+
+        state = applyCommand(
+            state,
+            createEnvelope(
+                state,
+                { type: "history.undo", activityId: activity.id },
+                { id: "cmd_legacy_undo", timestamp: undoTimestamp },
+            ),
+        ).state;
+        expect(state.items.find((item) => item.id === itemId)).toMatchObject({
+            notes: "Later note",
+            quantity: original.quantity,
+            updatedAt: undoTimestamp,
+            version: versionBeforeUndo + 1,
+        });
+        expect(
+            state.activities.find((candidate) => candidate.id === activity.id)?.patches
+                .map((candidate) => candidate.path),
+        ).toEqual(["quantity", "updatedAt", "version"]);
+    });
+
+    it("rejects an undo atomically when item version bookkeeping is exhausted", () => {
+        let state = makeLocationsEditable(createDemoState(), "loc_warm");
+        const changed = applyCommand(
+            state,
+            createEnvelope(
+                state,
+                { type: "item.update", id: "item_pasta", changes: { quantity: 7 } },
+                { id: "cmd_exhausted_history" },
+            ),
+        );
+        state = changed.state;
+        state.items.find((item) => item.id === "item_pasta")!.version =
+            Number.MAX_SAFE_INTEGER;
+        const before = structuredClone(state);
+
+        try {
+            applyCommand(
+                state,
+                createEnvelope(state, {
+                    type: "history.undo",
+                    activityId: changed.activity!.id,
+                }),
+            );
+            throw new Error("Expected exhausted history bookkeeping to be refused");
+        } catch (error) {
+            expect(error).toBeInstanceOf(DomainError);
+            expect((error as DomainError).code).toBe("ITEM_VERSION_EXHAUSTED");
+        }
+        expect(state).toEqual(before);
+    });
+
     it("plucks one change for undo and safely reapplies it", () => {
         let state = makeLocationsEditable(createDemoState(), "loc_warm");
         state = applyCommand(
@@ -1166,16 +1421,92 @@ describe("field-aware history", () => {
                 ),
             ).state;
         }
+        const versionBeforeUndo = state.items.find(
+            (item) => item.id === "item_pasta",
+        )!.version;
         state = applyCommand(
             state,
             createEnvelope(state, { type: "history.batchUndo", count: 2 }, { id: "cmd_undo_two" }),
         ).state;
         expect(state.items.find((item) => item.id === "item_pasta")?.quantity).toBe(7);
+        expect(state.items.find((item) => item.id === "item_pasta")?.version)
+            .toBe(versionBeforeUndo + 2);
         state = applyCommand(
             state,
             createEnvelope(state, { type: "history.batchRedo", count: 2 }, { id: "cmd_redo_two" }),
         ).state;
         expect(state.items.find((item) => item.id === "item_pasta")?.quantity).toBe(9);
+        expect(state.items.find((item) => item.id === "item_pasta")?.version)
+            .toBe(versionBeforeUndo + 4);
+    });
+
+    it("combines selective and batch history without losing dependency order", () => {
+        let state = makeLocationsEditable(createDemoState(), "loc_warm");
+        const itemId = "item_pasta";
+        state = applyCommand(
+            state,
+            createEnvelope(
+                state,
+                { type: "item.update", id: itemId, changes: { quantity: 7 } },
+                { id: "cmd_mixed_first" },
+            ),
+        ).state;
+        const noteChange = applyCommand(
+            state,
+            createEnvelope(
+                state,
+                { type: "item.update", id: itemId, changes: { notes: "Keep me" } },
+                { id: "cmd_mixed_note" },
+            ),
+        );
+        state = noteChange.state;
+        state = applyCommand(
+            state,
+            createEnvelope(
+                state,
+                { type: "item.update", id: itemId, changes: { quantity: 8 } },
+                { id: "cmd_mixed_last" },
+            ),
+        ).state;
+
+        state = applyCommand(
+            state,
+            createEnvelope(state, {
+                type: "history.undo",
+                activityId: noteChange.activity!.id,
+            }),
+        ).state;
+        expect(state.items.find((item) => item.id === itemId)).toMatchObject({
+            notes: "",
+            quantity: 8,
+        });
+
+        state = applyCommand(
+            state,
+            createEnvelope(state, { type: "history.batchUndo", count: 2 }),
+        ).state;
+        expect(state.items.find((item) => item.id === itemId)).toMatchObject({
+            notes: "",
+            quantity: 6,
+        });
+
+        state = applyCommand(
+            state,
+            createEnvelope(state, { type: "history.batchRedo", count: 2 }),
+        ).state;
+        expect(state.items.find((item) => item.id === itemId)).toMatchObject({
+            notes: "",
+            quantity: 8,
+        });
+
+        state = applyCommand(
+            state,
+            createEnvelope(state, { type: "history.batchRedo", count: 1 }),
+        ).state;
+        expect(state.items.find((item) => item.id === itemId)).toMatchObject({
+            notes: "Keep me",
+            quantity: 8,
+        });
     });
 
     it("undoes and reapplies a bulk move that repeatedly merges one destination", () => {
@@ -1230,6 +1561,299 @@ describe("field-aware history", () => {
         expect(reapplied.items.find((item) => item.id === destination.id)?.quantity).toBe(9);
         expect(reapplied.items.some((item) => item.id === first.id)).toBe(false);
         expect(reapplied.items.some((item) => item.id === second.id)).toBe(false);
+    });
+
+    it("undoes and reapplies a partial move that splits a record and reopens spaces", () => {
+        const initial = createDemoState();
+        const itemId = "item_pasta";
+        const sourceId = "loc_warm";
+        const destinationId = "loc_counter";
+        const moveTimestamp = "2026-07-22T12:12:00.000Z";
+        const undoTimestamp = "2026-07-22T12:13:00.000Z";
+        const reapplyTimestamp = "2026-07-22T12:14:00.000Z";
+        const moved = applyCommand(
+            initial,
+            createEnvelope(
+                initial,
+                {
+                    type: "item.move",
+                    destinationId,
+                    id: itemId,
+                    quantity: 2,
+                    reopenCompletedParents: true,
+                },
+                { id: "cmd_history_split", timestamp: moveTimestamp },
+            ),
+        );
+        const splitId = "item_split_cmd_history_split";
+        const movedSource = moved.state.items.find((item) => item.id === itemId)!;
+        expect(movedSource).toMatchObject({
+            quantity: 4,
+            updatedAt: moveTimestamp,
+            version: 2,
+        });
+        expect(moved.state.items.find((item) => item.id === splitId)).toMatchObject({
+            locationId: destinationId,
+            quantity: 2,
+            version: 1,
+        });
+        expect(
+            moved.activity?.patches.some(
+                (candidate) =>
+                    candidate.path === "updatedAt" || candidate.path === "version",
+            ),
+        ).toBe(false);
+
+        const undone = applyCommand(
+            moved.state,
+            createEnvelope(
+                moved.state,
+                { type: "history.undo", activityId: moved.activity!.id },
+                { id: "cmd_history_split_undo", timestamp: undoTimestamp },
+            ),
+        ).state;
+        expect(undone.items.some((item) => item.id === splitId)).toBe(false);
+        expect(undone.items.find((item) => item.id === itemId)).toMatchObject({
+            locationId: sourceId,
+            quantity: 6,
+            updatedAt: undoTimestamp,
+            version: 3,
+        });
+        expect(
+            undone.locations
+                .filter((location) => [sourceId, destinationId].includes(location.id))
+                .map((location) => [location.id, location.captureStatus])
+                .sort(),
+        ).toEqual([
+            [destinationId, "counted"],
+            [sourceId, "counted"],
+        ]);
+
+        const reapplied = applyCommand(
+            undone,
+            createEnvelope(
+                undone,
+                { type: "history.reapply", activityId: moved.activity!.id },
+                { id: "cmd_history_split_reapply", timestamp: reapplyTimestamp },
+            ),
+        ).state;
+        expect(reapplied.items.find((item) => item.id === itemId)).toMatchObject({
+            quantity: 4,
+            updatedAt: reapplyTimestamp,
+            version: 4,
+        });
+        expect(reapplied.items.find((item) => item.id === splitId)).toMatchObject({
+            locationId: destinationId,
+            quantity: 2,
+            updatedAt: moveTimestamp,
+            version: 1,
+        });
+        expect(
+            reapplied.locations
+                .filter((location) => [sourceId, destinationId].includes(location.id))
+                .map((location) => [location.id, location.captureStatus])
+                .sort(),
+        ).toEqual([
+            [destinationId, "in_progress"],
+            [sourceId, "in_progress"],
+        ]);
+    });
+
+    it("round trips a nested deletion with descendant items", () => {
+        const initial = makeLocationsEditable(createDemoState(), "loc_right");
+        const locationIds = ["loc_corner", "loc_box"];
+        const itemIds = ["item_lids", "item_manuals"];
+        const originalLocations = initial.locations
+            .filter((location) => locationIds.includes(location.id))
+            .map((location) => structuredClone(location))
+            .sort((left, right) => left.id.localeCompare(right.id));
+        const originalItems = initial.items
+            .filter((item) => itemIds.includes(item.id))
+            .map((item) => structuredClone(item))
+            .sort((left, right) => left.id.localeCompare(right.id));
+        const deleted = applyCommand(
+            initial,
+            createEnvelope(
+                initial,
+                {
+                    type: "location.delete",
+                    descendantIds: ["loc_box"],
+                    id: "loc_corner",
+                    itemIds,
+                },
+                { id: "cmd_history_nested_delete" },
+            ),
+        );
+        expect(
+            deleted.state.locations.some((location) => locationIds.includes(location.id)),
+        ).toBe(false);
+        expect(deleted.state.items.some((item) => itemIds.includes(item.id))).toBe(false);
+
+        const undone = applyCommand(
+            deleted.state,
+            createEnvelope(deleted.state, {
+                type: "history.undo",
+                activityId: deleted.activity!.id,
+            }),
+        ).state;
+        expect(
+            undone.locations
+                .filter((location) => locationIds.includes(location.id))
+                .sort((left, right) => left.id.localeCompare(right.id)),
+        ).toEqual(originalLocations);
+        expect(
+            undone.items
+                .filter((item) => itemIds.includes(item.id))
+                .sort((left, right) => left.id.localeCompare(right.id)),
+        )
+            .toEqual(originalItems);
+
+        const reapplied = applyCommand(
+            undone,
+            createEnvelope(undone, {
+                type: "history.reapply",
+                activityId: deleted.activity!.id,
+            }),
+        ).state;
+        expect(
+            reapplied.locations.some((location) => locationIds.includes(location.id)),
+        ).toBe(false);
+        expect(reapplied.items.some((item) => itemIds.includes(item.id))).toBe(false);
+    });
+
+    it("undoes and reapplies a completed plan step with physical side effects", () => {
+        const initial = createDemoState();
+        const generated = generatePlan(initial, { name: "History plan" });
+        const itemStep = generated.steps.find(
+            (step) => step.type === "item" && step.itemId === "item_pasta",
+        )!;
+        const plan = {
+            ...generated,
+            id: "plan_history_step",
+            steps: [{ ...itemStep, id: "step_history_item" }],
+        };
+        const created = applyCommand(
+            initial,
+            createEnvelope(
+                initial,
+                { type: "plan.create", plan },
+                { id: "cmd_history_plan_create" },
+            ),
+        ).state;
+        const completedTimestamp = "2026-07-22T12:15:00.000Z";
+        const undoTimestamp = "2026-07-22T12:16:00.000Z";
+        const reapplyTimestamp = "2026-07-22T12:17:00.000Z";
+        const completed = applyCommand(
+            created,
+            createEnvelope(
+                created,
+                {
+                    type: "plan.step.complete",
+                    planId: plan.id,
+                    stepId: "step_history_item",
+                },
+                { id: "cmd_history_plan_step", timestamp: completedTimestamp },
+            ),
+        );
+        expect(completed.state.items.find((item) => item.id === "item_pasta"))
+            .toMatchObject({ locationId: itemStep.destinationId, version: 2 });
+        expect(completed.state.plans.find((candidate) => candidate.id === plan.id))
+            .toMatchObject({ status: "completed" });
+
+        const undone = applyCommand(
+            completed.state,
+            createEnvelope(
+                completed.state,
+                { type: "history.undo", activityId: completed.activity!.id },
+                { id: "cmd_history_plan_step_undo", timestamp: undoTimestamp },
+            ),
+        ).state;
+        expect(undone.items.find((item) => item.id === "item_pasta")).toMatchObject({
+            locationId: itemStep.sourceId,
+            updatedAt: undoTimestamp,
+            version: 3,
+        });
+        expect(undone.plans.find((candidate) => candidate.id === plan.id))
+            .toMatchObject({ status: "active" });
+        expect(
+            undone.plans
+                .find((candidate) => candidate.id === plan.id)
+                ?.steps[0]?.completedAt,
+        ).toBeNull();
+
+        const reapplied = applyCommand(
+            undone,
+            createEnvelope(
+                undone,
+                { type: "history.reapply", activityId: completed.activity!.id },
+                { id: "cmd_history_plan_step_reapply", timestamp: reapplyTimestamp },
+            ),
+        ).state;
+        expect(reapplied.items.find((item) => item.id === "item_pasta"))
+            .toMatchObject({
+                locationId: itemStep.destinationId,
+                updatedAt: reapplyTimestamp,
+                version: 4,
+            });
+        expect(reapplied.plans.find((candidate) => candidate.id === plan.id))
+            .toMatchObject({ status: "completed" });
+        expect(
+            reapplied.plans
+                .find((candidate) => candidate.id === plan.id)
+                ?.steps[0]?.completedAt,
+        ).toBe(completedTimestamp);
+    });
+
+    it("undoes and reapplies an item edit together with plan invalidation", () => {
+        let state = makeLocationsEditable(createDemoState(), "loc_warm");
+        const plan = {
+            ...generatePlan(state, { name: "Invalidation history" }),
+            id: "plan_history_invalidation",
+        };
+        state = applyCommand(
+            state,
+            createEnvelope(
+                state,
+                { type: "plan.create", plan },
+                { id: "cmd_history_invalidation_plan" },
+            ),
+        ).state;
+        const changed = applyCommand(
+            state,
+            createEnvelope(
+                state,
+                {
+                    type: "item.update",
+                    id: "item_pasta",
+                    changes: { quantity: 7 },
+                },
+                { id: "cmd_history_invalidate_plan" },
+            ),
+        );
+        expect(changed.state.plans.find((candidate) => candidate.id === plan.id)?.status)
+            .toBe("discarded");
+
+        const undone = applyCommand(
+            changed.state,
+            createEnvelope(changed.state, {
+                type: "history.undo",
+                activityId: changed.activity!.id,
+            }),
+        ).state;
+        expect(undone.items.find((item) => item.id === "item_pasta")?.quantity).toBe(6);
+        expect(undone.plans.find((candidate) => candidate.id === plan.id)?.status)
+            .toBe("active");
+
+        const reapplied = applyCommand(
+            undone,
+            createEnvelope(undone, {
+                type: "history.reapply",
+                activityId: changed.activity!.id,
+            }),
+        ).state;
+        expect(reapplied.items.find((item) => item.id === "item_pasta")?.quantity).toBe(7);
+        expect(reapplied.plans.find((candidate) => candidate.id === plan.id)?.status)
+            .toBe("discarded");
     });
 
     it("refuses an undo that would overwrite a later same-field edit", () => {
