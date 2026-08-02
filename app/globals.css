@@ -85,6 +85,10 @@
   .resizable-panels>.panel-layout-toolbar{display:none}
   .resizable-panels>.panel-jump-toolbar{position:sticky;z-index:8;top:0;grid-column:1;grid-row:1;display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:0 0 8px;background:var(--bg)}
   .panel-jump-toolbar button{min-width:0;padding-inline:8px;background:var(--panel);color:var(--sage);font-size:12px;font-weight:700;text-transform:capitalize}
+  .panel-jump-toolbar button[data-active="true"]{border-color:var(--sage);background:var(--sage2);color:var(--ink)}
+  .resizable-panels[data-active-compact-panel="primary"]>section:nth-of-type(2),
+  .resizable-panels[data-active-compact-panel="secondary"]>section:first-of-type{display:none}
+  .resizable-panels[data-active-compact-panel="secondary"]>section:nth-of-type(2){grid-row:2}
   .resizable-panels>section{scroll-margin-top:60px}
   .mobile-tree-hint{display:block;margin:0 2px 8px;color:var(--muted);font-size:11px}
   .tree-row .row-actions{display:none}
@@ -433,10 +437,9 @@
   .capture-location-row>.drag-handle[data-collapsible="true"]{grid-template-columns:11px 11px;padding-inline:7px}
 }
 @media(max-width:760px), (max-height:520px) and (pointer:coarse) and (min-width:761px){
-  .capture-location-row>.row-actions{display:none}
-  .capture-location-row[data-active="true"]>.queue-row,.capture-location-row:hover>.queue-row,.capture-location-row:focus-within>.queue-row{padding-right:3px}
-  .capture-location-row[data-active="true"]>.queue-row{padding-right:48px}
-  .capture-location-row[data-active="true"]>.row-actions{display:flex;opacity:1;pointer-events:auto}
+  .capture-location-row>.queue-row,.capture-location-row[data-active="true"]>.queue-row,.capture-location-row:hover>.queue-row,.capture-location-row:focus-within>.queue-row{padding-right:48px}
+  .capture-location-row>.row-actions{display:flex;opacity:1;pointer-events:auto}
+  .capture-location-row:not([data-active="true"]):not(:hover):not(:focus-within)>.row-actions{opacity:1;pointer-events:auto}
   .capture-location-row>.row-actions button:not(:last-child){display:none}
   .capture-location-row>.row-actions .icon.small:last-child{width:44px;min-width:44px;height:44px;min-height:44px;background:var(--panel)}
   .capture-move-action svg{display:none}
@@ -484,8 +487,30 @@
 .account-menu-status,.account-menu-error{margin:0;padding:8px 10px;font-size:12px;line-height:1.5}
 .account-menu-status{color:var(--muted)}
 .account-menu-error{color:var(--danger)}
+.mobile-more-trigger{display:none}
+.mobile-more-dialog{display:grid;gap:14px}
+.mobile-more-destinations{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.mobile-more-destinations .nav{min-height:64px;justify-content:flex-start;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+.mobile-more-destinations .nav[data-active="true"]{border-color:color-mix(in srgb,var(--sage) 56%,var(--line));background:var(--sage2)}
+.mobile-more-actions{display:grid;gap:6px;padding-top:6px;border-top:1px solid var(--line)}
+.mobile-more-action{display:grid;grid-template-columns:44px minmax(0,1fr);align-items:center;gap:10px;width:100%;min-height:62px;padding:8px 10px;border:0;border-radius:10px;background:transparent;color:var(--ink);text-align:left;text-decoration:none}
+.mobile-more-action:hover{border-color:transparent;background:var(--sage2)}
+.mobile-more-action>svg{width:20px;justify-self:center;color:var(--sage)}
+.mobile-more-action>span{display:grid;min-width:0;gap:2px}
+.mobile-more-action strong,.mobile-more-action small{overflow-wrap:anywhere}
+.mobile-more-action small{font-size:11px}
+.mobile-more-close{width:100%}
 .admin-header-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px}
 @media(max-width:760px){
   .account-menu-panel{position:fixed;top:calc(max(1rem,env(safe-area-inset-top)) + 52px);right:max(14px,env(safe-area-inset-right))}
+  .header-mobile-secondary{display:none!important}
+  .bottom{grid-template-columns:repeat(5,minmax(0,1fr))}
+  .mobile-more-trigger{display:flex}
   .admin-header-actions{flex-wrap:wrap}
+}
+@media(max-width:370px){
+  .app-shell>main>header{height:78px;min-height:78px;align-items:center;flex-direction:row;gap:8px;padding:10px 12px}
+  .app-shell>main>header>div:first-child{min-width:0}
+  .app-shell>main>header .eyebrow,.app-shell>main>header h1{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .header-actions{width:auto;justify-content:flex-end;gap:6px}
 }

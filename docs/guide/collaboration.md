@@ -16,13 +16,13 @@ Opening or previewing the link does not accept it. Acceptance is an explicit act
 
 Workspace owners can see the display name and email of the account you use to accept.
 
-Later, use the house icon to find the workspace again. On a different device, sign in and choose **Download and open** the first time.
+Later, open **Workspaces and backup status** to find the workspace again. On a phone, choose **More** first; on a wider screen, use the house icon. On a different device, sign in and choose **Download and open** the first time.
 
 An ordinary workspace URL is useful for people who are already members, but it does not grant access.
 
 ## Find your workspaces
 
-Choose the house icon from an open workspace, or open **Settings → Workspaces and backup status**. After sign-in, this screen combines workspaces stored in this browser with online workspaces the account may use.
+Open **Workspaces and backup status** from **More** on a phone, from the house icon on a wider screen, or from **Settings**. After sign-in, this screen combines workspaces stored in this browser with online workspaces the account may use.
 
 If an online workspace is not yet on this device, choose **Download and open**. Stowplan checks the download before saving it and leaves your other local workspaces intact. The card remains visible offline, but its action changes to **Open when online** until the first download succeeds.
 

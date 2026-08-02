@@ -26,6 +26,7 @@ import {
   Home,
   Info,
   Map as MapIcon,
+  Menu,
   Moon,
   PackagePlus,
   PackageX,
@@ -104,7 +105,10 @@ import {
   backupPresentation,
   type BackupPresentation,
 } from "./backup-presentation";
-import { ResizablePanels } from "./resizable-panels";
+import {
+  type CompactPanel,
+  ResizablePanels,
+} from "./resizable-panels";
 import { ReadOnlyWorkspace } from "./read-only-workspace";
 import { parseAuthorizedRecoverySnapshot } from "./recovery-permissions";
 import { StowplanProvider, useStowplan, WorkspaceOpenError } from "./store";
@@ -182,6 +186,22 @@ const nav: { id: View; label: string; icon: typeof Boxes }[] = [
   { id: "activity", label: "Activity", icon: Activity },
   { id: "settings", label: "Settings", icon: Settings },
 ];
+const PHONE_PRIMARY_VIEWS: readonly View[] = Object.freeze([
+  "capture",
+  "spaces",
+  "inventory",
+  "plan",
+]);
+const PHONE_MORE_VIEWS: readonly View[] = Object.freeze([
+  "activity",
+  "settings",
+]);
+const phonePrimaryNav = nav.filter((entry) =>
+  PHONE_PRIMARY_VIEWS.includes(entry.id)
+);
+const phoneMoreNav = nav.filter((entry) =>
+  PHONE_MORE_VIEWS.includes(entry.id)
+);
 const kinds: LocationKind[] = ["room", "zone", "area", "cabinet", "drawer", "shelf", "box", "bin", "container"];
 const frequencies: Frequency[] = ["daily", "weekly", "monthly", "rarely"];
 const planPriorityHelp: Record<keyof PlanWeights, { label: string; description: string }> = {
@@ -1276,6 +1296,7 @@ function Application({
     setDismissedAccessMessageKey,
   ] = useState<string | null>(null);
   const [jumpPaletteOpen, setJumpPaletteOpen] = useState(false);
+  const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [feedback, setFeedback] = useState<FeedbackDetail | null>(null);
   const [preferencesSessionOnly, setPreferencesSessionOnly] = useState(false);
   const [
@@ -1289,6 +1310,7 @@ function Application({
     null,
   );
   const directDemoHandled = useRef(false);
+  const mobileMoreTrigger = useRef<HTMLButtonElement>(null);
 
   const cancelWorkspaceOpen = useCallback(() => {
     workspaceOpenController.current?.abort();
@@ -1464,6 +1486,7 @@ function Application({
         ),
       );
       setView(route.view);
+      setMobileMoreOpen(false);
       setSelected(
         !staleLocation &&
           (route.view === "capture" || route.view === "spaces")
@@ -1653,6 +1676,7 @@ function Application({
     setInventoryItemId(null);
     setGuidanceTarget(null);
     setView("capture");
+    setMobileMoreOpen(false);
     setShowWelcome(false);
     setRouteStatus("ready");
     setWorkspaceNotice("");
@@ -1963,6 +1987,7 @@ function Application({
     setGuidanceTarget(null);
     setInventoryItemId(null);
     setView(nextView);
+    setMobileMoreOpen(false);
     setRouteStatus("ready");
     scrollAppToTop();
     writePath(tabPath(nextView));
@@ -2210,7 +2235,7 @@ function Application({
           </button>
           <a
             aria-label="Workspaces and backup status"
-            className="icon"
+            className="header-mobile-secondary icon"
             href={WORKSPACE_LIST_PATH}
             onClick={(event) => followAppLink(event, openWorkspaceMenu)}
           >
@@ -2218,14 +2243,14 @@ function Application({
           </a>
           <button
             aria-label="Share this view"
-            className="icon"
+            className="header-mobile-secondary icon"
             onClick={() => void shareCurrentView()}
           >
             <Share2 />
           </button>
           <button
             aria-label={themeToggleLabel}
-            className="icon"
+            className="header-mobile-secondary icon"
             onClick={() => selectTheme(
               appliedTheme === "dark" ? "light" : "dark",
             )}
@@ -2414,7 +2439,107 @@ function Application({
       openView={selectView}
       state={state}
     />}
-    <nav className="bottom">{nav.map((entry) => <Nav key={entry.id} {...entry} active={entry.id === view} href={tabPath(entry.id)} select={() => selectView(entry.id)} />)}</nav>
+    <ModalDialog
+      description={<p>Open occasional workspace destinations and utilities.</p>}
+      onClose={() => setMobileMoreOpen(false)}
+      open={mobileMoreOpen}
+      returnFocusRef={mobileMoreTrigger}
+      title="More"
+    >
+      <div className="mobile-more-dialog">
+        <nav
+          aria-label="More workspace destinations"
+          className="mobile-more-destinations"
+        >
+          {phoneMoreNav.map((entry) => <Nav
+            key={entry.id}
+            {...entry}
+            active={entry.id === view}
+            href={tabPath(entry.id)}
+            select={() => selectView(entry.id)}
+          />)}
+        </nav>
+        <div className="mobile-more-actions">
+          <a
+            aria-label="Workspaces and backup status"
+            className="mobile-more-action"
+            href={WORKSPACE_LIST_PATH}
+            onClick={(event) => {
+              setMobileMoreOpen(false);
+              followAppLink(event, openWorkspaceMenu);
+            }}
+          >
+            <Home aria-hidden="true" />
+            <span>
+              <strong>Workspaces and backup status</strong>
+              <small>{syncStatus.label}</small>
+            </span>
+          </a>
+          <button
+            aria-label="Share this view"
+            className="mobile-more-action"
+            onClick={() => {
+              setMobileMoreOpen(false);
+              void shareCurrentView();
+            }}
+            type="button"
+          >
+            <Share2 aria-hidden="true" />
+            <span>
+              <strong>Share this view</strong>
+              <small>Copy or send this exact workspace link</small>
+            </span>
+          </button>
+          <button
+            aria-label={themeToggleLabel}
+            className="mobile-more-action"
+            onClick={() => {
+              setMobileMoreOpen(false);
+              selectTheme(appliedTheme === "dark" ? "light" : "dark");
+            }}
+            type="button"
+          >
+            {appliedTheme === "dark"
+              ? <Moon aria-hidden="true" />
+              : <Sun aria-hidden="true" />}
+            <span>
+              <strong>{appliedTheme === "dark" ? "Use light theme" : "Use dark theme"}</strong>
+              <small>Change the appearance on this device</small>
+            </span>
+          </button>
+        </div>
+        <button
+          className="mobile-more-close"
+          onClick={() => setMobileMoreOpen(false)}
+          type="button"
+        >
+          Close
+        </button>
+      </div>
+    </ModalDialog>
+    <nav aria-label="Primary workspace navigation" className="bottom">
+      {phonePrimaryNav.map((entry) => <Nav
+        key={entry.id}
+        {...entry}
+        active={entry.id === view}
+        href={tabPath(entry.id)}
+        select={() => selectView(entry.id)}
+      />)}
+      <button
+        aria-current={PHONE_MORE_VIEWS.includes(view) ? "page" : undefined}
+        aria-expanded={mobileMoreOpen}
+        aria-haspopup="dialog"
+        aria-label="More"
+        className="mobile-more-trigger nav"
+        data-active={PHONE_MORE_VIEWS.includes(view)}
+        onClick={() => setMobileMoreOpen(true)}
+        ref={mobileMoreTrigger}
+        type="button"
+      >
+        <Menu aria-hidden="true" />
+        <span>More</span>
+      </button>
+    </nav>
   </div>;
 }
 
@@ -2471,6 +2596,10 @@ function Nav({ label, icon: Icon, active, href, select }: { label: string; icon:
 }
 
 function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: { state: WorkspaceState; current: Location | null; select: (id: string) => void; commit: Commit; demoIntro: boolean; focusEditorKey: number | null }) {
+  const [compactPanel, setCompactPanel] = useState<CompactPanel | null>(null);
+  const activeCompactPanel = compactPanel ?? (
+    current ? "secondary" : "primary"
+  );
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const [demoIntroDismissed, setDemoIntroDismissed] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
@@ -2536,6 +2665,7 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
       for (const ancestorId of ancestorIds) next.delete(ancestorId);
       return next;
     });
+    setCompactPanel("primary");
     select(location.id);
     requestAnimationFrame(() => {
       const row = Array.from(
@@ -2566,7 +2696,7 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
     state,
   });
   useEffect(() => {
-    if (focusEditorKey === null && editorNavigationKey === 0) return;
+    if (editorNavigationKey === 0) return;
     const frame = requestAnimationFrame(() => {
       const behavior = matchMedia("(prefers-reduced-motion: reduce)").matches
         ? "auto"
@@ -2575,7 +2705,25 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
       editor.current?.focus({ preventScroll: true });
     });
     return () => cancelAnimationFrame(frame);
-  }, [editorNavigationKey, focusEditorKey]);
+  }, [editorNavigationKey]);
+  useEffect(() => {
+    if (focusEditorKey === null) return;
+    let focusFrame = 0;
+    const panelFrame = requestAnimationFrame(() => {
+      setCompactPanel("secondary");
+      focusFrame = requestAnimationFrame(() => {
+        const behavior = matchMedia("(prefers-reduced-motion: reduce)").matches
+          ? "auto"
+          : "smooth";
+        editor.current?.scrollIntoView({ behavior, block: "start" });
+        editor.current?.focus({ preventScroll: true });
+      });
+    });
+    return () => {
+      cancelAnimationFrame(panelFrame);
+      cancelAnimationFrame(focusFrame);
+    };
+  }, [focusEditorKey]);
   useEffect(() => {
     if (!demoIntro) return;
     const timeout = setTimeout(() => {
@@ -2637,6 +2785,7 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
       focusEditorOnTouch &&
       matchMedia(STACKED_TOUCH_LAYOUT_QUERY).matches
     ) {
+      setCompactPanel("secondary");
       setEditorNavigationKey((value) => value + 1);
     }
   };
@@ -2937,7 +3086,7 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
     : hasNestedSpaces
       ? `${countLabel(nested.length, "nested space")} ${nested.length === 1 ? "is" : "are"} already recorded here. Add a direct item, or mark this space counted.`
       : "Add an item, or mark this space known empty.";
-  const queuePanel = <section className="panel queue"><div className="title"><div><p className="eyebrow">First-pass coverage</p><h2>{done} of {live.length} checked</h2></div><b>{live.length - done} left</b></div><div className="progress"><i style={{ width: `${live.length ? done / live.length * 100 : 0}%` }} /></div>{live.length > 5 && <label className="queue-search"><Search /><input aria-label="Find container" value={queueQuery} onChange={(event) => setQueueQuery(event.target.value)} placeholder="Jump by code or name" /></label>}{live.length > 0 && <p className="capture-order-help">Drag onto the top, middle, or bottom of a row to place before, move inside, or place after. Select a row for a precise Move control.</p>}<div className="capture-tree" role="list" aria-label="Container hierarchy" data-dragging={hierarchyDragging || nativeReorderSource?.type === "location" ? "true" : undefined}>
+  const queuePanel = <section className="panel queue"><div className="title"><div><p className="eyebrow">First-pass coverage</p><h2>{done} of {live.length} checked</h2></div><b>{live.length - done} left</b></div><div className="progress"><i style={{ width: `${live.length ? done / live.length * 100 : 0}%` }} /></div>{live.length > 5 && <label className="queue-search"><Search /><input aria-label="Find container" value={queueQuery} onChange={(event) => setQueueQuery(event.target.value)} placeholder="Jump by code or name" /></label>}{live.length > 0 && <p className="capture-order-help">Drag onto the top, middle, or bottom of a row to place before, move inside, or place after. Use Move for a precise destination.</p>}<div className="capture-tree" role="list" aria-label="Container hierarchy" data-dragging={hierarchyDragging || nativeReorderSource?.type === "location" ? "true" : undefined}>
     <div
       className="capture-root-drop"
       data-drop-target="root"
@@ -3036,7 +3185,7 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
             data-active={current?.id === location.id}
             data-depth={depth}
             style={{ paddingLeft: 6 + depth * 8 }}
-            onClick={() => selectCaptureLocation(location.id, false)}
+            onClick={() => selectCaptureLocation(location.id)}
           >
             <span className="hierarchy-marker" aria-hidden>{depth ? "↳" : "●"}</span>
             <span className="queue-name"><b>{location.code}</b><span>{location.name}</span></span>
@@ -3122,9 +3271,11 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
       })}{!items.length && <Empty title={emptyItemsTitle} text={emptyItemsText} />}</div><div className="finish">{captureComplete ? <button className="reopen-capture" onClick={() => void reopenCapture()}><RotateCcw /><span>Reopen capture</span></button> : <>{items.length > 0 && <button className="danger" onClick={(event) => reviewEmptyContainer(event.currentTarget)}><Trash2 /><span>Empty container</span></button>}{!hasNestedSpaces && <button className="known-empty-action" onClick={(event) => void markKnownEmpty(event.currentTarget)}><PackageX /><span>Known empty & next</span></button>}<button className="primary" onClick={() => void finish("counted")}><CheckCircle2 /><span>Counted & next</span></button></>}</div></> : <Empty title="Add your first space" text="Give a room, cabinet, box, or drawer the same code as its physical label." />}</section>;
   return <>
     <ResizablePanels
+      activeCompactPanel={activeCompactPanel}
       className="content capture"
       defaultPanelPercent={42}
       label="Capture panels"
+      onCompactPanelChange={setCompactPanel}
       primary={queuePanel}
       primaryLabel="capture queue"
       secondary={capturePanel}
@@ -3245,6 +3396,9 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
 }
 
 function Spaces({ state, current, select, commit, focusEditorKey, focusEditorSection }: { state: WorkspaceState; current: Location | null; select: (id: string) => void; commit: Commit; focusEditorKey: number | null; focusEditorSection?: GuidanceFocus }) {
+  const [compactPanel, setCompactPanel] = useState<CompactPanel>(
+    focusEditorKey === null ? "primary" : "secondary",
+  );
   const [editingItem, setEditingItem] = useState<string | null>(null);
   const [dragPayload, setDragPayload] = useState<DragPayload | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -3253,19 +3407,26 @@ function Spaces({ state, current, select, commit, focusEditorKey, focusEditorSec
   const inspector = useRef<HTMLElement | null>(null);
   useEffect(() => {
     if (focusEditorKey === null) return;
-    const frame = requestAnimationFrame(() => {
-      const behavior = matchMedia("(prefers-reduced-motion: reduce)").matches
-        ? "auto"
-        : "smooth";
-      const target = focusEditorSection
-        ? inspector.current?.querySelector<HTMLElement>(
-            `[data-guidance-section="${focusEditorSection}"]`,
-          )
-        : inspector.current;
-      target?.scrollIntoView({ behavior, block: "start" });
-      target?.focus({ preventScroll: true });
+    let focusFrame = 0;
+    const panelFrame = requestAnimationFrame(() => {
+      setCompactPanel("secondary");
+      focusFrame = requestAnimationFrame(() => {
+        const behavior = matchMedia("(prefers-reduced-motion: reduce)").matches
+          ? "auto"
+          : "smooth";
+        const target = focusEditorSection
+          ? inspector.current?.querySelector<HTMLElement>(
+              `[data-guidance-section="${focusEditorSection}"]`,
+            )
+          : inspector.current;
+        target?.scrollIntoView({ behavior, block: "start" });
+        target?.focus({ preventScroll: true });
+      });
     });
-    return () => cancelAnimationFrame(frame);
+    return () => {
+      cancelAnimationFrame(panelFrame);
+      cancelAnimationFrame(focusFrame);
+    };
   }, [focusEditorKey, focusEditorSection]);
   const live = state.locations.filter((location) => !location.archivedAt);
   const archived = state.locations.filter((location) => location.archivedAt);
@@ -3277,6 +3438,7 @@ function Spaces({ state, current, select, commit, focusEditorKey, focusEditorSec
     select(id);
   };
   const focusTreeLocation = (id: string) => {
+    setCompactPanel("primary");
     const frame = requestAnimationFrame(() => {
       const row = Array.from(
         document.querySelectorAll<HTMLElement>(".tree-row[data-location-id]"),
@@ -3331,6 +3493,7 @@ function Spaces({ state, current, select, commit, focusEditorKey, focusEditorSec
   const { openMoveDialog, requestHierarchyChange } = hierarchy;
   const showInspector = (location: Location) => {
     chooseLocation(location.id);
+    setCompactPanel("secondary");
     const frame = requestAnimationFrame(() => {
       const behavior = matchMedia("(prefers-reduced-motion: reduce)").matches
         ? "auto"
@@ -3631,10 +3794,12 @@ function Spaces({ state, current, select, commit, focusEditorKey, focusEditorSec
   const inspectorPanel = <section className="panel inspector" id="space-inspector" ref={inspector} tabIndex={-1} aria-label={current ? `Edit ${current.name}` : "Space editor"}>{current && <button type="button" className="mobile-back-to-hierarchy" onClick={() => focusTreeLocation(current.id)}>Back to hierarchy</button>}{current ? <LocationEditor key={current.id} state={state} location={current} commit={commit} select={select} reorder={reorderLocation} remove={() => removeLocation(current)} editItem={setEditingItem} moveByDrop={finishTouchDrop} requestHierarchyChange={requestHierarchyChange} setDragging={setDragging} startNativeDrag={startNativeDrag} endNativeDrag={endNativeDrag} /> : <Empty title="Select a space" text="Edit it, move it, or drop an item or container onto it." />}</section>;
   return <>
     <ResizablePanels
+      activeCompactPanel={compactPanel}
       className="content split"
       defaultPanelPercent={42}
       label="Space panels"
       minSideBySideWidth={960}
+      onCompactPanelChange={setCompactPanel}
       primary={treePanel}
       primaryLabel="space hierarchy"
       secondary={inspectorPanel}

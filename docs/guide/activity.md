@@ -2,6 +2,8 @@
 
 **Activity** shows meaningful workspace changes and lets you reverse mistakes without restoring an entire backup.
 
+On a phone, choose **More → Activity**. Wider layouts keep **Activity** in the workspace sidebar.
+
 ## Undo one change
 
 Find the change and choose **Undo this**. Stowplan reverses that selected change while leaving unrelated later work intact when it is safe to do so.

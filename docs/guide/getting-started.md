@@ -13,13 +13,17 @@ Try this short loop:
 3. Choose **Counted & next** when the box is represented accurately enough.
 4. Open **Inventory** and search for the item you added.
 5. Open **Plan** to see what evidence Stowplan uses before suggesting physical moves.
-6. Choose the house icon, then **Reset kitchen demo** if you want to start it over.
+6. Open **Workspaces and backup status**, then **Reset kitchen demo** if you want to start it over. On a phone, open it from **More**; on a wider screen, use the house icon.
 
 Anything you change in the demo is real enough to explore Activity, undo, search, and recovery. If you are signed in, the demo uses the same online backup behavior as another workspace. Reset affects only that demo instance. A device-only demo can reset locally; resetting a backed-up demo requires a connection and owner access, and permanently deletes that demo's online copy, memberships, and invite links before creating a fresh local demo.
 
+## Move around on a phone
+
+The bottom bar keeps the four frequent workspace tasks one tap away: **Capture**, **Spaces**, **Inventory**, and **Plan**. Choose **More** for **Activity**, **Settings**, **Workspaces and backup status**, sharing the exact view, and changing the theme. Search and the account menu stay in the workspace header.
+
 ## Start your own workspace
 
-1. Choose the house icon to open **Workspaces**.
+1. Open **Workspaces and backup status**. On a phone, choose **More** first; on a wider screen, use the house icon.
 2. Under **Your workspace name**, enter a useful name such as `My apartment` and choose **Create**.
 3. In **Capture**, choose **Add first space**.
 4. Give the space the same short ID as its physical label, then add its friendly name and type.

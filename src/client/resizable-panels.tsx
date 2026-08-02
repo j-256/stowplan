@@ -14,6 +14,7 @@ import {
 import { readPreference, writePreference } from "./preference-storage";
 
 export type PanelLayout = "side-by-side" | "stacked";
+export type CompactPanel = "primary" | "secondary";
 
 const DEFAULT_PANEL_PERCENT = 38;
 const MIN_PANEL_PERCENT = 28;
@@ -30,20 +31,24 @@ function clampPanelPercent(value: number): number {
 }
 
 export function ResizablePanels({
+  activeCompactPanel,
   className,
   defaultPanelPercent = DEFAULT_PANEL_PERCENT,
   label,
   minSideBySideWidth = DEFAULT_MIN_SIDE_BY_SIDE_WIDTH,
+  onCompactPanelChange,
   primary,
   primaryLabel,
   secondary,
   secondaryLabel,
   storageId,
 }: {
+  activeCompactPanel: CompactPanel;
   className: string;
   defaultPanelPercent?: number;
   label: string;
   minSideBySideWidth?: number;
+  onCompactPanelChange: (panel: CompactPanel) => void;
   primary: ReactNode;
   primaryLabel: string;
   secondary: ReactNode;
@@ -135,15 +140,18 @@ export function ResizablePanels({
   const changePanelPercent = (value: number) => {
     setPanelPercent(clampPanelPercent(value));
   };
-  const scrollToPanel = (index: number) => {
-    const panel = container.current?.querySelectorAll<HTMLElement>(
-      ":scope > section",
-    )[index];
-    if (!panel) return;
-    const behavior = matchMedia("(prefers-reduced-motion: reduce)").matches
-      ? "auto"
-      : "smooth";
-    panel.scrollIntoView({ behavior, block: "start" });
+  const activateCompactPanel = (
+    nextPanel: CompactPanel,
+    index: number,
+  ) => {
+    onCompactPanelChange(nextPanel);
+    requestAnimationFrame(() => {
+      const panel = container.current?.querySelectorAll<HTMLElement>(
+        ":scope > section",
+      )[index];
+      if (!panel) return;
+      panel.scrollIntoView({ behavior: "auto", block: "start" });
+    });
   };
   const style = {
     "--primary-pane": String(panelPercent / 100),
@@ -151,6 +159,7 @@ export function ResizablePanels({
 
   return <div
     className={`${className} resizable-panels`}
+    data-active-compact-panel={activeCompactPanel}
     data-panel-layout={effectiveLayout}
     data-panel-preference={layout}
     ref={container}
@@ -186,10 +195,20 @@ export function ResizablePanels({
       role="group"
       aria-label={`${label} navigation`}
     >
-      <button type="button" onClick={() => scrollToPanel(0)}>
+      <button
+        type="button"
+        aria-pressed={activeCompactPanel === "primary"}
+        data-active={activeCompactPanel === "primary"}
+        onClick={() => activateCompactPanel("primary", 0)}
+      >
         {primaryLabel}
       </button>
-      <button type="button" onClick={() => scrollToPanel(1)}>
+      <button
+        type="button"
+        aria-pressed={activeCompactPanel === "secondary"}
+        data-active={activeCompactPanel === "secondary"}
+        onClick={() => activateCompactPanel("secondary", 1)}
+      >
         {secondaryLabel}
       </button>
     </div>

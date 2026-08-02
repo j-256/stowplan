@@ -247,7 +247,98 @@ async function dispatchNativeCancel(
   }
 }
 
+async function showCapturePanel(
+  page: Page,
+  panel: "capture queue" | "current container",
+): Promise<void> {
+  await expect(page.getByRole("heading", {
+    exact: true,
+    name: "Capture",
+  })).toBeVisible();
+  const navigation = page.getByRole("group", {
+    name: "Capture panels navigation",
+  });
+  if (await navigation.isVisible()) {
+    await navigation.getByRole("button", { name: panel }).click();
+  }
+}
+
+async function showSelectedSpaceDetails(
+  page: Page,
+  locationName: string,
+): Promise<void> {
+  const navigation = page.getByRole("group", {
+    name: "Space panels navigation",
+  });
+  if (await navigation.isVisible()) {
+    await page.getByRole("button", {
+      name: `Edit details for ${locationName}`,
+    }).click();
+  }
+}
+
+async function openMobileMore(page: Page): Promise<Locator> {
+  const trigger = page.getByRole("button", {
+    exact: true,
+    name: "More",
+  });
+  await trigger.click();
+  const dialog = page.getByRole("dialog", { name: "More" });
+  await expect(dialog).toBeVisible();
+  return dialog;
+}
+
+async function navigateToWorkspaceView(
+  page: Page,
+  view: "Activity" | "Settings",
+): Promise<void> {
+  if ((page.viewportSize()?.width ?? 0) > 760) {
+    await page.locator(".app-shell > aside .nav", { hasText: view }).click();
+    return;
+  }
+  const dialog = await openMobileMore(page);
+  await dialog.getByRole("link", { exact: true, name: view }).click();
+}
+
+async function shareWorkspaceView(page: Page): Promise<void> {
+  if ((page.viewportSize()?.width ?? 0) > 760) {
+    await page.locator(
+      '.header-actions button[aria-label="Share this view"]',
+    ).click();
+    return;
+  }
+  const dialog = await openMobileMore(page);
+  await dialog.getByRole("button", { name: "Share this view" }).click();
+}
+
+async function openWorkspaceHub(page: Page): Promise<void> {
+  if ((page.viewportSize()?.width ?? 0) > 760) {
+    await page.locator(
+      '.header-actions a[aria-label="Workspaces and backup status"]',
+    ).click();
+    return;
+  }
+  const dialog = await openMobileMore(page);
+  await dialog.getByRole("link", {
+    name: "Workspaces and backup status",
+  }).click();
+}
+
+async function toggleWorkspaceTheme(page: Page): Promise<void> {
+  if ((page.viewportSize()?.width ?? 0) > 760) {
+    await page.locator(
+      '.header-actions button[aria-label*="theme active"]',
+    ).click();
+    return;
+  }
+  const dialog = await openMobileMore(page);
+  await dialog.getByRole("button", {
+    name: /theme active\. Switch to/,
+  }).click();
+}
+
 async function reopenCurrentCapture(page: Page): Promise<void> {
+  await showCapturePanel(page, "current container");
   const reopen = page.getByRole("button", { name: "Reopen capture" });
   await expect(reopen).toBeVisible();
   await reopen.click();
@@ -260,6 +351,7 @@ async function reopenCaptureLocation(
   locationId: string,
 ): Promise<void> {
   await page.locator(".nav:visible", { hasText: "Capture" }).click();
+  await showCapturePanel(page, "capture queue");
   await page.locator(
     `.capture-location-row[data-location-id="${locationId}"] .queue-row`,
   ).click();
@@ -566,6 +658,10 @@ test("starts workspaces and primary views at the top", async ({ page }) => {
 
 test("gives tabs, spaces, filters, and item editors restorable URLs", async ({ page }) => {
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
+  await expect(page.getByRole("heading", {
+    exact: true,
+    name: "Capture",
+  })).toBeVisible();
   const replica = await localReplica(page) as {
     state: { workspace: { id: string } };
   };
@@ -588,6 +684,7 @@ test("gives tabs, spaces, filters, and item editors restorable URLs", async ({ p
   await expect(page).toHaveURL(
     new RegExp(`${workspacePrefix}/capture/locations/kit-kitchen@loc_kitchen$`),
   );
+  await showCapturePanel(page, "capture queue");
   await page.locator(
     '.capture-location-row[data-location-id="loc_bin"] .queue-row',
   ).click();
@@ -689,6 +786,7 @@ test("refuses stale item and space targets without rewriting their URLs", async 
   await page.getByRole("button", {
     name: "Open kitchen demo",
   }).click();
+  await showCapturePanel(page, "capture queue");
   const replica = await localReplica(page) as {
     state: { workspace: { id: string } };
   };
@@ -755,7 +853,7 @@ test("announces share outcomes without reporting an ordinary cancel", async ({ p
     });
   });
 
-  await page.getByLabel("Share this view").click();
+  await shareWorkspaceView(page);
   await expect(page.locator(".feedback-toast[role='status']")).toContainText(
     "Link copied",
   );
@@ -773,7 +871,7 @@ test("announces share outcomes without reporting an ordinary cancel", async ({ p
       },
     });
   });
-  await page.getByLabel("Share this view").click();
+  await shareWorkspaceView(page);
   await expect(page.locator(".feedback-toast[role='alert']")).toContainText(
     "Could not share automatically",
   );
@@ -787,7 +885,7 @@ test("announces share outcomes without reporting an ordinary cancel", async ({ p
       },
     });
   });
-  await page.getByLabel("Share this view").click();
+  await shareWorkspaceView(page);
   await expect(page.locator(".feedback-toast")).toHaveCount(0);
 });
 
@@ -903,7 +1001,15 @@ test("switches, resizes, and persists responsive panel layouts", async ({ page }
     await expect(capture).toHaveAttribute("data-panel-layout", "stacked");
     await expect(page.getByRole("separator", { name: "Resize capture queue" }))
       .toBeHidden();
-    await expectCompactPanelSpacing(capture);
+    await expect(capture).toHaveAttribute(
+      "data-active-compact-panel",
+      "secondary",
+    );
+    await expect(capture.locator(":scope > .queue")).toBeHidden();
+    await expect(capture.locator(":scope > .capture-card")).toBeVisible();
+    await expect(captureNavigation.getByRole("button", {
+      name: "current container",
+    })).toHaveAttribute("aria-pressed", "true");
   } else if (await sideBySide.isDisabled()) {
     await expect(capture).toHaveAttribute("data-panel-layout", "stacked");
     await expect(page.getByRole("separator", { name: "Resize capture queue" }))
@@ -957,7 +1063,12 @@ test("switches, resizes, and persists responsive panel layouts", async ({ page }
   if (await spacesNavigation.isVisible()) {
     await expect(spaces.locator(":scope > .panel-layout-toolbar")).toBeHidden();
     await expect(spaces).toHaveAttribute("data-panel-layout", "stacked");
-    await expectCompactPanelSpacing(spaces);
+    await expect(spaces).toHaveAttribute(
+      "data-active-compact-panel",
+      "primary",
+    );
+    await expect(spaces.locator(":scope > .tree-panel")).toBeVisible();
+    await expect(spaces.locator(":scope > .inspector")).toBeHidden();
   } else if (await spacesSideBySide.isDisabled()) {
     await expect(spaces).toHaveAttribute("data-panel-layout", "stacked");
     await expectCompactPanelSpacing(spaces);
@@ -975,6 +1086,216 @@ test("switches, resizes, and persists responsive panel layouts", async ({ page }
     document: document.documentElement.scrollWidth <=
       document.documentElement.clientWidth + 1,
   }))).toEqual({ body: true, document: true });
+});
+
+test("opens a selected Capture container in one tap on mobile", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "mobile-chromium",
+    "The Pixel 7 Pro project covers the focused Capture workflow",
+  );
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
+
+  const capture = page.locator(".capture.resizable-panels");
+  const navigation = page.getByRole("group", {
+    name: "Capture panels navigation",
+  });
+  const queueButton = navigation.getByRole("button", {
+    name: "capture queue",
+  });
+  const containerButton = navigation.getByRole("button", {
+    name: "current container",
+  });
+  await queueButton.click();
+  await expect(queueButton).toHaveAttribute("aria-pressed", "true");
+  await expect(capture.locator(":scope > .queue")).toBeVisible();
+  await expect(capture.locator(":scope > .capture-card")).toBeHidden();
+
+  const foodRow = page.locator(
+    '.capture-location-row[data-location-id="loc_food"]',
+  );
+  await expect(foodRow.getByRole("button", {
+    name: "Move Food cabinet",
+    exact: true,
+  })).toBeVisible();
+  await foodRow.locator(".queue-row").click();
+
+  await expect(containerButton).toHaveAttribute("aria-pressed", "true");
+  await expect(capture.locator(":scope > .queue")).toBeHidden();
+  await expect(capture.locator(":scope > .capture-card")).toBeVisible();
+  await expect(page.getByRole("heading", {
+    name: "C-01 · Food cabinet",
+  })).toBeVisible();
+
+  await queueButton.click();
+  await expect(foodRow).toBeInViewport();
+  await expect(foodRow.getByRole("button", {
+    name: "Move Food cabinet",
+    exact: true,
+  })).toBeVisible();
+});
+
+test("keeps the focused workspace header reachable on a narrow phone", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "mobile-chromium",
+    "The Chromium phone project covers the narrow header boundary",
+  );
+  await page.setViewportSize({ width: 320, height: 568 });
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
+  await page.locator(".app-shell > main").evaluate((main) => {
+    main.scrollTop = 0;
+  });
+
+  const metrics = await page.locator(".app-shell > main > header").evaluate(
+    (header) => {
+      const allTargets = [
+        ...header.querySelectorAll<HTMLElement>(
+          ".jump-trigger, .header-actions > a.icon, .header-actions > button.icon, .account-menu-trigger",
+        ),
+      ];
+      const targets = allTargets.filter(target =>
+        getComputedStyle(target).display !== "none"
+      );
+      const bounds = targets.map(target => target.getBoundingClientRect());
+      return {
+        compactHeader: header.getBoundingClientRect().height <= 78,
+        clippedTargets: targets
+          .filter((target) => {
+            const bounds = target.getBoundingClientRect();
+            return bounds.left < 0 || bounds.right > innerWidth;
+          })
+          .map((target) => target.getAttribute("aria-label")),
+        headerOverflow: header.scrollWidth > header.clientWidth,
+        hiddenSecondaryActions: [
+          ...header.querySelectorAll<HTMLElement>(".header-mobile-secondary"),
+        ].every(target => getComputedStyle(target).display === "none"),
+        narrowTargets: targets
+          .filter((target) => {
+            const bounds = target.getBoundingClientRect();
+            return bounds.width < 44 || bounds.height < 44;
+          })
+          .map((target) => target.getAttribute("aria-label")),
+        sameRow: bounds.every(target =>
+          Math.abs(target.top - (bounds[0]?.top ?? target.top)) <= 1
+        ),
+        visibleLabels: targets.map(target => target.getAttribute("aria-label")),
+      };
+    },
+  );
+  expect({
+    compactHeader: metrics.compactHeader,
+    clippedTargets: metrics.clippedTargets,
+    headerOverflow: metrics.headerOverflow,
+    hiddenSecondaryActions: metrics.hiddenSecondaryActions,
+    narrowTargets: metrics.narrowTargets,
+    sameRow: metrics.sameRow,
+  }).toEqual({
+    compactHeader: true,
+    clippedTargets: [],
+    headerOverflow: false,
+    hiddenSecondaryActions: true,
+    narrowTargets: [],
+    sameRow: true,
+  });
+  expect(metrics.visibleLabels).toHaveLength(2);
+  expect(metrics.visibleLabels[0]).toBe(
+    "Search and jump, Command or Control K",
+  );
+  expect(metrics.visibleLabels[1]).toMatch(/^Open user menu/);
+});
+
+test("prioritizes phone workspace navigation and groups secondary actions in More", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "mobile-chromium",
+    "The Chromium phone project covers the persistent phone navigation",
+  );
+  await page.setViewportSize({ width: 320, height: 568 });
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
+
+  const navigation = page.getByRole("navigation", {
+    name: "Primary workspace navigation",
+  });
+  await expect(navigation.locator(".nav")).toHaveCount(5);
+  for (const label of ["Capture", "Spaces", "Inventory", "Plan"]) {
+    await expect(navigation.getByRole("link", {
+      exact: true,
+      name: label,
+    })).toBeVisible();
+  }
+  await expect(navigation.getByRole("button", {
+    exact: true,
+    name: "More",
+  })).toBeVisible();
+  await expect(navigation.getByRole("link", {
+    exact: true,
+    name: "Activity",
+  })).toHaveCount(0);
+  await expect(navigation.getByRole("link", {
+    exact: true,
+    name: "Settings",
+  })).toHaveCount(0);
+
+  const targetSizes = await navigation.locator(".nav").evaluateAll(
+    targets => targets.map(target => {
+      const bounds = target.getBoundingClientRect();
+      return { height: bounds.height, width: bounds.width };
+    }),
+  );
+  expect(targetSizes.every(target =>
+    target.height >= 44 && target.width >= 44
+  )).toBe(true);
+
+  const more = navigation.getByRole("button", {
+    exact: true,
+    name: "More",
+  });
+  const dialog = await openMobileMore(page);
+  await expect(dialog.getByRole("link", {
+    exact: true,
+    name: "Activity",
+  })).toBeVisible();
+  await expect(dialog.getByRole("link", {
+    exact: true,
+    name: "Settings",
+  })).toBeVisible();
+  await expect(dialog.getByRole("link", {
+    name: "Workspaces and backup status",
+  })).toBeVisible();
+  await expect(dialog.getByRole("button", {
+    name: "Share this view",
+  })).toBeVisible();
+  await expect(dialog.getByRole("button", {
+    name: /theme active\. Switch to/,
+  })).toBeVisible();
+  const accessibility = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa"])
+    .analyze();
+  expect(accessibility.violations.filter(violation =>
+    violation.impact === "critical" || violation.impact === "serious"
+  )).toEqual([]);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(more).toBeFocused();
+
+  await navigateToWorkspaceView(page, "Activity");
+  await expect(page.getByRole("heading", {
+    exact: true,
+    name: "Activity",
+  })).toBeVisible();
+  await expect(more).toHaveAttribute("data-active", "true");
+  await expect(more).toHaveAttribute("aria-current", "page");
+
+  await navigateToWorkspaceView(page, "Settings");
+  await expect(page.getByRole("heading", {
+    exact: true,
+    name: "Settings",
+  })).toBeVisible();
+  await expect(more).toHaveAttribute("data-active", "true");
 });
 
 test("keeps the Spaces tree and editor dense at compact desktop widths", async ({
@@ -1221,10 +1542,12 @@ test("keeps account and administration controls easy to find", async ({
     await expect(sidebarAdministration).toContainText("Administration");
   } else {
     await expect(sidebarAdministration).toBeHidden();
-    await expect(page.locator(".bottom").getByRole("link", {
+    const moreDialog = await openMobileMore(page);
+    await expect(moreDialog.getByRole("link", {
       exact: true,
       name: "Settings",
     })).toBeVisible();
+    await page.keyboard.press("Escape");
     await expect(page.getByRole("link", {
       name: "Open settings",
     })).toHaveCount(0);
@@ -1274,78 +1597,116 @@ test("aligns header controls and immediately toggles the applied system theme", 
   }).click();
 
   const root = page.locator("html");
-  const darkToggle = page.getByRole("button", {
-    name: "Dark theme active. Switch to light theme",
-  });
+  const mobile = (page.viewportSize()?.width ?? 0) <= 760;
   await expect(root).toHaveAttribute("data-theme", "dark");
-  await expect(darkToggle.locator("svg.lucide-moon")).toBeVisible();
   await expect.poll(() =>
     page.evaluate(() => localStorage.getItem("stowplan-theme"))
   ).toBe("system");
 
-  const search = page.getByRole("button", {
+  const header = page.locator(".app-shell > main > header");
+  const search = header.getByRole("button", {
     name: "Search and jump, Command or Control K",
   });
-  const home = page.getByRole("link", { name: "Workspaces and backup status" });
-  const share = page.getByRole("button", { name: "Share this view" });
-  const account = page.getByRole("button", {
-    name: /Open user menu/,
-  });
-  const controlBounds = await Promise.all(
-    [search, home, share, darkToggle, account].map(
-      (control) => control.boundingBox(),
-    ),
-  );
-  if (controlBounds.some((bounds) => bounds === null)) {
-    throw new Error("Header controls are not visible");
-  }
-  const [
-    searchBounds,
-    homeBounds,
-    shareBounds,
-    themeBounds,
-    accountBounds,
-  ] = controlBounds as
-    Exclude<(typeof controlBounds)[number], null>[];
-  expect(homeBounds.width).toBe(44);
-  expect(shareBounds.width).toBe(homeBounds.width);
-  expect(themeBounds.width).toBe(homeBounds.width);
-  expect(accountBounds.width).toBe(homeBounds.width);
-  for (const bounds of controlBounds) expect(bounds?.height).toBe(44);
-  if ((page.viewportSize()?.width ?? 0) <= 980) {
-    expect(searchBounds.width).toBe(homeBounds.width);
+  const account = header.getByRole("button", { name: /Open user menu/ });
+  if (mobile) {
+    const controlBounds = await Promise.all([
+      search.boundingBox(),
+      account.boundingBox(),
+    ]);
+    if (controlBounds.some(bounds => bounds === null)) {
+      throw new Error("Primary phone header controls are not visible");
+    }
+    for (const bounds of controlBounds) {
+      expect(bounds?.height).toBe(44);
+      expect(bounds?.width).toBe(44);
+    }
+    await expect(header.locator(".header-mobile-secondary")).toHaveCount(3);
+    for (const control of await header.locator(
+      ".header-mobile-secondary",
+    ).all()) {
+      await expect(control).toBeHidden();
+    }
+    const moreDialog = await openMobileMore(page);
+    await expect(moreDialog.getByRole("button", {
+      name: "Dark theme active. Switch to light theme",
+    }).locator("svg.lucide-moon")).toBeVisible();
+    await page.keyboard.press("Escape");
   } else {
+    const home = header.getByRole("link", {
+      name: "Workspaces and backup status",
+    });
+    const share = header.getByRole("button", { name: "Share this view" });
+    const darkToggle = header.getByRole("button", {
+      name: "Dark theme active. Switch to light theme",
+    });
+    const controlBounds = await Promise.all(
+      [search, home, share, darkToggle, account].map(
+        control => control.boundingBox()
+      ),
+    );
+    if (controlBounds.some(bounds => bounds === null)) {
+      throw new Error("Desktop header controls are not visible");
+    }
+    const [searchBounds, homeBounds, shareBounds, themeBounds, accountBounds] =
+      controlBounds as Exclude<(typeof controlBounds)[number], null>[];
+    expect(homeBounds.width).toBe(44);
+    expect(shareBounds.width).toBe(homeBounds.width);
+    expect(themeBounds.width).toBe(homeBounds.width);
+    expect(accountBounds.width).toBe(homeBounds.width);
+    for (const bounds of controlBounds) expect(bounds?.height).toBe(44);
     expect(searchBounds.width).toBeGreaterThan(homeBounds.width);
+    await expect(darkToggle.locator("svg.lucide-moon")).toBeVisible();
   }
   await expect(page.getByRole("link", {
     name: "Open settings",
   })).toHaveCount(0);
 
-  expect(await darkToggle.evaluate((button: HTMLButtonElement) => {
-    button.click();
-    return document.documentElement.dataset.theme;
-  })).toBe("light");
-  const lightToggle = page.getByRole("button", {
-    name: "Light theme active. Switch to dark theme",
-  });
-  await expect(lightToggle.locator("svg.lucide-sun")).toBeVisible();
+  await toggleWorkspaceTheme(page);
+  await expect(root).toHaveAttribute("data-theme", "light");
+  if (mobile) {
+    const moreDialog = await openMobileMore(page);
+    await expect(moreDialog.getByRole("button", {
+      name: "Light theme active. Switch to dark theme",
+    }).locator("svg.lucide-sun")).toBeVisible();
+    await page.keyboard.press("Escape");
+  } else {
+    await expect(header.getByRole("button", {
+      name: "Light theme active. Switch to dark theme",
+    }).locator("svg.lucide-sun")).toBeVisible();
+  }
   await expect.poll(() =>
     page.evaluate(() => localStorage.getItem("stowplan-theme"))
   ).toBe("light");
 
   await page.reload();
   await expect(root).toHaveAttribute("data-theme", "light");
-  await expect(page.getByRole("button", {
-    name: "Light theme active. Switch to dark theme",
-  })).toBeVisible();
+  if (mobile) {
+    const moreDialog = await openMobileMore(page);
+    await expect(moreDialog.getByRole("button", {
+      name: "Light theme active. Switch to dark theme",
+    })).toBeVisible();
+    await page.keyboard.press("Escape");
+  } else {
+    await expect(header.getByRole("button", {
+      name: "Light theme active. Switch to dark theme",
+    })).toBeVisible();
+  }
 
-  await page.locator(".nav:visible", { hasText: "Settings" }).click();
+  await navigateToWorkspaceView(page, "Settings");
   const themeChoices = page.locator(".settings .segments");
   await themeChoices.getByRole("button", { name: "system" }).click();
   await expect(root).toHaveAttribute("data-theme", "dark");
-  await expect(page.getByRole("button", {
-    name: "Dark theme active. Switch to light theme",
-  })).toBeVisible();
+  if (mobile) {
+    const moreDialog = await openMobileMore(page);
+    await expect(moreDialog.getByRole("button", {
+      name: "Dark theme active. Switch to light theme",
+    })).toBeVisible();
+    await page.keyboard.press("Escape");
+  } else {
+    await expect(header.getByRole("button", {
+      name: "Dark theme active. Switch to light theme",
+    })).toBeVisible();
+  }
   await page.emulateMedia({ colorScheme: "light" });
   await expect(root).toHaveAttribute("data-theme", "light");
   await themeChoices.getByRole("button", { name: "dark" }).click();
@@ -1372,12 +1733,21 @@ test("navigates every active surface with arrow keys while preserving native con
   });
   await jump.focus();
   await page.keyboard.press("ArrowDown");
-  await expect(page.getByRole("link", { name: "Workspaces and backup status" })).toBeFocused();
+  if ((page.viewportSize()?.width ?? 0) <= 760) {
+    await expect(page.getByRole("button", {
+      name: /Open user menu/,
+    })).toBeFocused();
+  } else {
+    await expect(page.getByRole("link", {
+      name: "Workspaces and backup status",
+    })).toBeFocused();
+  }
   await page.keyboard.press("ArrowUp");
   await expect(jump).toBeFocused();
   await page.keyboard.press("Control+ArrowDown");
   await expect(jump).toBeFocused();
 
+  await showCapturePanel(page, "capture queue");
   await page.locator(
     '.capture-location-row[data-location-id="loc_corner"] .queue-row',
   ).click();
@@ -1561,6 +1931,17 @@ test("searches and jumps with Control or Command K", async ({ page }, testInfo) 
   await expect(page).toHaveURL(
     /\/spaces\/locations\/b-17-baking-bin@loc_bin$/,
   );
+  const spacePanelNavigation = page.getByRole("group", {
+    name: "Space panels navigation",
+  });
+  if (await spacePanelNavigation.isVisible()) {
+    await expect(page.locator(".split.resizable-panels")).toHaveAttribute(
+      "data-active-compact-panel",
+      "secondary",
+    );
+    await expect(page.locator(".tree-panel")).toBeHidden();
+    await expect(page.locator("#space-inspector")).toBeVisible();
+  }
 
   await page.keyboard.press("Control+KeyK");
   await expect(palette).toBeVisible();
@@ -1570,6 +1951,7 @@ test("searches and jumps with Control or Command K", async ({ page }, testInfo) 
 
 test("keeps known empty separate from an undoable empty-container action", async ({ page }) => {
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
+  await showCapturePanel(page, "capture queue");
   await page.locator(
     '.capture-location-row[data-location-id="loc_bin"] .queue-row',
   ).click();
@@ -1584,8 +1966,10 @@ test("keeps known empty separate from an undoable empty-container action", async
     .toHaveCount(0);
   await expect(page.getByRole("button", { name: "Add inside Baking bin" }))
     .toHaveCount(0);
+  await showCapturePanel(page, "capture queue");
   await expect(page.getByRole("button", { name: "Add top-level space" }))
     .toBeVisible();
+  await showCapturePanel(page, "current container");
   await page.getByRole("button", { name: "Reopen capture" }).click();
   await expect(page.locator(".feedback-toast")).toBeHidden();
   await expect(page.getByRole("button", { name: "Counted & next" })).toBeVisible();
@@ -1693,7 +2077,7 @@ test("keeps known empty separate from an undoable empty-container action", async
     status: "known_empty",
   });
 
-  await page.locator(".nav:visible", { hasText: "Activity" }).click();
+  await navigateToWorkspaceView(page, "Activity");
   await page.getByRole("button", {
     name: "Undo Emptied Baking bin and marked it known empty",
   }).click();
@@ -1722,6 +2106,7 @@ test("requires Reopen before completed contents change from Spaces or Inventory"
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await page.locator(".nav:visible", { hasText: "Spaces" }).click();
   await page.locator('[data-location-id="loc_bin"] .tree-select').click();
+  await showSelectedSpaceDetails(page, "Baking bin");
 
   const spaceEditor = page.getByRole("region", { name: "Edit Baking bin" });
   await expect(spaceEditor.getByRole("button", { name: "Earlier" })).toBeDisabled();
@@ -1767,6 +2152,7 @@ test("visibly refuses unchanged item and space saves", async ({ page }) => {
 
   await page.locator(".nav:visible", { hasText: "Spaces" }).click();
   await page.locator('[data-location-id="loc_bin"] .tree-select').click();
+  await showSelectedSpaceDetails(page, "Baking bin");
   await page.getByRole("button", { name: "Save space" }).click();
   await expect(page.locator(".feedback-toast[role='alert']")).toContainText(
     "No changes to save for Baking bin",
@@ -1778,7 +2164,7 @@ test("visibly refuses unchanged item and space saves", async ({ page }) => {
   await page.getByRole("button", { name: "Save item" }).click();
   await expect(page.getByText("No changes to save for Pasta")).toBeVisible();
   await page.getByRole("button", { name: "Close item editor" }).click();
-  await page.locator('a[href$="/settings"]:visible').first().click();
+  await navigateToWorkspaceView(page, "Settings");
   await page.getByRole("button", { name: "Rename workspace" }).click();
   await expect(page.locator(".feedback-toast[role='alert']")).toContainText(
     "Workspace is already named Kitchen reset",
@@ -1794,6 +2180,7 @@ test("visibly refuses unchanged item and space saves", async ({ page }) => {
 
 test("does not offer known-empty capture while nested spaces remain", async ({ page }) => {
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
+  await showCapturePanel(page, "capture queue");
   await page.locator(
     '.capture-location-row[data-location-id="loc_corner"] .queue-row',
   ).click();
@@ -1839,7 +2226,7 @@ test("onboards, captures, edits, searches, plans, rolls back, and persists local
   await expect(page.getByLabel("What is it?")).toBeFocused();
   await expect(page.getByLabel("What is it?")).toHaveValue("");
 
-  await page.getByLabel("Workspaces and backup status").click();
+  await openWorkspaceHub(page);
   await expect(page.getByRole("heading", {
     name: "Your workspaces",
   })).toBeVisible();
@@ -1871,9 +2258,9 @@ test("onboards, captures, edits, searches, plans, rolls back, and persists local
   await page.getByRole("button", { name: "How accessibility affects a plan" }).focus();
   await expect(page.getByRole("tooltip", { name: /Score bonus = max/ })).toBeVisible();
   await page.getByRole("button", { name: "Generate move plan" }).click();
-  await page.locator(".nav:visible", { hasText: "Activity" }).click();
+  await navigateToWorkspaceView(page, "Activity");
   await expect(page.getByText(/recorded changes/)).toBeVisible();
-  await page.getByRole("button", { name: /theme active\. Switch to/ }).click();
+  await toggleWorkspaceTheme(page);
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
@@ -1908,7 +2295,7 @@ test("resets the active demo from the main menu", async ({ page }) => {
   await page.getByLabel("Qty").fill("1");
   await page.getByLabel("What is it?").fill("Temporary demo item");
   await page.getByRole("button", { name: "Save & add next" }).click();
-  await page.getByLabel("Workspaces and backup status").click();
+  await openWorkspaceHub(page);
   await page.getByRole("button", { name: "Reset kitchen demo" }).click();
   const reset = page.getByRole("dialog", {
     name: "Reset the kitchen demo?",
@@ -1930,6 +2317,7 @@ test("resets the active demo from the main menu", async ({ page }) => {
 
 test("collapses Capture branches while search temporarily reveals matches", async ({ page }) => {
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
+  await showCapturePanel(page, "capture queue");
 
   const left = page.locator(
     '.capture-location-row[data-location-id="loc_left"]',
@@ -1984,6 +2372,7 @@ test("keeps combined Capture branch handles stable across Pixel taps and drags",
   await page.getByRole("button", {
     name: "Open kitchen demo",
   }).click();
+  await showCapturePanel(page, "capture queue");
 
   const lower = page.locator(
     '.capture-location-row[data-location-id="loc_lower"]',
@@ -2123,6 +2512,10 @@ test("previews desktop hierarchy destinations and confirms completed-parent chan
   test.skip(testInfo.project.name !== "desktop-chromium", "Native mouse feedback is a desktop contract");
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
+  await expect(page.getByRole("heading", {
+    exact: true,
+    name: "Capture",
+  })).toBeVisible();
 
   const before = await localReplica(page) as {
     state: {
@@ -2749,6 +3142,7 @@ test("confirms a Capture touch reparent and atomically reopens completed parents
   await page.getByRole("button", {
     name: "Open kitchen demo",
   }).click();
+  await showCapturePanel(page, "capture queue");
 
   const source = page.locator(
     '.capture-location-row[data-location-id="loc_food"]',
@@ -2935,11 +3329,15 @@ test("keeps Capture rows compact and supports a focused mobile Move fallback", a
   await page.getByRole("button", {
     name: "Open kitchen demo",
   }).click();
+  await page.getByRole("group", {
+    name: "Capture panels navigation",
+  }).getByRole("button", {
+    name: "capture queue",
+  }).click();
 
   const foodRow = page.locator(
     '.capture-location-row[data-location-id="loc_food"]',
   );
-  await foodRow.locator(".queue-row").click();
   await expect(foodRow).toBeInViewport();
 
   const move = foodRow.getByRole("button", {
@@ -3026,7 +3424,10 @@ test("keeps Capture rows compact and supports a focused mobile Move fallback", a
   expect(density.narrowActionTargets).toEqual([]);
   expect(density.narrowRowTargets).toEqual([]);
   expect(density.rowOverflow).toEqual([]);
-  expect(density.visibleActionLabels).toEqual(["Move Food cabinet"]);
+  expect(density.visibleActionLabels).toContain("Move Food cabinet");
+  expect(
+    density.visibleActionLabels.filter((label) => !label?.startsWith("Move ")),
+  ).toEqual([]);
 
   const beforeReorder = await localReplica(page) as {
     state: {
@@ -3178,10 +3579,14 @@ test("moves a space from visible mobile tree actions and atomically reopens its 
   const inspector = page.locator("#space-inspector");
   const draftName = "Unsaved food cabinet name";
   await edit.click();
+  await expect(page.locator(".tree-panel")).toBeHidden();
+  await expect(inspector).toBeVisible();
   await inspector.getByLabel("Friendly name").fill(draftName);
-  await panelNavigation.getByRole("button", {
-    name: "space hierarchy",
+  await inspector.getByRole("button", {
+    name: "Back to hierarchy",
   }).click();
+  await expect(inspector).toBeHidden();
+  await expect(page.locator(".tree-panel")).toBeVisible();
   await expect(row).toBeInViewport();
 
   const before = await localReplica(page) as {
@@ -3441,13 +3846,15 @@ test("guides incomplete evidence into a reviewable plan", async ({ page }) => {
 test("suggests unique location codes without replacing a manual code", async ({ page }) => {
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await reopenCurrentCapture(page);
+  await showCapturePanel(page, "capture queue");
 
   const code = page.getByLabel("Short ID");
   const name = page.getByLabel("Friendly name");
   await name.fill("Priority bin");
   await expect(code).toHaveValue("PB");
   await page.getByRole("button", { name: "Add inside Kitchen" }).click();
-  await expect(page.locator(".capture-location-row", { hasText: "Priority bin" })).toBeVisible();
+  await expect(page.locator(".capture-location-row", { hasText: "Priority bin" }))
+    .toBeVisible();
 
   await name.fill("Priority bin");
   await expect(code).toHaveValue("PB-2");
@@ -3479,6 +3886,7 @@ test("preserves a failed creation draft and avoids narrow-screen overflow", asyn
   await page.setViewportSize({ width: 412, height: 860 });
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await reopenCurrentCapture(page);
+  await showCapturePanel(page, "capture queue");
 
   await page.getByLabel("Short ID").fill("C-01");
   await page.getByLabel("Friendly name").fill("Keep this draft");
@@ -3487,9 +3895,14 @@ test("preserves a failed creation draft and avoids narrow-screen overflow", asyn
   await expect(page.getByLabel("Short ID")).toHaveValue("C-01");
   await expect(page.getByLabel("Friendly name")).toHaveValue("Keep this draft");
 
+  await showCapturePanel(page, "current container");
   await page.getByLabel("Unit", { exact: true }).fill("extraordinarily-long-custom-unit-name");
   await page.getByLabel("What is it?").fill("Long unit test item");
   await page.getByRole("button", { name: "Save & add next" }).click();
+  await showCapturePanel(page, "capture queue");
+  await expect(page.getByLabel("Short ID")).toHaveValue("C-01");
+  await expect(page.getByLabel("Friendly name")).toHaveValue("Keep this draft");
+  await showCapturePanel(page, "current container");
   const metrics = await page.evaluate(() => ({
     bottomNavigation: (() => {
       const navigation = document.querySelector<HTMLElement>(".bottom");
@@ -3503,10 +3916,19 @@ test("preserves a failed creation draft and avoids narrow-screen overflow", asyn
         width: Math.round(navigationBounds.width),
       };
     })(),
-    captureStacked: (() => {
+    compactCapturePanel: (() => {
+      const capture = document.querySelector<HTMLElement>(
+        ".capture.resizable-panels",
+      );
       const queue = document.querySelector<HTMLElement>(".capture > .queue");
       const card = document.querySelector<HTMLElement>(".capture > .capture-card");
-      return Boolean(queue && card && card.getBoundingClientRect().top >= queue.getBoundingClientRect().bottom);
+      return Boolean(
+        capture?.dataset.activeCompactPanel === "secondary" &&
+        queue &&
+        card &&
+        getComputedStyle(queue).display === "none" &&
+        getComputedStyle(card).display !== "none",
+      );
     })(),
     documentOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
     finishOverflow: (() => {
@@ -3522,12 +3944,12 @@ test("preserves a failed creation draft and avoids narrow-screen overflow", asyn
     metrics.bottomNavigation?.navigationTop,
   );
   expect({
-    captureStacked: metrics.captureStacked,
+    compactCapturePanel: metrics.compactCapturePanel,
     documentOverflow: metrics.documentOverflow,
     finishOverflow: metrics.finishOverflow,
     narrowTargets: metrics.narrowTargets,
   }).toEqual({
-    captureStacked: true,
+    compactCapturePanel: true,
     documentOverflow: false,
     finishOverflow: false,
     narrowTargets: [],
@@ -3714,7 +4136,7 @@ test("executes a planned move and rolls it back from Activity", async ({ page })
     ).toBe("in_progress");
   }
 
-  await page.locator(".nav:visible", { hasText: "Activity" }).click();
+  await navigateToWorkspaceView(page, "Activity");
   await page.locator(".history>div").first().getByRole("button", { name: /^Undo Completed plan step:/ }).click();
   await expect.poll(async () => {
     const rolledBack = await localReplica(page) as typeof before;
@@ -3756,6 +4178,7 @@ test("supports drag organization and the partial-move fallback", async ({ page }
     await bakingBin.dragTo(foodCabinet);
   } else {
     await bakingBin.locator(".tree-select").click();
+    await showSelectedSpaceDetails(page, "Baking bin");
     await page.getByLabel("Parent space").selectOption("loc_food");
     await page.getByRole("button", { name: "Save space" }).click();
   }
@@ -3915,7 +4338,7 @@ test("confirms one atomic bulk move across completed spaces", async ({
     ],
   });
 
-  await page.locator(".nav:visible", { hasText: "Activity" }).click();
+  await navigateToWorkspaceView(page, "Activity");
   await page.getByRole("button", {
     name: "Undo Moved 2 item records and reopened affected spaces",
   }).click();
@@ -4007,7 +4430,7 @@ test("removes an inactive device copy without switching the active workspace", a
     "One desktop project covers inactive workspace removal",
   );
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
-  await page.getByLabel("Workspaces and backup status").click();
+  await openWorkspaceHub(page);
   await page.getByLabel("New workspace").fill("Active workspace");
   await page.getByRole("button", {
     exact: true,
@@ -4017,7 +4440,7 @@ test("removes an inactive device copy without switching the active workspace", a
     exact: true,
     name: "Capture",
   })).toBeVisible();
-  await page.getByLabel("Workspaces and backup status").click();
+  await openWorkspaceHub(page);
 
   const inactiveCard = page.getByRole("article").filter({
     has: page.getByRole("heading", {
@@ -4150,7 +4573,7 @@ test("treats signed-out local backup as optional and dismisses its account hint"
     hasText: /Backup needs attention|Remote backup paused/u,
   })).toHaveCount(0);
 
-  await page.getByLabel("Workspaces and backup status").click();
+  await openWorkspaceHub(page);
   const optionalNotice = page.getByText(
     "Remote backup and collaboration are optional. Signing in turns on online backup for the open workspace and sends other local changes waiting to upload; local copies stay in this browser.",
     { exact: true },
@@ -4234,7 +4657,7 @@ test("makes an ended session loud only for a server-backed workspace", async ({
   await expect(page.locator(".sync:visible")).toContainText(
     "Remote backup paused",
   );
-  await page.getByLabel("Workspaces and backup status").click();
+  await openWorkspaceHub(page);
   const hubAlert = page.getByRole("alert").filter({
     hasText: "Remote backup paused",
   });
@@ -4326,14 +4749,14 @@ test("does not label the active workspace as backing up while another workspace 
     await reopenCurrentCapture(page);
     await page.getByLabel("What is it?").fill("Background backup");
     await page.getByRole("button", { name: "Save & add next" }).click();
-    await page.getByLabel("Workspaces and backup status").click();
+    await openWorkspaceHub(page);
     await page.getByLabel("New workspace").fill("Active workspace");
     await page.getByRole("button", { exact: true, name: "Create" }).click();
 
     await expect.poll(() => inactiveSyncObserved).toBe(true);
     await expect(page.locator(".sync")).toContainText("Backed up online");
     await expect(page.locator(".sync")).not.toContainText("Backing up");
-    await page.getByLabel("Workspaces and backup status").click();
+    await openWorkspaceHub(page);
     const inactiveCard = page.getByRole("article").filter({
       has: page.getByRole("heading", {
         exact: true,
@@ -5165,7 +5588,7 @@ test("reports blocked safety and workspace downloads", async ({
       },
     });
   });
-  await page.locator(".nav:visible", { hasText: "Settings" }).click();
+  await navigateToWorkspaceView(page, "Settings");
   await page.getByRole("button", { name: "Export JSON backup" }).click();
   await expect(page.locator(".feedback-toast[role='alert']")).toContainText(
     "Could not export this workspace: Downloads unavailable",

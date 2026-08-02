@@ -4,7 +4,7 @@ Capture is designed for a phone in one hand while the other hand opens boxes and
 
 ## Record one space
 
-1. Select the physical space by its short ID or name.
+1. Select the physical space by its short ID or name. On a phone, choose **Capture queue** to find it; selecting the row opens **Current container** in one tap.
 2. Enter **Qty**, **Unit**, and **What is it?**
 3. Choose **Save & add next**.
 4. Repeat until the loose items in that space are represented.
@@ -14,6 +14,8 @@ Capture is designed for a phone in one hand while the other hand opens boxes and
 Each accepted row is saved in this browser before Stowplan tries online backup. You can close the tab or lose service after the save completes without losing that accepted row.
 
 Use **Next unfinished** when you only want to navigate. It does not change the current space. **Counted & next** records that the current space is accurate enough and advances through the full hierarchy, including branches that are collapsed or hidden by a filter.
+
+On a phone, **Capture queue** and **Current container** switch between the hierarchy and the focused form without discarding unfinished form input. Every queue row keeps **Move** available as a separate action when you need to change its exact parent or position.
 
 ## Add a container inside another
 

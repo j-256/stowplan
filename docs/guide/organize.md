@@ -20,7 +20,7 @@ Select several records to move them to one destination together. Records already
 
 Open **Spaces** to follow rooms, zones, cabinets, shelves, boxes, bins, and containers. A hierarchy can be as simple or as deep as the physical layout requires.
 
-Select a space to inspect its details and direct contents. On a phone, the selected row exposes **Earlier**, **Later**, **Edit details**, and **Move**. The move dialog lets you choose the new parent and exact position without dragging.
+Select a space to inspect its details and direct contents. On a phone, the selected row exposes **Earlier**, **Later**, **Edit details**, and **Move**. Choose **Edit details** to switch from the hierarchy to the focused editor, then use **Back to hierarchy** when you are done. Switching panels preserves unfinished editor input. The move dialog lets you choose the new parent and exact position without dragging.
 
 You can also drag a space before, inside, or after another row. Stowplan prevents a space from becoming its own parent or descendant.
 
