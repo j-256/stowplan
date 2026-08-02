@@ -368,14 +368,33 @@ test.beforeEach(async ({ page }) => {
 });
 
 test("names a new workspace during first run", async ({ page }) => {
+  const create = page.getByRole("button", { exact: true, name: "Create" });
+  const demo = page.getByRole("button", { name: "Open kitchen demo" });
+  const optionalBackup = page.getByText(
+    "Remote backup and collaboration are optional. Signing in turns on online backup for the open workspace and sends other local changes waiting to upload; local copies stay in this browser.",
+    { exact: true },
+  );
   await expect(page.getByRole("link", { name: "Open Account" })).toHaveAttribute(
     "href",
     "/account?returnTo=%2Fworkspaces",
   );
+  await expect(create).toBeVisible();
+  await expect(demo).toBeVisible();
+  await expect(optionalBackup).toBeVisible();
+  const [createBox, demoBox, optionalBackupBox] = await Promise.all([
+    create.boundingBox(),
+    demo.boundingBox(),
+    optionalBackup.boundingBox(),
+  ]);
+  expect(createBox).not.toBeNull();
+  expect(demoBox).not.toBeNull();
+  expect(optionalBackupBox).not.toBeNull();
+  expect(createBox!.y).toBeLessThan(demoBox!.y);
+  expect(demoBox!.y).toBeLessThan(optionalBackupBox!.y);
   await page.getByRole("textbox", {
     name: "Your workspace name",
   }).fill("Jamie's apartment");
-  await page.getByRole("button", { name: "Create" }).click();
+  await create.click();
 
   await expect(page.getByRole("heading", { name: "Capture" })).toBeVisible();
   await expect(page.getByText("Jamie's apartment", { exact: true })).toBeVisible();

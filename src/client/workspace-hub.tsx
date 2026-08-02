@@ -219,6 +219,47 @@ export function WorkspaceHub({
         : "optional-online"
       : null;
   const firstRun = cards.length === 0 && !catalogLoading;
+  const workspaceTools = <section
+    className={styles.toolbar}
+    data-first-run={firstRun}
+    aria-label="Workspace tools"
+  >
+    {!firstRun && <label>
+      <span>Search workspaces</span>
+      <input
+        onChange={(event) => setQuery(event.currentTarget.value)}
+        placeholder="Name, role, or status"
+        type="search"
+        value={query}
+      />
+    </label>}
+    <form onSubmit={createWorkspace}>
+      <label>
+        <span>{firstRun ? "Your workspace name" : "New workspace"}</span>
+        <input
+          maxLength={80}
+          onChange={(event) => setWorkspaceName(event.currentTarget.value)}
+          placeholder="Workspace name"
+          required
+          value={workspaceName}
+        />
+      </label>
+      <button className="primary" disabled={busyId === "create"}>
+        Create
+      </button>
+    </form>
+    {!firstRun && <button
+      disabled={busyId === "demo"}
+      onClick={() => void run(
+        "demo",
+        onOpenDemo,
+        "Could not open the kitchen demo",
+      )}
+      type="button"
+    >
+      Open kitchen demo
+    </button>}
+  </section>;
 
   return <main className={styles.hub}>
     <header>
@@ -281,6 +322,7 @@ export function WorkspaceHub({
     >
       {catalogError}
     </HubMessage>}
+    {firstRun && workspaceTools}
     {firstRun && <section className={styles.trial}>
       <div>
         <p className="eyebrow">Quick tour</p>
@@ -332,48 +374,7 @@ export function WorkspaceHub({
         <span><strong>Remote backup paused.</strong> Your Stowplan session ended. Sign in again to resume remote backup and collaboration; local work remains safe on this device.</span>{" "}
         <a href="/account?returnTo=%2Fworkspaces">Sign in again</a>
       </HubMessage>}
-
-    <section
-      className={styles.toolbar}
-      data-first-run={firstRun}
-      aria-label="Workspace tools"
-    >
-      {!firstRun && <label>
-        <span>Search workspaces</span>
-        <input
-          onChange={(event) => setQuery(event.currentTarget.value)}
-          placeholder="Name, role, or status"
-          type="search"
-          value={query}
-        />
-      </label>}
-      <form onSubmit={createWorkspace}>
-        <label>
-          <span>{firstRun ? "Your workspace name" : "New workspace"}</span>
-          <input
-            maxLength={80}
-            onChange={(event) => setWorkspaceName(event.currentTarget.value)}
-            placeholder="Workspace name"
-            required
-            value={workspaceName}
-          />
-        </label>
-        <button className="primary" disabled={busyId === "create"}>
-          Create
-        </button>
-      </form>
-      {!firstRun && <button
-        disabled={busyId === "demo"}
-        onClick={() => void run(
-          "demo",
-          onOpenDemo,
-          "Could not open the kitchen demo",
-        )}
-        type="button"
-      >
-        Open kitchen demo
-      </button>}
-    </section>
+    {!firstRun && workspaceTools}
 
     <section className={styles.cards} aria-busy={catalogLoading}>
       {filtered.map((card) => {

@@ -23,6 +23,8 @@ The bottom bar keeps the four frequent workspace tasks one tap away: **Capture**
 
 ## Start your own workspace
 
+On the first-run workspace page, creation comes before the demo and optional online-backup explanation so you can start with your own space immediately. The ready-made kitchen remains available directly below it.
+
 1. Open **Workspaces and backup status**. On a phone, choose **More** first; on a wider screen, use the house icon.
 2. Under **Your workspace name**, enter a useful name such as `My apartment` and choose **Create**.
 3. In **Capture**, choose **Add first space**.
