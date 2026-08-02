@@ -4,7 +4,7 @@
 [![Documentation](https://github.com/j-256/stowplan/actions/workflows/docs.yml/badge.svg)](https://j-256.github.io/stowplan/)
 [![Release](https://img.shields.io/github/v/release/j-256/stowplan)](https://github.com/j-256/stowplan/releases)
 [![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](LICENSE)
-[![Node 24 LTS](https://img.shields.io/badge/node-24.18_LTS-5fa04e.svg)](.nvmrc)
+[![Node 24 LTS or 26](https://img.shields.io/badge/node-24_LTS%20%7C%2026-5fa04e.svg)](.nvmrc)
 
 A mobile-first, local-first organizer for rooms, cabinets, drawers, boxes, bins, and every container inside them. Label physical spaces, perform a fast first-pass count, search structured inventory, generate explainable move plans, and keep working through connectivity or server failures.
 
@@ -43,6 +43,8 @@ nvm use
 npm ci
 npm run dev
 ```
+
+The pinned Node 24 LTS release is the deployment default. Node 26 is also verified in CI. Both use npm 11, which is required for the committed lockfile.
 
 Open the local URL and choose **Open kitchen demo**. Local organizing requires no provider credentials.
 

@@ -5,8 +5,8 @@ This reference composition root uses Node's built-in `node:sqlite`, the same mig
 ## Local development
 
 ```bash
-nvm install 24.18.0
-nvm use 24.18.0
+nvm install 24.18.1
+nvm use 24.18.1
 npm ci
 npm run build:next
 STOWPLAN_SQLITE_PATH="$PWD/data/stowplan.sqlite" \

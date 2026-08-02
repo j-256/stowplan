@@ -57,7 +57,7 @@ The release gate audits the production dependency tree. VitePress and migration/
 
 ## Version policy
 
-Stowplan targets the newest Node 24 LTS patch recorded in `.nvmrc`, not the short-lived Current line. `npm outdated` can therefore legitimately show Node 26 types. ESLint stays on the newest 9.x release until the React/JSX plugins bundled by `eslint-config-next` accept ESLint 10; TypeScript stays on the newest 6.x release accepted by `typescript-eslint`; and Vinext remains the Sites-preview adapter until its 1.x line is stable. The canonical Cloudflare build is OpenNext, so a preview-adapter pre-release never blocks a production dependency update.
+Stowplan pins the newest Node 24 LTS patch in `.nvmrc` as the deployment default and also verifies Node 26 in CI. Both supported Node lines use npm 11 because the committed lockfile depends on its peer-dependency layout. ESLint stays on the newest 9.x release until the React/JSX plugins bundled by `eslint-config-next` accept ESLint 10; TypeScript stays on the newest 6.x release accepted by `typescript-eslint`; and Vinext remains the Sites-preview adapter until its 1.x line is stable. The canonical Cloudflare build is OpenNext, so a preview-adapter pre-release never blocks a production dependency update.
 
 ## Release checklist
 
