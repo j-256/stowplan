@@ -323,6 +323,7 @@ test("initializes OpenNext bindings for next dev and awaits runtime context fail
 
 test("keeps hierarchy and touch drag affordances in the shipped organizer", () => {
   const application = readFileSync(new URL("../src/client/stowplan-app.tsx", import.meta.url), "utf8");
+  const activityHistory = readFileSync(new URL("../src/client/activity-history.tsx", import.meta.url), "utf8");
   const styles = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
   assert.match(application, /aria-label="Space hierarchy"/);
   assert.match(application, /to move or nest it/);
@@ -353,7 +354,13 @@ test("keeps hierarchy and touch drag affordances in the shipped organizer", () =
   );
   assert.match(application, /activeSubmitControl\.focus\(\)/);
   assert.match(application, /Select \$\{actionIdentity\} in/);
-  assert.match(application, /"Undo" : "Reapply"\} \$\{entry\.label\}/);
+  assert.match(application, /<ActivityHistory/);
+  assert.match(activityHistory, /Undo and reapply log/);
+  assert.match(activityHistory, /if \(pending\) return false/);
+  assert.match(
+    activityHistory,
+    /aria-label=\{`\$\{action\} \$\{entry\.label\} from \$\{timestamp\}`\}/,
+  );
   assert.match(application, /key=\{current\.id\} className="quick"/);
   assert.match(application, /href=\{href\}/);
   assert.match(application, /Share this view/);

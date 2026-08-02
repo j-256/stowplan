@@ -4156,6 +4156,122 @@ test("executes a planned move and rolls it back from Activity", async ({ page })
   }
 });
 
+test("plucks an older same-item edit and records each history action", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    !["desktop-chromium", "mobile-chromium"].includes(testInfo.project.name),
+    "Phone and desktop cover the responsive Activity workflow",
+  );
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
+  await reopenCaptureLocation(page, "loc_warm");
+  await page.locator(".nav:visible", { hasText: "Inventory" }).click();
+
+  await page.locator('[data-item-id="item_pasta"] .item-name').click();
+  await page.getByLabel("Quantity", { exact: true }).fill("7");
+  await page.getByRole("button", { name: "Save item" }).click();
+  await expect(page.getByText("Saved on this device.")).toBeVisible();
+  await page.getByRole("button", { name: "Close item editor" }).click();
+
+  await page.locator('[data-item-id="item_pasta"] .item-name').click();
+  await page.getByLabel("Notes").fill("Added after the quantity edit");
+  await page.getByRole("button", { name: "Save item" }).click();
+  await expect(page.getByText("Saved on this device.")).toBeVisible();
+  await page.getByRole("button", { name: "Close item editor" }).click();
+
+  await navigateToWorkspaceView(page, "Activity");
+  const rows = page.locator(".activity-row");
+  await expect(rows.nth(0)).toContainText("notes");
+  await expect(rows.nth(1)).toContainText("quantity");
+  expect(await page.evaluate(
+    () => document.documentElement.scrollWidth <= window.innerWidth,
+  )).toBe(true);
+  const accessibility = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa"])
+    .analyze();
+  expect(
+    accessibility.violations.filter(
+      (violation) =>
+        violation.impact === "critical" || violation.impact === "serious",
+    ),
+  ).toEqual([]);
+  const quantityRow = rows.filter({ hasText: "quantity" });
+  const undo = quantityRow.getByRole("button", {
+    name: /^Undo Updated Pasta from/,
+  });
+  await undo.evaluate((button) => {
+    const element = button as HTMLButtonElement;
+    element.click();
+    element.click();
+  });
+
+  await expect.poll(async () => {
+    const replica = await localReplica(page) as {
+      state: {
+        audit: unknown[];
+        items: {
+          id: string;
+          notes: string;
+          quantity: number;
+          version: number;
+        }[];
+      };
+    };
+    const item = replica.state.items.find((candidate) =>
+      candidate.id === "item_pasta"
+    );
+    return {
+      auditCount: replica.state.audit.length,
+      notes: item?.notes,
+      quantity: item?.quantity,
+      version: item?.version,
+    };
+  }).toEqual({
+    auditCount: 1,
+    notes: "Added after the quantity edit",
+    quantity: 6,
+    version: 4,
+  });
+  await expect(quantityRow).toContainText("undone");
+  await expect(page.locator(".activity-audit-row").first())
+    .toContainText("Undid 1 change");
+  await expect(page.locator(".activity-audit-row").first())
+    .toContainText("Updated Pasta");
+
+  await quantityRow.getByRole("button", {
+    name: /^Reapply Updated Pasta from/,
+  }).click();
+  await expect.poll(async () => {
+    const replica = await localReplica(page) as {
+      state: {
+        audit: unknown[];
+        items: {
+          id: string;
+          notes: string;
+          quantity: number;
+          version: number;
+        }[];
+      };
+    };
+    const item = replica.state.items.find((candidate) =>
+      candidate.id === "item_pasta"
+    );
+    return {
+      auditCount: replica.state.audit.length,
+      notes: item?.notes,
+      quantity: item?.quantity,
+      version: item?.version,
+    };
+  }).toEqual({
+    auditCount: 2,
+    notes: "Added after the quantity edit",
+    quantity: 7,
+    version: 5,
+  });
+  await expect(page.locator(".activity-audit-row").first())
+    .toContainText("Reapplied 1 change");
+});
+
 test("supports drag organization and the partial-move fallback", async ({ page }, testInfo) => {
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await reopenCaptureLocation(page, "loc_left");

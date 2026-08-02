@@ -8,6 +8,7 @@ import type {
   WorkspaceState,
 } from "../domain/types";
 import { workspacePath, type WorkspaceView } from "../domain/app-url";
+import { ActivityHistory } from "./activity-history";
 import { USER_GUIDE_URL } from "./external-links";
 import { ModalDialog } from "./modal-dialog";
 import styles from "./read-only-workspace.module.css";
@@ -403,23 +404,6 @@ function ReadOnlyPlans({
   </div>;
 }
 
-function ReadOnlyActivity({ state }: Pick<ReadOnlyWorkspaceProps, "state">) {
-  return <div className="content">
-    <section className={`panel ${styles.activity}`}>
-      <h2>Workspace activity</h2>
-      {state.activities.map((activity) => <article key={activity.id}>
-        <span>
-          <strong>{activity.label}</strong>
-          <small>{new Date(activity.timestamp).toLocaleString()}</small>
-        </span>
-        <b>{activity.status}</b>
-      </article>)}
-      {state.activities.length === 0 &&
-        <p className={styles.empty}>No workspace activity yet</p>}
-    </section>
-  </div>;
-}
-
 function downloadWorkspace(state: WorkspaceState): void {
   const url = URL.createObjectURL(new Blob(
     [JSON.stringify(state, null, 2)],
@@ -561,7 +545,7 @@ export function ReadOnlyWorkspace({
       state={state}
     />;
   }
-  if (view === "activity") return <ReadOnlyActivity state={state} />;
+  if (view === "activity") return <ActivityHistory state={state} />;
   return <ReadOnlySettings
     onOpenWorkspaceMenu={onOpenWorkspaceMenu}
     readOnlyReason={readOnlyReason}

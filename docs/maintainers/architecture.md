@@ -17,7 +17,8 @@ UI / PWA → local replica + outbox → authenticated sync API → SnapshotStore
 - Every item points to a location and has a positive finite quantity.
 - A command envelope carries workspace, device, actor, base revision, field expectations, timestamp, and globally unique command ID.
 - Applying a command is deterministic. Side effects happen outside the domain.
-- History stores field-level patches; undo/reapply verifies current values before changing them.
+- History stores meaningful field-level patches; undo/reapply verifies those current values before changing them, while whole-record creation and deletion remain atomic.
+- Item version and item/location update timestamps are command bookkeeping rather than historical fields. Selective undo and reapply preserve unrelated later fields, ignore legacy bookkeeping patches, and stamp surviving records as a new command.
 - Deterministic bounded retention protects the accepted change, retires the oldest full history first, and carries pruned command IDs into a compact receipt ledger.
 - Server compare-and-swap serializes concurrent sync batches. IDs in retained history or the compact receipt ledger make retries safe within the documented replay window.
 - A sync request that loses the first-write initialization race is re-authorized against the resulting membership; read access never authorizes a nonempty command batch.

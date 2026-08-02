@@ -40,7 +40,6 @@ import {
   ShieldCheck,
   Sun,
   Trash2,
-  Undo2,
   WifiOff,
   X,
 } from "lucide-react";
@@ -100,6 +99,7 @@ import {
   writePreference,
 } from "./preference-storage";
 import { AccountMenu } from "./account-menu";
+import { ActivityHistory } from "./activity-history";
 import {
   backupNotice,
   backupPresentation,
@@ -5000,10 +5000,10 @@ function Planner({ state, commit, openGuidanceTarget }: { state: WorkspaceState;
   </div>;
 }
 function History({ state, commit }: { state: WorkspaceState; commit: Commit }) {
-  const [count, setCount] = useState(5);
-  const applied = state.activities.filter((entry) => entry.status === "applied").length;
-  const undone = state.activities.filter((entry) => entry.status === "undone").length;
-  return <div className="content"><div className="toolbar"><span>{state.activities.length} recorded changes</span><div className="history-batch"><label>Changes<input aria-label="Batch history count" type="number" min="1" max="100" value={count} onChange={(event) => setCount(Math.max(1, Math.min(100, Number(event.target.value) || 1)))} /></label><button disabled={!applied} onClick={() => void perform(commit, { type: "history.batchUndo", count: Math.min(count, applied) })}>Undo {Math.min(count, applied)}</button><button disabled={!undone} onClick={() => void perform(commit, { type: "history.batchRedo", count: Math.min(count, undone) })}>Redo {Math.min(count, undone)}</button></div></div><section className="panel history">{[...state.activities].reverse().map((entry) => <div key={entry.id}><Undo2 /><span><strong>{entry.label}</strong><small>{new Date(entry.timestamp).toLocaleString()} · {countLabel(entry.patches.length, "field")}</small></span><b>{entry.status}</b><button aria-label={`${entry.status === "applied" ? "Undo" : "Reapply"} ${entry.label}`} onClick={() => void perform(commit, entry.status === "applied" ? { type: "history.undo", activityId: entry.id } : { type: "history.reapply", activityId: entry.id })}>{entry.status === "applied" ? "Undo this" : "Reapply"}</button></div>)}{!state.activities.length && <Empty title="No changes yet" text="Every meaningful change will be inspectable and reversible here." />}</section></div>;
+  return <ActivityHistory
+    onCommand={(command) => perform(commit, command)}
+    state={state}
+  />;
 }
 function Preferences({ state, commit, theme, setTheme, openMenu, returnTo, serverBacked }: { state: WorkspaceState; commit: Commit; theme: ThemePreference; setTheme: (theme: ThemePreference) => void; openMenu: () => void; returnTo: string; serverBacked: boolean }) {
   const download = () => {

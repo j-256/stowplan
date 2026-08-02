@@ -514,3 +514,32 @@
   .app-shell>main>header .eyebrow,.app-shell>main>header h1{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .header-actions{width:auto;justify-content:flex-end;gap:6px}
 }
+.activity-toolbar>span{display:flex;min-width:0;flex-direction:column;gap:3px}
+.activity-toolbar>span strong,.activity-toolbar>span small{overflow-wrap:anywhere}
+.activity-columns{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(280px,.65fr);align-items:start;gap:18px}
+.activity-list,.activity-audit-list{min-width:0;overflow:hidden}
+.activity-section-heading{display:flex;align-items:start;justify-content:space-between;gap:14px;padding:18px;border-bottom:1px solid var(--line)}
+.activity-section-heading h2,.activity-section-heading p{margin:0}
+.activity-section-heading>span{display:block}
+.activity-section-heading>b,.activity-row>b{align-self:center;padding:5px 8px;border:1px solid var(--line);border-radius:99px;color:var(--muted);font:650 10px "DM Mono",monospace;text-transform:capitalize;white-space:nowrap}
+.activity-list>.activity-row{display:grid;grid-template-columns:28px minmax(0,1fr) auto auto;align-items:center;gap:14px;min-width:0;padding:15px 18px;border-bottom:1px solid var(--line)}
+.activity-row[data-status="undone"]{background:color-mix(in srgb,var(--sage2) 42%,transparent)}
+.activity-row>svg,.activity-audit-row>svg{width:18px;color:var(--clay)}
+.activity-row>span,.activity-audit-row>span{display:flex;min-width:0;flex-direction:column;gap:3px}
+.activity-row strong,.activity-row small,.activity-audit-row strong,.activity-audit-row small{overflow-wrap:anywhere;line-height:1.45}
+.activity-row button:disabled,.history-batch button:disabled{cursor:not-allowed;opacity:.5}
+.activity-audit-row{display:grid;grid-template-columns:28px minmax(0,1fr);align-items:center;gap:14px;min-width:0;padding:15px 18px;border-bottom:1px solid var(--line)}
+.activity-audit-row>svg{color:var(--sage)}
+.activity-list>.activity-empty,.activity-audit-list>.activity-empty{display:block;padding:38px 20px}
+.activity-more{padding:12px 18px;text-align:center}
+.activity-more button{width:100%;color:var(--sage);font-weight:700}
+@media(max-width:900px){
+  .activity-columns{grid-template-columns:minmax(0,1fr)}
+}
+@media(max-width:760px){
+  .activity-list>.activity-row{grid-template-columns:24px minmax(0,1fr)}
+  .activity-row>b,.activity-row>button{grid-column:2}
+  .activity-row>button{width:100%}
+  .activity-section-heading{padding:14px}
+  .activity-audit-row{padding:14px}
+}

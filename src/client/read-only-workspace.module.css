@@ -7,7 +7,6 @@
 .layout > section,
 .fullPanel,
 .plan,
-.activity,
 .settings > section {
   min-width: 0;
   padding: clamp(1rem, 3vw, 1.5rem);
@@ -106,14 +105,12 @@
 }
 
 .itemList,
-.inventoryList,
-.activity {
+.inventoryList {
   display: grid;
 }
 
 .itemList article,
-.inventoryList article,
-.activity article {
+.inventoryList article {
   align-items: center;
   border-bottom: 1px solid var(--line);
   display: grid;
@@ -124,8 +121,7 @@
 }
 
 .itemList article > span,
-.inventoryList article > span,
-.activity article > span {
+.inventoryList article > span {
   display: flex;
   flex-direction: column;
   min-width: 0;
