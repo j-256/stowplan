@@ -35,11 +35,44 @@
   margin-top: clamp(28px, 6vw, 44px);
 }
 
+/* Anchors do not get the button box from globals.css (that targets <button>),
+   so give the hero links the same shape the hub uses for its anchor-buttons */
+.actions a {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  justify-content: center;
+  min-width: 168px;
+  padding: 12px 20px;
+  text-decoration: none;
+}
+
+/* .primary is a global class (from globals.css), so it must be referenced with
+   :global here; a bare .primary would be scoped to this module and match nothing */
+.actions a:global(.primary) {
+  background: var(--sage);
+  border-color: var(--sage);
+  color: var(--panel);
+}
+
+.actions a:not(:global(.primary)) {
+  background: var(--panel);
+}
+
+.actions a:not(:global(.primary)):hover {
+  border-color: var(--sage);
+}
+
 .values {
   display: grid;
   gap: 14px;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   margin-top: clamp(24px, 6vw, 56px);
+}
+
+@media (max-width: 620px) {
+  .values {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .value {
