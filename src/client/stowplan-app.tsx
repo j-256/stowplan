@@ -264,6 +264,7 @@ function demoEntryLocationId(
 
 const STACKED_TOUCH_LAYOUT_QUERY =
   "(max-width: 760px), (max-height: 520px) and (pointer: coarse) and (min-width: 761px)";
+const SPACES_MIN_SIDE_BY_SIDE_WIDTH = 850;
 const BROWSER_HISTORY_STATE = Object.freeze({ stowplan: true });
 const ITEM_MODAL_HISTORY_STATE = Object.freeze({
   ...BROWSER_HISTORY_STATE,
@@ -3885,7 +3886,7 @@ function Spaces({ state, current, select, commit, focusEditorKey, focusEditorSec
       className="content split"
       defaultPanelPercent={42}
       label="Space panels"
-      minSideBySideWidth={960}
+      minSideBySideWidth={SPACES_MIN_SIDE_BY_SIDE_WIDTH}
       onCompactPanelChange={setCompactPanel}
       primary={treePanel}
       primaryLabel="space hierarchy"
@@ -4566,6 +4567,9 @@ function Inventory({ state, commit, editing, editFocus, locationFilter, onEditin
     );
     const itemLocationPath =
       locationName.get(item.locationId) ?? "Unknown space";
+    const itemLocationShortLabel = itemLocation
+      ? `${itemLocation.code} · ${itemLocation.name}`
+      : itemLocationPath;
     const siblings = sortItems(state.items.filter((candidate) => !candidate.archivedAt && candidate.locationId === item.locationId));
     const siblingIndex = siblings.findIndex((candidate) => candidate.id === item.id);
     const actionIdentity = `${item.name}, ${item.quantity} ${item.unit}`;
@@ -4610,6 +4614,7 @@ function Inventory({ state, commit, editing, editFocus, locationFilter, onEditin
       <label className="inventory-select"><input aria-label={`Select ${actionIdentity} in ${itemLocationPath}`} type="checkbox" checked={activeSelection.includes(item.id)} onChange={() => setSelected((current) => { const valid = current.filter((id) => shownIds.has(id)); return valid.includes(item.id) ? valid.filter((id) => id !== item.id) : [...valid, item.id]; })} /></label>
       <button className="item-name" aria-label={`Open ${actionIdentity} in ${itemLocationPath}`} onClick={() => onEditingChange(item.id)}>
         <strong>{item.name}</strong>
+        <small className="inventory-mobile-location"><MapIcon aria-hidden="true" /><span>{itemLocationShortLabel}</span></small>
         {item.description && <small className="item-description-preview">{item.description}</small>}
         <small>{item.category} · {item.frequency} · {item.tags.join(", ") || "no tags"}</small>
       </button>

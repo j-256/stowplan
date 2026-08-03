@@ -14,6 +14,10 @@ const MAX_PANEL_GUTTER = 16;
 const MAX_PANEL_PADDING = 18;
 const MAX_PANEL_SHELL_PADDING = 22;
 const MIN_RESIZE_TARGET = 32;
+const AUTO_COMPACT_SIDEBAR_MAX_WIDTH = 1160;
+const COMPACT_SIDEBAR_WIDTH = 80;
+const EXPANDED_SIDEBAR_WIDTH = 248;
+const MAX_COMPACT_INVENTORY_ROW_HEIGHT = 72;
 const MOCK_ACCOUNT_ID = "user_test";
 const MOCK_ACCOUNT_HEADERS = Object.freeze({
   "x-stowplan-account-id": MOCK_ACCOUNT_ID,
@@ -738,7 +742,13 @@ test("gives tabs, spaces, filters, and item editors restorable URLs", async ({ p
     "href",
     `${workspacePrefix}/spaces/locations/b-17-baking-bin@loc_bin`,
   );
-  await locationLink.click();
+  if (await locationLink.isVisible()) {
+    await locationLink.click();
+  } else {
+    const href = await locationLink.getAttribute("href");
+    if (!href) throw new Error("The Inventory location route is missing");
+    await page.goto(new URL(href, page.url()).href);
+  }
   await expect(page.getByRole("heading", {
     name: "Spaces",
     exact: true,
@@ -910,9 +920,9 @@ test("announces share outcomes without reporting an ordinary cancel", async ({ p
 
 test("collapses the desktop sidebar and persists the icon-only preference", async ({ page }, testInfo) => {
   test.skip(
-    (page.viewportSize()?.width ?? 0) <= 799 ||
+    (page.viewportSize()?.width ?? 0) <= AUTO_COMPACT_SIDEBAR_MAX_WIDTH ||
       testInfo.project.name === "mobile-landscape",
-    "Phone, narrow-tablet, and short touch layouts use compact navigation",
+    "Phone, compact desktop, and short touch layouts use automatic compact navigation",
   );
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
 
@@ -975,13 +985,15 @@ test("keeps short touch landscape navigation fully visible", async ({ page }, te
   await expect(spaces.locator(":scope > .panel-layout-toolbar")).toBeHidden();
 });
 
-test("uses a compact icon rail at both narrow-tablet boundaries and orientations", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== "tablet-portrait", "The portrait tablet project covers the 761 to 799 pixel band");
+test("uses the automatic compact icon rail at its responsive boundaries", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "tablet-portrait", "The portrait tablet project probes the compact rail boundaries");
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
 
   for (const viewport of [
     { width: 761, height: 1024 },
     { width: 799, height: 761 },
+    { width: 1024, height: 700 },
+    { width: AUTO_COMPACT_SIDEBAR_MAX_WIDTH, height: 700 },
   ]) {
     await page.setViewportSize(viewport);
     const sidebar = page.getByRole("complementary", { name: "Workspace navigation" });
@@ -1001,6 +1013,19 @@ test("uses a compact icon rail at both narrow-tablet boundaries and orientations
       sidebarTextWidths: [1, 1, 1, 1, 1, 1],
     });
   }
+
+  await page.setViewportSize({
+    height: 700,
+    width: AUTO_COMPACT_SIDEBAR_MAX_WIDTH + 1,
+  });
+  const sidebar = page.getByRole("complementary", {
+    name: "Workspace navigation",
+  });
+  await expect.poll(() => sidebar.evaluate((element) =>
+    Math.round(element.getBoundingClientRect().width)
+  )).toBe(EXPANDED_SIDEBAR_WIDTH);
+  await expect(page.getByRole("button", { name: "Collapse sidebar" }))
+    .toBeVisible();
 });
 
 test("switches, resizes, and persists responsive panel layouts", async ({ page }) => {
@@ -1321,29 +1346,32 @@ test("keeps the Spaces tree and editor dense at compact desktop widths", async (
   page,
 }, testInfo) => {
   test.skip(
-    testInfo.project.name !== "desktop-chromium",
-    "The wide desktop project probes compact and full desktop widths",
+    testInfo.project.name !== "desktop-compact",
+    "The compact desktop project covers the constrained two-panel workspace",
   );
   await page.getByRole("button", {
     name: "Open kitchen demo",
   }).click();
   await page.locator(".nav:visible", { hasText: "Spaces" }).click();
 
+  const sidebar = page.getByRole("complementary", {
+    name: "Workspace navigation",
+  });
+  await expect.poll(() => sidebar.evaluate((element) =>
+    Math.round(element.getBoundingClientRect().width)
+  )).toBe(COMPACT_SIDEBAR_WIDTH);
+  await expect(page.getByRole("button", { name: "Collapse sidebar" }))
+    .toBeHidden();
   const spaces = page.locator(".split.resizable-panels");
   const layout = page.getByRole("group", { name: "Space panels layout" });
   const sideBySide = layout.getByRole("button", { name: "Side by side" });
-  await page.setViewportSize({ width: 1133, height: 744 });
-  await expect(sideBySide).toBeDisabled();
-  await expect(spaces).toHaveAttribute("data-panel-layout", "stacked");
-
-  await page.setViewportSize({ width: 1440, height: 900 });
   await expect(sideBySide).toBeEnabled();
-  await sideBySide.click();
   await expect(spaces).toHaveAttribute("data-panel-layout", "side-by-side");
   await expect(page.locator(".tree-panel > .root-drop")).toBeHidden();
 
   const density = await spaces.evaluate((element) => {
     const treePanel = element.querySelector<HTMLElement>(".tree-panel");
+    const inspectorPanel = element.querySelector<HTMLElement>(".inspector");
     const firstRow = treePanel?.querySelector<HTMLElement>(".tree-row");
     const rows = [...element.querySelectorAll<HTMLElement>(".tree-row")];
     const controls = [...element.querySelectorAll<HTMLElement>(
@@ -1377,6 +1405,14 @@ test("keeps the Spaces tree and editor dense at compact desktop widths", async (
         ...rows.map((row) => row.getBoundingClientRect().height),
       ),
       noHorizontalOverflow: element.scrollWidth <= element.clientWidth + 1,
+      panelsAligned: Boolean(
+        treePanel &&
+        inspectorPanel &&
+        Math.abs(
+          treePanel.getBoundingClientRect().top -
+          inspectorPanel.getBoundingClientRect().top,
+        ) < 2
+      ),
     };
   });
   expect(density.controlsMeetTarget).toBe(true);
@@ -1384,6 +1420,7 @@ test("keeps the Spaces tree and editor dense at compact desktop widths", async (
   expect(density.labelMarginsReset).toBe(true);
   expect(density.maxRowHeight).toBeLessThanOrEqual(80);
   expect(density.noHorizontalOverflow).toBe(true);
+  expect(density.panelsAligned).toBe(true);
 });
 
 test("keeps preferences usable when browser storage is unavailable", async ({ page }, testInfo) => {
@@ -1794,9 +1831,14 @@ test("navigates every active surface with arrow keys while preserving native con
   await expect(rowCheckbox).toBeFocused();
   await rowName.focus();
   await page.keyboard.press("ArrowDown");
-  await expect(firstInventoryRow.getByRole("link", {
-    name: /in Spaces$/,
-  })).toBeFocused();
+  if ((page.viewportSize()?.width ?? 0) <= 760) {
+    await expect(page.locator(".inventory-row").nth(1).getByRole("checkbox"))
+      .toBeFocused();
+  } else {
+    await expect(firstInventoryRow.getByRole("link", {
+      name: /in Spaces$/,
+    })).toBeFocused();
+  }
   await page.locator('[data-item-id="item_flour"] .item-name').click();
   const dialog = page.getByRole("dialog", { name: "Review item" });
   const close = page.getByRole("button", { name: "Close item editor" });
@@ -2196,11 +2238,21 @@ test("guides completed inventory edits and moves through recertification", async
   await page.locator(".nav:visible", { hasText: "Inventory" }).click();
 
   const flour = page.locator('.inventory-row[data-item-id="item_flour"]');
-  const reviewAction = flour.getByRole("button", {
-    name: /Review All-purpose flour, 1 bag in .*reopen to edit/,
-  });
+  const reviewAction = flour.locator(".row-action");
   await expect(reviewAction).toContainText("Review, reopen to edit");
-  await reviewAction.click();
+  await expect(reviewAction).toHaveAttribute(
+    "aria-label",
+    /Review All-purpose flour, 1 bag in .*reopen to edit/,
+  );
+  const openReview = async () => {
+    if (testInfo.project.name === "mobile-chromium") {
+      await expect(reviewAction).toBeHidden();
+      await flour.locator(".item-name").click();
+    } else {
+      await reviewAction.click();
+    }
+  };
+  await openReview();
 
   let editor = page.getByRole("dialog", { name: "Review item" });
   await expect(editor).toContainText(
@@ -2232,7 +2284,7 @@ test("guides completed inventory edits and moves through recertification", async
     status: "counted",
   });
 
-  await reviewAction.click();
+  await openReview();
   editor = page.getByRole("dialog", { name: "Review item" });
   await editor.getByRole("button", { name: "Reopen capture" }).click();
   editor = page.getByRole("dialog", { name: "Edit item" });
@@ -4227,14 +4279,41 @@ test("distinguishes duplicate inventory actions by quantity and unit", async ({ 
   for (const amount of ["2 AA", "3 AAA"]) {
     await expect(page.getByRole("checkbox", { name: `Select Batteries, ${amount} in Kitchen` })).toBeVisible();
     await expect(page.getByRole("button", { name: `Open Batteries, ${amount} in Kitchen` })).toBeVisible();
-    await expect(page.getByRole("button", { name: `Edit or move Batteries, ${amount} in Kitchen` })).toBeVisible();
+    const editAction = page.getByRole("button", {
+      name: `Edit or move Batteries, ${amount} in Kitchen`,
+    });
+    if ((page.viewportSize()?.width ?? 0) <= 760) {
+      await expect(editAction).toBeHidden();
+    } else {
+      await expect(editAction).toBeVisible();
+    }
   }
 });
 
-test("keeps the Capture hierarchy readable at compact desktop widths", async ({ page }) => {
-  await page.setViewportSize({ width: 1132, height: 900 });
+test("keeps the Capture hierarchy readable at compact desktop widths", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "desktop-compact",
+    "The compact desktop project covers the constrained Capture workspace",
+  );
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await expect(page.getByRole("heading", { name: "Capture" })).toBeVisible();
+  const capture = page.locator(".capture.resizable-panels");
+  await expect(capture).toHaveAttribute("data-panel-layout", "side-by-side");
+  const sidebar = page.getByRole("complementary", {
+    name: "Workspace navigation",
+  });
+  await expect.poll(() => sidebar.evaluate((element) =>
+    Math.round(element.getBoundingClientRect().width)
+  )).toBe(COMPACT_SIDEBAR_WIDTH);
+  await expect(page.getByRole("button", { name: "Collapse sidebar" }))
+    .toBeHidden();
+  await page.locator(
+    '.capture-location-row[data-location-id="loc_box"] .queue-row',
+  ).click();
+  await expect(page.getByRole("button", { name: "Counted & next" }))
+    .toBeInViewport();
   await page.mouse.move(0, 0);
   const usesFinePointer = await page.evaluate(() =>
     matchMedia("(hover: hover) and (pointer: fine)").matches,
@@ -4321,6 +4400,138 @@ test("keeps the Capture hierarchy readable at compact desktop widths", async ({ 
   expect(populatedMetrics.itemNameWidths).toHaveLength(2);
   expect(Math.min(...populatedMetrics.itemNameWidths)).toBeGreaterThanOrEqual(120);
   expect(populatedMetrics.rowOverflow).toEqual([]);
+});
+
+test("keeps Inventory rows dense at compact desktop widths", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "desktop-compact",
+    "The compact desktop project covers the intermediate Inventory row",
+  );
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
+  await page.locator(".nav:visible", { hasText: "Inventory" }).click();
+
+  const rows = page.locator(
+    '.inventory-row[data-reorderable="false"]',
+  );
+  await expect(rows.first()).toBeVisible();
+  const flour = page.locator('.inventory-row[data-item-id="item_flour"]');
+  await expect(flour.getByRole("button", {
+    name: /Review All-purpose flour, 1 bag in .*reopen to edit/,
+  })).toContainText("Review, reopen to edit");
+  await expect(flour.locator(".inventory-mobile-location")).toBeHidden();
+
+  const density = await rows.evaluateAll((inventoryRows) => {
+    const bounds = inventoryRows.map((row) =>
+      (row as HTMLElement).getBoundingClientRect()
+    );
+    return {
+      alignedRows: inventoryRows.every((row) => {
+        const cells = [
+          row.querySelector<HTMLElement>(".item-name"),
+          row.querySelector<HTMLElement>(":scope > b"),
+          row.querySelector<HTMLElement>(".location-path"),
+          row.querySelector<HTMLElement>(".row-action"),
+        ].filter((cell): cell is HTMLElement => Boolean(cell));
+        const centers = cells.map((cell) => {
+          const cellBounds = cell.getBoundingClientRect();
+          return cellBounds.top + cellBounds.height / 2;
+        });
+        return Math.max(...centers) - Math.min(...centers) < 2;
+      }),
+      fullyVisibleRows: bounds.filter((rowBounds) =>
+        rowBounds.top >= 0 && rowBounds.bottom <= innerHeight
+      ).length,
+      maxRowHeight: Math.max(...bounds.map((rowBounds) => rowBounds.height)),
+      narrowCheckboxTargets: inventoryRows
+        .map((row) => row.querySelector<HTMLElement>(".inventory-select"))
+        .filter((target): target is HTMLElement => Boolean(target))
+        .filter((target) => {
+          const targetBounds = target.getBoundingClientRect();
+          return targetBounds.width < 44 || targetBounds.height < 44;
+        }).length,
+      rowOverflow: inventoryRows
+        .filter((row) => row.scrollWidth > row.clientWidth)
+        .map((row) => (row as HTMLElement).dataset.itemId),
+    };
+  });
+  expect(density.alignedRows).toBe(true);
+  expect(density.fullyVisibleRows).toBeGreaterThanOrEqual(4);
+  expect(density.maxRowHeight).toBeLessThanOrEqual(
+    MAX_COMPACT_INVENTORY_ROW_HEIGHT,
+  );
+  expect(density.narrowCheckboxTargets).toBe(0);
+  expect(density.rowOverflow).toEqual([]);
+});
+
+test("keeps Inventory rows compact and scannable on phones", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "mobile-chromium",
+    "The Pixel phone project covers compact Inventory rows",
+  );
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
+  await page.locator(".nav:visible", { hasText: "Inventory" }).click();
+
+  const rows = page.locator(
+    '.inventory-row[data-reorderable="false"]',
+  );
+  await expect(rows.first()).toBeVisible();
+  const flour = page.locator('.inventory-row[data-item-id="item_flour"]');
+  await expect(flour.locator(".item-name")).toContainText(
+    "All-purpose flour",
+  );
+  await expect(flour.locator(":scope > b")).toHaveText("1 bag");
+  await expect(flour.locator(".inventory-mobile-location"))
+    .toHaveText("B-17 · Baking bin");
+  await expect(flour.locator(".location-path")).toBeHidden();
+  await expect(flour.locator(".row-action")).toBeHidden();
+
+  const density = await rows.evaluateAll((inventoryRows) => {
+    const mainBounds = document.querySelector<HTMLElement>(".app-shell > main")
+      ?.getBoundingClientRect();
+    const bounds = inventoryRows.map((row) =>
+      (row as HTMLElement).getBoundingClientRect()
+    );
+    return {
+      fullyVisibleRows: mainBounds
+        ? bounds.filter((rowBounds) =>
+          rowBounds.top >= mainBounds.top && rowBounds.bottom <= mainBounds.bottom
+        ).length
+        : 0,
+      maxRowHeight: Math.max(...bounds.map((rowBounds) => rowBounds.height)),
+      narrowCheckboxTargets: inventoryRows
+        .map((row) => row.querySelector<HTMLElement>(".inventory-select"))
+        .filter((target): target is HTMLElement => Boolean(target))
+        .filter((target) => {
+          const targetBounds = target.getBoundingClientRect();
+          return targetBounds.width < 44 || targetBounds.height < 44;
+        }).length,
+      narrowDetailTargets: inventoryRows
+        .map((row) => row.querySelector<HTMLElement>(".item-name"))
+        .filter((target): target is HTMLElement => Boolean(target))
+        .filter((target) => target.getBoundingClientRect().height < 44)
+        .length,
+      rowOverflow: inventoryRows
+        .filter((row) => row.scrollWidth > row.clientWidth)
+        .map((row) => (row as HTMLElement).dataset.itemId),
+    };
+  });
+  expect(density.fullyVisibleRows).toBeGreaterThanOrEqual(4);
+  expect(density.maxRowHeight).toBeLessThanOrEqual(
+    MAX_COMPACT_INVENTORY_ROW_HEIGHT,
+  );
+  expect(density.narrowCheckboxTargets).toBe(0);
+  expect(density.narrowDetailTargets).toBe(0);
+  expect(density.rowOverflow).toEqual([]);
+
+  await flour.locator(".item-name").click();
+  const itemReview = page.getByRole("dialog", { name: "Review item" });
+  await expect(itemReview.getByLabel("Current item summary")).toContainText(
+    "Kitchen › Right side › Lower cabinet › Baking bin",
+  );
 });
 
 test("executes a planned move and rolls it back from Activity", async ({ page }) => {

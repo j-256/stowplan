@@ -33,7 +33,7 @@ export default function InAppDocs() {
     </section>
     <section>
       <h2>Find and move things</h2>
-      <p>Use <strong>Spaces</strong> when you know the place and <strong>Inventory</strong> when you know the item. Search across the workspace, edit a record, or move all or part of its quantity. For an item in a counted space, review and reopen it in the item dialog, make the change, then choose <strong>Mark counted again</strong> there.</p>
+      <p>Use <strong>Spaces</strong> when you know the place and <strong>Inventory</strong> when you know the item. On a phone, each compact result shows the item, quantity, and nearest space; tap it for the full path and details. For an item in a counted space, review and reopen it in the item dialog, make the change, then choose <strong>Mark counted again</strong> there.</p>
     </section>
     <section>
       <h2>Follow the next move</h2>

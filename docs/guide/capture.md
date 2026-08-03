@@ -18,6 +18,8 @@ Use **Next unfinished** when you only want to navigate. It does not change the c
 
 On a phone, **Capture queue** and **Current container** switch between the hierarchy and the focused form without discarding unfinished form input. Every queue row keeps **Move** available as a separate action when you need to change its exact parent or position.
 
+At compact desktop widths, the workspace navigation becomes an icon rail automatically so the Capture queue and current container can remain side by side. Wider windows restore the text navigation according to your saved sidebar preference.
+
 ## Add a container inside another
 
 Select the parent and use **Add inside [name]**. Stowplan suggests a short ID from the friendly name, but you can replace it with the code on your physical label.

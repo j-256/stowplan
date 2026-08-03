@@ -6,6 +6,8 @@ Use **Spaces** when you know the place you want to inspect. Use **Inventory** wh
 
 Open **Inventory** and search by name, description, category, tag, or placement requirement. The result shows the item's location path so you can follow the same room-to-container route in the physical world.
 
+On a phone, each compact result row keeps its checkbox, item name, quantity, and nearest space code and name visible. Tap the item summary to review the full path and details. At compact desktop widths, the same information and action stay aligned in one condensed row instead of expanding into a card.
+
 Choose **Edit / move** for a record in an unfinished space. A record in a counted space instead says **Review, reopen to edit** because changing it makes that space's earlier count stale. Confirm **Reopen capture**, make the correction or move in the same dialog, then choose **Mark counted again** after checking the physical contents.
 
 The item editor can:
@@ -23,6 +25,8 @@ Select several records to move them to one destination together. Records already
 Open **Spaces** to follow rooms, zones, cabinets, shelves, boxes, bins, and containers. A hierarchy can be as simple or as deep as the physical layout requires.
 
 Select a space to inspect its details and direct contents. On a phone, the selected row exposes **Earlier**, **Later**, **Edit details**, and **Move**. Choose **Edit details** to switch from the hierarchy to the focused editor, then use **Back to hierarchy** when you are done. Switching panels preserves unfinished editor input. The move dialog lets you choose the new parent and exact position without dragging.
+
+At compact desktop widths, the automatic icon navigation rail leaves the hierarchy and editor side by side. The stacked layout remains available when you choose it or when the content area is genuinely too narrow.
 
 The space editor keeps name, Short ID, type, parent, and **Save space** in the primary flow. Expand **More space details** for tags, description, suitability, and interior dimensions. A planning-review action opens the relevant details automatically.
 
