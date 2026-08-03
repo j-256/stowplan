@@ -21,7 +21,7 @@ const VALUE_POINTS = Object.freeze([
   },
   {
     title: "Find anything quickly",
-    body: "Search names, categories, tags, notes, and locations across the workspace instead of opening containers one by one.",
+    body: "Search names, descriptions, categories, tags, and locations across the workspace instead of opening containers one by one.",
   },
   {
     title: "Make fewer physical moves",

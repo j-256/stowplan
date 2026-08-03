@@ -1,6 +1,6 @@
 import type { ApiQuotaName } from "../shared/api-quotas";
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export type JsonPrimitive = boolean | number | string | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
@@ -72,12 +72,12 @@ export interface ItemRecord {
     category: string;
     constraints: ItemConstraints;
     createdAt: string;
+    description: string;
     dimensions: Dimensions | null;
     frequency: Frequency;
     id: string;
     locationId: string;
     name: string;
-    notes: string;
     order: number;
     quantity: number;
     tags: string[];

@@ -18,7 +18,7 @@ features:
   - title: Keep working without service
     details: Accepted changes are saved in this browser first. Keep counting in a basement, garage, or moving truck and back up later.
   - title: Find anything quickly
-    details: Search names, categories, tags, notes, and locations across the workspace instead of opening containers one by one.
+    details: Search names, descriptions, categories, tags, and locations across the workspace instead of opening containers one by one.
   - title: Make fewer physical moves
     details: Build an explainable move plan, review why each suggestion was made, and undo completed changes when reality differs.
 ---

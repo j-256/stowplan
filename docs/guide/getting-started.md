@@ -9,7 +9,7 @@ Stowplan helps you make a trustworthy first pass through a room, cabinet, drawer
 Try this short loop:
 
 1. Stowplan opens **BX-09 · Appliance parts** in **Capture**.
-2. Enter a quantity, unit, and item name, then choose **Save & add next**.
+2. Enter an item name, adjust the default quantity if needed, then choose **Save & add next**. Description and unit are optional details.
 3. Choose **Counted & next** when the box is represented accurately enough.
 4. Open **Inventory** and search for the item you added.
 5. Open **Plan** to see what evidence Stowplan uses before suggesting physical moves.
@@ -29,7 +29,7 @@ On the first-run workspace page, creation comes before the demo and optional onl
 2. Under **Your workspace name**, enter a useful name such as `My apartment` and choose **Create**.
 3. In **Capture**, choose **Add first space**.
 4. Give the space the same short ID as its physical label, then add its friendly name and type.
-5. Record each distinct item as quantity, unit, and name.
+5. Record each distinct item by name, adjusting the default quantity only when needed. Add a description or unit when it makes the record easier to find or understand.
 6. Add any box, bin, shelf, or drawer nested inside the space while you are looking at it.
 7. Choose **Counted & next** when the records are accurate enough to organize.
 
@@ -39,7 +39,7 @@ Accepted changes are saved in this browser first, so losing service does not int
 
 Use short codes that are easy to print, write, and search, such as `GAR-01`, `KIT-C03`, or `BOX-12`. The code identifies the physical label; the friendly name can change later.
 
-The useful standard is "accurate enough to find and move," not "cataloged like a museum." Add categories, tags, dimensions, and placement rules only when they help with a real search or decision.
+The useful standard is "accurate enough to find and move," not "cataloged like a museum." Add descriptions, categories, tags, dimensions, and placement rules only when they help with a real search or decision.
 
 ## Know what the capture statuses mean
 

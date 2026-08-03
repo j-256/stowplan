@@ -151,7 +151,7 @@ export function JumpPalette({
           searchText: [
             item.name,
             item.category,
-            item.notes,
+            item.description,
             location,
             ...item.tags,
             ...item.constraints.requiredTags,

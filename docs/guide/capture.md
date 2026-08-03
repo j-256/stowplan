@@ -5,11 +5,12 @@ Capture is designed for a phone in one hand while the other hand opens boxes and
 ## Record one space
 
 1. Select the physical space by its short ID or name. On a phone, choose **Capture queue** to find it; selecting the row opens **Current container** in one tap.
-2. Enter **Qty**, **Unit**, and **What is it?**
-3. Choose **Save & add next**.
-4. Repeat until the loose items in that space are represented.
-5. Add any nested boxes, bins, drawers, or shelves before moving on.
-6. Choose **Counted & next**.
+2. Enter **What is it?** and adjust **Qty** only when the default of one is not right.
+3. Expand **Add description or unit** when a searchable description or a unit other than `each` will help.
+4. Choose **Save & add next**.
+5. Repeat until the loose items in that space are represented.
+6. Add any nested boxes, bins, drawers, or shelves before moving on.
+7. Choose **Counted & next**.
 
 Each accepted row is saved in this browser before Stowplan tries online backup. You can close the tab or lose service after the save completes without losing that accepted row.
 
@@ -43,7 +44,7 @@ Moving a nested container can affect both its old and new completed parents. Sto
 
 ## Fix or move an item
 
-Choose an existing item to edit its name, amount, category, tags, notes, placement requirements, or dimensions. The placement card can move all or part of its quantity. A partial move leaves one record at the source and creates or combines the matching amount at the destination.
+Choose an existing item to edit its name, quantity, or searchable Description. Expand **More item details** for unit, category, frequency, and tags. Placement requirements and exact dimensions stay in their own optional disclosures. The placement card can move all or part of an item's quantity. A partial move leaves one record at the source and creates or combines the matching amount at the destination.
 
 Reorder handles change the visible order inside one container. Arrow controls provide the same operation without dragging.
 

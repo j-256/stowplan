@@ -2284,7 +2284,8 @@ test("onboards, captures, edits, searches, plans, rolls back, and persists local
   const itemEditor = page.getByRole("dialog", { name: "Edit item" });
   await expect(itemEditor).toBeVisible();
   await expect(itemEditor.getByText("What is it?", { exact: true })).toBeVisible();
-  await expect(itemEditor.getByText("Organize and find it", { exact: true })).toBeVisible();
+  await expect(itemEditor.getByLabel("Description")).toBeVisible();
+  await itemEditor.getByText("More item details", { exact: true }).click();
   await page.getByLabel("Category").fill("Linens");
   await page.getByLabel("Search tags").fill("washable, prep");
   await page.getByRole("button", { name: "Save item" }).click();
@@ -2298,7 +2299,7 @@ test("onboards, captures, edits, searches, plans, rolls back, and persists local
   await expect(page.getByRole("heading", { name: "All item records" })).toBeVisible();
   await expect(page.getByText("Showing the containerless inventory.")).toBeVisible();
   await expect(page.locator('.inventory-row .drag-handle[title="Drag Test tea towels to reorder"]')).toHaveCount(0);
-  await page.getByPlaceholder("Search names, categories, tags, constraints, and notes").fill("washable");
+  await page.getByPlaceholder("Search names, descriptions, categories, tags, and requirements").fill("washable");
   await expect(page.getByText("Test tea towels", { exact: true })).toBeVisible();
   await page.locator(".nav:visible", { hasText: "Plan" }).click();
   await page.getByText("Plan priorities", { exact: true }).click();
@@ -2313,6 +2314,76 @@ test("onboards, captures, edits, searches, plans, rolls back, and persists local
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   expect(consoleErrors).toEqual([]);
   expect(syncRequests).toEqual([]);
+});
+
+test("keeps item capture minimal and makes descriptions searchable", async ({
+  page,
+}) => {
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
+  await reopenCurrentCapture(page);
+
+  const capture = page.locator("form.quick");
+  await expect(capture.getByLabel("What is it?")).toBeVisible();
+  await expect(capture.getByLabel("Qty")).toHaveValue("1");
+  await expect(capture.getByLabel("Description")).toBeHidden();
+  await expect(capture.getByLabel("Unit", { exact: true })).toBeHidden();
+
+  await capture.getByLabel("What is it?").fill("Plain capture item");
+  await capture.getByRole("button", { name: "Save & add next" }).click();
+  await expect(capture.getByLabel("What is it?")).toBeFocused();
+
+  await capture.getByText("Add description or unit", { exact: true }).click();
+  await capture.getByLabel("What is it?").fill("Guest sheet set");
+  await capture.getByLabel("Qty").fill("2");
+  await capture.getByLabel("Description").fill(
+    "Blue cotton sheets for the foldout bed",
+  );
+  await capture.getByLabel("Unit", { exact: true }).fill("sets");
+  await capture.getByRole("button", { name: "Save & add next" }).click();
+
+  const saved = await localReplica(page) as {
+    state: {
+      items: {
+        name: string;
+        description: string;
+        quantity: number;
+        unit: string;
+      }[];
+    };
+  };
+  expect(saved.state.items.find((item) => item.name === "Plain capture item"))
+    .toMatchObject({ description: "", quantity: 1, unit: "each" });
+  expect(saved.state.items.find((item) => item.name === "Guest sheet set"))
+    .toMatchObject({
+      description: "Blue cotton sheets for the foldout bed",
+      quantity: 2,
+      unit: "sets",
+    });
+  await expect(page.locator(".captured-row", {
+    hasText: "Guest sheet set",
+  })).toContainText("Blue cotton sheets for the foldout bed");
+
+  await page.locator(".nav:visible", { hasText: "Inventory" }).click();
+  await page.getByLabel("Search inventory").fill("foldout bed");
+  const row = page.locator('.inventory-row[data-item-id]', {
+    hasText: "Guest sheet set",
+  });
+  await expect(row).toContainText("Blue cotton sheets for the foldout bed");
+  await row.locator(".item-name").click();
+
+  const editor = page.getByRole("dialog", { name: "Edit item" });
+  await expect(editor.getByLabel("Description")).toHaveValue(
+    "Blue cotton sheets for the foldout bed",
+  );
+  for (const summary of [
+    "More item details",
+    "Placement requirements",
+    "Exact dimensions",
+  ]) {
+    const details = editor.locator("details").filter({ hasText: summary });
+    await expect(details).toHaveCount(1);
+    await expect(details).not.toHaveAttribute("open", "");
+  }
 });
 
 test("prevents repeated form submission from creating duplicate records", async ({ page }) => {
@@ -3939,8 +4010,9 @@ test("opens the exact item section needed for planning evidence", async ({ page 
   const itemEditor = page.getByRole("dialog", { name: "Edit item" });
   await expect(itemEditor.getByText("Unclassified charger", { exact: true })).toBeVisible();
   const organizeSection = itemEditor.locator('[data-guidance-section="item_details"]');
+  await expect(organizeSection).toHaveAttribute("open", "");
   const coarsePointer = await page.evaluate(() => matchMedia("(pointer: coarse)").matches);
-  if (coarsePointer) await expect(organizeSection).toBeFocused();
+  if (coarsePointer) await expect(organizeSection.locator("summary")).toBeFocused();
   else await expect(itemEditor.getByLabel("Category")).toBeFocused();
 });
 
@@ -3958,6 +4030,7 @@ test("preserves a failed creation draft and avoids narrow-screen overflow", asyn
   await expect(page.getByLabel("Friendly name")).toHaveValue("Keep this draft");
 
   await showCapturePanel(page, "current container");
+  await page.getByText("Add description or unit", { exact: true }).click();
   await page.getByLabel("Unit", { exact: true }).fill("extraordinarily-long-custom-unit-name");
   await page.getByLabel("What is it?").fill("Long unit test item");
   await page.getByRole("button", { name: "Save & add next" }).click();
@@ -4044,6 +4117,7 @@ test("distinguishes duplicate inventory actions by quantity and unit", async ({ 
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await reopenCurrentCapture(page);
 
+  await page.getByText("Add description or unit", { exact: true }).click();
   await page.getByLabel("Qty").fill("2");
   await page.getByLabel("Unit", { exact: true }).fill("AA");
   await page.getByLabel("What is it?").fill("Batteries");
@@ -4236,14 +4310,14 @@ test("plucks an older same-item edit and records each history action", async ({
   await page.getByRole("button", { name: "Close item editor" }).click();
 
   await page.locator('[data-item-id="item_pasta"] .item-name').click();
-  await page.getByLabel("Notes").fill("Added after the quantity edit");
+  await page.getByLabel("Description").fill("Added after the quantity edit");
   await page.getByRole("button", { name: "Save item" }).click();
   await expect(page.getByText("Saved on this device.")).toBeVisible();
   await page.getByRole("button", { name: "Close item editor" }).click();
 
   await navigateToWorkspaceView(page, "Activity");
   const rows = page.locator(".activity-row");
-  await expect(rows.nth(0)).toContainText("notes");
+  await expect(rows.nth(0)).toContainText("description");
   await expect(rows.nth(1)).toContainText("quantity");
   expect(await page.evaluate(
     () => document.documentElement.scrollWidth <= window.innerWidth,
@@ -4273,7 +4347,7 @@ test("plucks an older same-item edit and records each history action", async ({
         audit: unknown[];
         items: {
           id: string;
-          notes: string;
+          description: string;
           quantity: number;
           version: number;
         }[];
@@ -4284,13 +4358,13 @@ test("plucks an older same-item edit and records each history action", async ({
     );
     return {
       auditCount: replica.state.audit.length,
-      notes: item?.notes,
+      description: item?.description,
       quantity: item?.quantity,
       version: item?.version,
     };
   }).toEqual({
     auditCount: 1,
-    notes: "Added after the quantity edit",
+    description: "Added after the quantity edit",
     quantity: 6,
     version: 4,
   });
@@ -4309,7 +4383,7 @@ test("plucks an older same-item edit and records each history action", async ({
         audit: unknown[];
         items: {
           id: string;
-          notes: string;
+          description: string;
           quantity: number;
           version: number;
         }[];
@@ -4320,13 +4394,13 @@ test("plucks an older same-item edit and records each history action", async ({
     );
     return {
       auditCount: replica.state.audit.length,
-      notes: item?.notes,
+      description: item?.description,
       quantity: item?.quantity,
       version: item?.version,
     };
   }).toEqual({
     auditCount: 2,
-    notes: "Added after the quantity edit",
+    description: "Added after the quantity edit",
     quantity: 7,
     version: 5,
   });

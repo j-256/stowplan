@@ -528,7 +528,7 @@ describe("organizer command engine", () => {
                         dimensions: item.dimensions,
                         frequency: item.frequency,
                         name: ` ${item.name} `,
-                        notes: item.notes,
+                        description: item.description,
                         quantity: item.quantity,
                         tags: item.tags,
                         unit: ` ${item.unit} `,
@@ -577,7 +577,7 @@ describe("organizer command engine", () => {
             {
                 type: "item.update",
                 id: "item_flour",
-                changes: { notes: "Nearly empty" },
+                changes: { description: "Nearly empty" },
             },
             "CAPTURE_COMPLETE",
             /Reopen Baking bin before editing an item/,
@@ -974,7 +974,7 @@ describe("organizer command engine", () => {
         const unsafeEnvelope = {
             ...createEnvelope(
                 state,
-                { type: "item.update", id: "item_pasta", changes: { notes: "safe" } },
+                { type: "item.update", id: "item_pasta", changes: { description: "safe" } },
             ),
             command: itemCommand,
             expectations: [],
@@ -1136,7 +1136,7 @@ describe("field-aware history", () => {
             state.items.find((item) => item.id === itemId)!,
         );
         const quantityTimestamp = "2026-07-22T12:01:00.000Z";
-        const notesTimestamp = "2026-07-22T12:02:00.000Z";
+        const itemDescriptionTimestamp = "2026-07-22T12:02:00.000Z";
         const undoTimestamp = "2026-07-22T12:03:00.000Z";
         const reapplyTimestamp = "2026-07-22T12:04:00.000Z";
         const quantityResult = applyCommand(
@@ -1155,8 +1155,8 @@ describe("field-aware history", () => {
             state,
             createEnvelope(
                 state,
-                { type: "item.update", id: itemId, changes: { notes: "Later note" } },
-                { id: "cmd_item_notes", timestamp: notesTimestamp },
+                { type: "item.update", id: itemId, changes: { description: "Later description" } },
+                { id: "cmd_item_description", timestamp: itemDescriptionTimestamp },
             ),
         ).state;
         const beforeUndo = structuredClone(
@@ -1175,7 +1175,7 @@ describe("field-aware history", () => {
         );
         state = undone.state;
         expect(state.items.find((item) => item.id === itemId)).toMatchObject({
-            notes: "Later note",
+            description: "Later description",
             quantity: original.quantity,
             updatedAt: undoTimestamp,
             version: beforeUndo.version + 1,
@@ -1197,7 +1197,7 @@ describe("field-aware history", () => {
             ),
         ).state;
         expect(state.items.find((item) => item.id === itemId)).toMatchObject({
-            notes: "Later note",
+            description: "Later description",
             quantity: 7,
             updatedAt: reapplyTimestamp,
             version: beforeUndo.version + 2,
@@ -1325,7 +1325,7 @@ describe("field-aware history", () => {
             state,
             createEnvelope(
                 state,
-                { type: "item.update", id: itemId, changes: { notes: "Later note" } },
+                { type: "item.update", id: itemId, changes: { description: "Later description" } },
                 { id: "cmd_after_legacy", timestamp: laterTimestamp },
             ),
         ).state;
@@ -1342,7 +1342,7 @@ describe("field-aware history", () => {
             ),
         ).state;
         expect(state.items.find((item) => item.id === itemId)).toMatchObject({
-            notes: "Later note",
+            description: "Later description",
             quantity: original.quantity,
             updatedAt: undoTimestamp,
             version: versionBeforeUndo + 1,
@@ -1451,15 +1451,15 @@ describe("field-aware history", () => {
                 { id: "cmd_mixed_first" },
             ),
         ).state;
-        const noteChange = applyCommand(
+        const descriptionChange = applyCommand(
             state,
             createEnvelope(
                 state,
-                { type: "item.update", id: itemId, changes: { notes: "Keep me" } },
-                { id: "cmd_mixed_note" },
+                { type: "item.update", id: itemId, changes: { description: "Keep me" } },
+                { id: "cmd_mixed_description" },
             ),
         );
-        state = noteChange.state;
+        state = descriptionChange.state;
         state = applyCommand(
             state,
             createEnvelope(
@@ -1473,11 +1473,11 @@ describe("field-aware history", () => {
             state,
             createEnvelope(state, {
                 type: "history.undo",
-                activityId: noteChange.activity!.id,
+                activityId: descriptionChange.activity!.id,
             }),
         ).state;
         expect(state.items.find((item) => item.id === itemId)).toMatchObject({
-            notes: "",
+            description: "",
             quantity: 8,
         });
 
@@ -1486,7 +1486,7 @@ describe("field-aware history", () => {
             createEnvelope(state, { type: "history.batchUndo", count: 2 }),
         ).state;
         expect(state.items.find((item) => item.id === itemId)).toMatchObject({
-            notes: "",
+            description: "",
             quantity: 6,
         });
 
@@ -1495,7 +1495,7 @@ describe("field-aware history", () => {
             createEnvelope(state, { type: "history.batchRedo", count: 2 }),
         ).state;
         expect(state.items.find((item) => item.id === itemId)).toMatchObject({
-            notes: "",
+            description: "",
             quantity: 8,
         });
 
@@ -1504,7 +1504,7 @@ describe("field-aware history", () => {
             createEnvelope(state, { type: "history.batchRedo", count: 1 }),
         ).state;
         expect(state.items.find((item) => item.id === itemId)).toMatchObject({
-            notes: "Keep me",
+            description: "Keep me",
             quantity: 8,
         });
     });

@@ -30,7 +30,7 @@ function activity(
       after: `after_${index}`,
       before: `before_${index}`,
       id: "item_pasta",
-      path: "notes",
+      path: "description",
       target: "item",
     }],
     status: "applied",

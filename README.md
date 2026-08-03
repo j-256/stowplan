@@ -24,7 +24,7 @@ A mobile-first, local-first organizer for rooms, cabinets, drawers, boxes, bins,
 ## Why Stowplan
 
 - Container-first onboarding distinguishes uncounted, in-progress, known-empty, and counted spaces.
-- Quantity + unit + item capture, nested-container creation, and "mark counted & next" are optimized for a phone in one hand.
+- Name-first item capture with a default quantity, optional descriptions and units, nested-container creation, and "mark counted & next" are optimized for a phone in one hand.
 - IndexedDB is the immediate source of truth; a durable outbox batches and retries authenticated server backups.
 - Multiple local workspaces are preserved; scanner-safe guest links open shared workspaces without erasing the current one.
 - Hierarchical moves are cycle-safe; partial quantities split/merge; bulk moves are atomic.

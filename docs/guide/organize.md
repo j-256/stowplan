@@ -4,15 +4,15 @@ Use **Spaces** when you know the place you want to inspect. Use **Inventory** wh
 
 ## Find an item
 
-Open **Inventory** and search by name, category, tag, placement requirement, or note. The result shows the item's location path so you can follow the same room-to-container route in the physical world.
+Open **Inventory** and search by name, description, category, tag, or placement requirement. The result shows the item's location path so you can follow the same room-to-container route in the physical world.
 
 Choose **Edit / move** to:
 
-- change the everyday name, quantity, or unit
-- add categories, tags, frequency, or notes that improve later searches
-- record placement requirements only when they affect where the item may safely go
-- move all or part of the quantity to another space
-- delete the item record with confirmation
+- Change the everyday name, quantity, or Description
+- Expand **More item details** for unit, categories, tags, or frequency
+- Record placement requirements only when they affect where the item may safely go
+- Move all or part of the quantity to another space
+- Delete the item record with confirmation
 
 Select several records to move them to one destination together. Records already at that destination stay put. Moving a partial quantity creates a separate record at the destination; equivalent records combine.
 

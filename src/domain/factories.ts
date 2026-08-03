@@ -1,6 +1,7 @@
 import {
     type Command,
     type CommandEnvelope,
+    type Frequency,
     type ItemConstraints,
     type ItemRecord,
     type Location,
@@ -12,6 +13,9 @@ import {
 import { expectationsForCommand } from "./expectations";
 
 export const DEFAULT_ITEM_CATEGORY = "Uncategorized";
+export const DEFAULT_ITEM_FREQUENCY: Frequency = "monthly";
+export const DEFAULT_ITEM_QUANTITY = 1;
+export const DEFAULT_ITEM_UNIT = "each";
 
 export const DEFAULT_LOCATION_CONDITIONS: Readonly<LocationConditions> = {
     dark: false,
@@ -108,6 +112,7 @@ export function createLocation(
 export function createItem(
     input: {
         category?: string;
+        description?: string;
         locationId: string;
         name: string;
         order?: number;
@@ -124,16 +129,16 @@ export function createItem(
             requiredTags: [],
         },
         createdAt: timestamp,
+        description: input.description?.trim() ?? "",
         dimensions: null,
-        frequency: "monthly",
+        frequency: DEFAULT_ITEM_FREQUENCY,
         id: newId("item"),
         locationId: input.locationId,
         name: input.name.trim(),
-        notes: "",
         order: input.order ?? 0,
-        quantity: input.quantity ?? 1,
+        quantity: input.quantity ?? DEFAULT_ITEM_QUANTITY,
         tags: [],
-        unit: input.unit?.trim() || "each",
+        unit: input.unit?.trim() || DEFAULT_ITEM_UNIT,
         updatedAt: timestamp,
         version: 1,
     };

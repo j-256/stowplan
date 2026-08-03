@@ -267,7 +267,7 @@ describe("synchronization", () => {
                 createEnvelope(
                     membershipChanged,
                     {
-                        changes: { notes: "Membership counter changed" },
+                        changes: { description: "Membership counter changed" },
                         id: "item_pasta",
                         type: "item.update",
                     },
@@ -298,7 +298,7 @@ describe("synchronization", () => {
                 createEnvelope(
                     accessChanged,
                     {
-                        changes: { notes: "Access counter changed" },
+                        changes: { description: "Access counter changed" },
                         id: "item_pasta",
                         type: "item.update",
                     },
@@ -326,7 +326,7 @@ describe("synchronization", () => {
         const command = createEnvelope(
             initial,
             {
-                changes: { notes: "Stale edit" },
+                changes: { description: "Stale edit" },
                 id: "item_pasta",
                 type: "item.update",
             },
@@ -356,7 +356,7 @@ describe("synchronization", () => {
         expect(
             (await store.load(initial.workspace.id))?.items.find(
                 item => item.id === "item_pasta",
-            )?.notes,
+            )?.description,
         ).toBe("");
     });
 
@@ -429,7 +429,7 @@ describe("synchronization", () => {
         const store = new MemorySnapshotStore([initial]);
         const remote = createEnvelope(
             initial,
-            { type: "item.update", id: "item_pasta", changes: { notes: "Remote note" } },
+            { type: "item.update", id: "item_pasta", changes: { description: "Remote description" } },
             { id: "cmd_remote" },
         );
         const local = createEnvelope(
@@ -441,7 +441,7 @@ describe("synchronization", () => {
         const result = await synchronize(store, initial.workspace.id, [local]);
         const pasta = result.snapshot.items.find((item) => item.id === "item_pasta");
         expect(result.receipts[0].status).toBe("applied");
-        expect(pasta?.notes).toBe("Remote note");
+        expect(pasta?.description).toBe("Remote description");
         expect(pasta?.quantity).toBe(12);
     });
 
@@ -465,19 +465,19 @@ describe("synchronization", () => {
             { type: "history.undo", activityId },
             { id: "cmd_history_sync_undo", actorId: "user_undo" },
         );
-        const remoteNotes = createEnvelope(
+        const remoteDescription = createEnvelope(
             changed.snapshot,
             {
                 type: "item.update",
                 id: "item_pasta",
-                changes: { notes: "Remote note after quantity" },
+                changes: { description: "Remote description after quantity" },
             },
-            { id: "cmd_history_sync_notes", actorId: "user_remote" },
+            { id: "cmd_history_sync_description", actorId: "user_remote" },
         );
         const remotelyChanged = await synchronize(
             store,
             initial.workspace.id,
-            [remoteNotes],
+            [remoteDescription],
         );
         const versionBeforeUndo = remotelyChanged.snapshot.items.find(
             (item) => item.id === "item_pasta",
@@ -491,7 +491,7 @@ describe("synchronization", () => {
         expect(undone.receipts[0]).toMatchObject({ status: "applied" });
         expect(undone.snapshot.items.find((item) => item.id === "item_pasta"))
             .toMatchObject({
-                notes: "Remote note after quantity",
+                description: "Remote description after quantity",
                 quantity: 6,
                 version: versionBeforeUndo + 1,
             });
@@ -588,7 +588,7 @@ describe("synchronization", () => {
             {
                 type: "item.update",
                 id: "item_lids",
-                changes: { notes: "Edited on another device" },
+                changes: { description: "Edited on another device" },
             },
             { id: "cmd_remote_nested_edit" },
         );
@@ -655,7 +655,7 @@ describe("synchronization", () => {
         }).state;
         const independent = createEnvelope(
             optimistic,
-            { type: "item.update", id: "item_pasta", changes: { notes: "Offline note" } },
+            { type: "item.update", id: "item_pasta", changes: { description: "Offline description" } },
             { id: "cmd_independent_tail" },
         );
 
@@ -670,7 +670,7 @@ describe("synchronization", () => {
             "applied",
         ]);
         expect(result.snapshot.items.find((item) => item.id === "item_pasta")).toMatchObject({
-            notes: "Offline note",
+            description: "Offline description",
             quantity: 6,
         });
     });
@@ -738,9 +738,9 @@ describe("synchronization", () => {
     it("serializes concurrent batches with optimistic retries", async () => {
         const initial = editableDemoState();
         const store = new MemorySnapshotStore([initial]);
-        const note = createEnvelope(
+        const description = createEnvelope(
             initial,
-            { type: "item.update", id: "item_pasta", changes: { notes: "A" } },
+            { type: "item.update", id: "item_pasta", changes: { description: "A" } },
             { id: "cmd_a" },
         );
         const quantity = createEnvelope(
@@ -749,13 +749,13 @@ describe("synchronization", () => {
             { id: "cmd_b" },
         );
         await Promise.all([
-            synchronize(store, initial.workspace.id, [note]),
+            synchronize(store, initial.workspace.id, [description]),
             synchronize(store, initial.workspace.id, [quantity]),
         ]);
         const final = await store.load(initial.workspace.id);
         expect(final?.workspace.revision).toBe(2);
         expect(final?.items.find((item) => item.id === "item_pasta")).toMatchObject({
-            notes: "A",
+            description: "A",
             quantity: 11,
         });
     });
@@ -776,7 +776,7 @@ describe("synchronization", () => {
                 },
                 id: `item_quota_${index}`,
                 name: "Stored item",
-                notes: "",
+                description: "",
                 tags: [],
             }),
         );
@@ -995,7 +995,7 @@ describe("synchronization", () => {
                 },
                 id: `item_legacy_${index}`,
                 name: "Stored item",
-                notes: "",
+                description: "",
                 tags: [],
             }),
         );

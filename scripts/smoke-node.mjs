@@ -252,7 +252,7 @@ try {
     items: [],
     locations: [],
     plans: [],
-    schemaVersion: 1,
+    schemaVersion: 2,
     workspace: {
       createdAt: timestamp,
       id: WORKSPACE_ID,

@@ -378,8 +378,10 @@ test("keeps hierarchy and touch drag affordances in the shipped organizer", () =
 
 test("ships task-oriented item, plan, and workspace controls", () => {
   const application = readFileSync(new URL("../src/client/stowplan-app.tsx", import.meta.url), "utf8");
-  assert.match(application, /Organize and find it/);
+  assert.match(application, /Description<textarea name="description"/);
+  assert.match(application, /More item details/);
   assert.match(application, /Placement requirements/);
+  assert.match(application, /Exact dimensions/);
   assert.match(application, /affects a plan/);
   assert.match(application, /Workspace name/);
   assert.match(application, /Short ID/);

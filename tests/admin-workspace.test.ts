@@ -111,7 +111,7 @@ async function fixture(
     },
     "2026-07-25T00:02:00.000Z",
   );
-  item.notes = "Full content visible only after an audited inspection";
+  item.description = "Full content visible only after an audited inspection";
   state.locations.push(location);
   state.items.push(item);
   await new D1SnapshotStore(storage.database).initialize(state);
@@ -147,7 +147,7 @@ describe("global admin workspace control", () => {
         state: {
           items: [{
             name: current.item.name,
-            notes: current.item.notes,
+            description: current.item.description,
           }],
           locations: [{
             description: current.location.description,
@@ -186,7 +186,7 @@ describe("global admin workspace control", () => {
         workspaceId: current.state.workspace.id,
       });
       expect(audit.detail_json).not.toContain(current.item.name);
-      expect(audit.detail_json).not.toContain(current.item.notes);
+      expect(audit.detail_json).not.toContain(current.item.description);
       current.sqlite.close();
     }
   });

@@ -45,7 +45,16 @@ import {
 } from "lucide-react";
 import { createDemoState } from "../domain/demo";
 import { expectationsForCommand } from "../domain/expectations";
-import { createEmptyState, createItem, createLocation, newId } from "../domain/factories";
+import {
+  createEmptyState,
+  createItem,
+  createLocation,
+  DEFAULT_ITEM_CATEGORY,
+  DEFAULT_ITEM_FREQUENCY,
+  DEFAULT_ITEM_QUANTITY,
+  DEFAULT_ITEM_UNIT,
+  newId,
+} from "../domain/factories";
 import { suggestLocationCode } from "../domain/location-code";
 import { DEFAULT_PLAN_WEIGHTS, generatePlan as buildMovePlan } from "../domain/planner";
 import {
@@ -2806,7 +2815,17 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
       return false;
     }
     const siblings = state.items.filter((item) => item.locationId === current.id && !item.archivedAt);
-    return perform(commit, { type: "item.create", item: createItem({ locationId: current.id, name: String(data.get("name")), quantity: Number(data.get("quantity")), unit: String(data.get("unit")), order: nextOrder(siblings) }) });
+    return perform(commit, {
+      type: "item.create",
+      item: createItem({
+        description: String(data.get("description")),
+        locationId: current.id,
+        name: String(data.get("name")),
+        order: nextOrder(siblings),
+        quantity: Number(data.get("quantity")),
+        unit: String(data.get("unit")),
+      }),
+    });
   };
   const finish = async (status: CaptureStatus) => {
     if (!current) return;
@@ -3282,7 +3301,20 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
         </div>
       </details>
     : null;
-  const capturePanel = <section className="panel capture-card" ref={editor} tabIndex={-1} aria-label={current ? `Capture inside ${current.name}` : "Capture editor"}>{current ? <><nav className="breadcrumbs" aria-label="Current container path">{breadcrumbs.map((location, index) => <span key={location.id}>{index > 0 && <i aria-hidden>›</i>}<button onClick={() => selectCaptureLocation(location.id)}>{location.code}</button></span>)}</nav><div className="title"><div><p className="eyebrow">Inside this container</p><h2>{current.code} · {current.name}</h2></div><span className="tag capture-status" data-status={current.captureStatus}><CaptureStatusIcon /><span>{current.captureStatus.replace("_", " ")}</span></span></div>{demoIntroPanel}{nextUncounted && <button className="capture-next-location" type="button" aria-label={`Open next unfinished location without changing ${current.name}: ${nextUncounted.code}, ${nextUncounted.name}`} onClick={() => selectCaptureLocation(nextUncounted.id)}><span>Next unfinished</span><strong>{nextUncounted.code} · {nextUncounted.name}</strong></button>}{captureComplete ? <div className="capture-locked" role="status"><CheckCircle2 /><span><strong>Capture is complete</strong><small>Reopen this space before adding, editing, or reordering its contents.</small></span></div> : <form key={current.id} className="quick" onSubmit={(event) => submitForm(event, addItem, true, '[name="name"]')}><label>Qty<input required type="number" min="0.01" step="any" name="quantity" defaultValue="1" /></label><label>Unit<input required name="unit" defaultValue="each" list="capture-units" /><datalist id="capture-units"><option value="each" /><option value="boxes" /><option value="bags" /><option value="cans" /><option value="pairs" /></datalist></label><label className="grow">What is it?<input required name="name" placeholder="e.g. winter gloves" /></label><button className="primary">Save & add next</button></form>}
+  const capturePanel = <section className="panel capture-card" ref={editor} tabIndex={-1} aria-label={current ? `Capture inside ${current.name}` : "Capture editor"}>{current ? <><nav className="breadcrumbs" aria-label="Current container path">{breadcrumbs.map((location, index) => <span key={location.id}>{index > 0 && <i aria-hidden>›</i>}<button onClick={() => selectCaptureLocation(location.id)}>{location.code}</button></span>)}</nav><div className="title"><div><p className="eyebrow">Inside this container</p><h2>{current.code} · {current.name}</h2></div><span className="tag capture-status" data-status={current.captureStatus}><CaptureStatusIcon /><span>{current.captureStatus.replace("_", " ")}</span></span></div>{demoIntroPanel}{nextUncounted && <button className="capture-next-location" type="button" aria-label={`Open next unfinished location without changing ${current.name}: ${nextUncounted.code}, ${nextUncounted.name}`} onClick={() => selectCaptureLocation(nextUncounted.id)}><span>Next unfinished</span><strong>{nextUncounted.code} · {nextUncounted.name}</strong></button>}{captureComplete ? <div className="capture-locked" role="status"><CheckCircle2 /><span><strong>Capture is complete</strong><small>Reopen this space before adding, editing, or reordering its contents.</small></span></div> : <form key={current.id} className="quick" onSubmit={(event) => submitForm(event, addItem, true, '[name="name"]')}>
+      <div className="quick-primary">
+        <label className="grow">What is it?<input required name="name" placeholder="e.g. winter gloves" /></label>
+        <label>Qty<input required type="number" min="0.01" step="any" name="quantity" defaultValue={DEFAULT_ITEM_QUANTITY} /></label>
+        <button className="primary">Save & add next</button>
+      </div>
+      <details className="quick-optional">
+        <summary><span>Add description or unit</span><small>Optional</small></summary>
+        <div className="quick-optional-fields">
+          <label className="grow">Description<textarea name="description" placeholder="Color, condition, or other identifying details" /></label>
+          <label>Unit<input required name="unit" defaultValue={DEFAULT_ITEM_UNIT} list="capture-units" /><datalist id="capture-units"><option value="each" /><option value="boxes" /><option value="bags" /><option value="cans" /><option value="pairs" /></datalist></label>
+        </div>
+      </details>
+    </form>}
       {nested.length > 0 && <div className="nested-list"><small>Nested containers</small>{nested.map((location) => <button key={location.id} onClick={() => selectCaptureLocation(location.id)}><b>{location.code}</b><span>{location.name}</span><small>{location.captureStatus.replace("_", " ")}</small></button>)}</div>}
       <div className="captured">{items.map((item, index) => {
         const validDrop = nativeReorderSource?.type === "item"
@@ -3313,7 +3345,7 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
             return target?.id && canDropItem(item.id, target.id) ? target : null;
           }} onDrop={(target) => reorderByDrop({ type: "item", id: item.id }, target)} onInvalidDrop={() => showFeedback("Items can only be reordered onto a different item in the same container")} />}
           <b>{item.quantity} {item.unit}</b>
-          {captureComplete ? <span className="item-name"><strong>{item.name}</strong><small>{item.category} · {item.frequency}</small></span> : <button className="item-name" onClick={() => setEditing(item.id)}><strong>{item.name}</strong><small>{item.category} · {item.frequency}</small></button>}
+          {captureComplete ? <span className="item-name"><strong>{item.name}</strong><small>{item.description || `${item.category} · ${item.frequency}`}</small></span> : <button className="item-name" onClick={() => setEditing(item.id)}><strong>{item.name}</strong><small>{item.description || `${item.category} · ${item.frequency}`}</small></button>}
           <span className="reorder-drop-copy" aria-hidden>{cue === "before" ? "Place before" : cue === "after" ? "Place after" : ""}</span>
           {!captureComplete && <div className="row-actions"><button className="icon small" aria-label={`Move ${item.name} up`} disabled={index === 0} onClick={() => reorder(item.id, -1)}><ArrowUp /></button><button className="icon small" aria-label={`Move ${item.name} down`} disabled={index === items.length - 1} onClick={() => reorder(item.id, 1)}><ArrowDown /></button><button className="icon small" aria-label={`Edit ${item.name}`} onClick={() => setEditing(item.id)}><Edit3 /></button></div>}
         </div>;
@@ -4291,7 +4323,7 @@ function Inventory({ state, commit, editing, editFocus, locationFilter, onEditin
       item.constraints.avoidWarmth ? "avoid warmth cool" : "",
       item.constraints.avoidHumidity ? "avoid humidity dry" : "",
     ];
-    const searchable = [item.name, item.category, item.notes, ...item.tags, ...item.constraints.requiredTags, ...constraintTerms].join(" ").toLocaleLowerCase();
+    const searchable = [item.name, item.category, item.description, ...item.tags, ...item.constraints.requiredTags, ...constraintTerms].join(" ").toLocaleLowerCase();
     return !item.archivedAt && (!locationFilter || item.locationId === locationFilter) && searchable.includes(query.trim().toLocaleLowerCase());
   }).sort((left, right) => {
     if (locationFilter && !query.trim()) return left.order - right.order || left.name.localeCompare(right.name);
@@ -4564,7 +4596,11 @@ function Inventory({ state, commit, editing, editFocus, locationFilter, onEditin
         return target?.id && canDropItem(item.id, target.id) ? target : null;
       }} onDrop={(target) => moveItemByDrop({ type: "item", id: item.id }, target)} onInvalidDrop={() => showFeedback(`Choose a different destination for ${item.name}`)} />}
       <label className="inventory-select"><input aria-label={`Select ${actionIdentity} in ${itemLocationPath}`} type="checkbox" checked={activeSelection.includes(item.id)} onChange={() => setSelected((current) => { const valid = current.filter((id) => shownIds.has(id)); return valid.includes(item.id) ? valid.filter((id) => id !== item.id) : [...valid, item.id]; })} /></label>
-      <button className="item-name" aria-label={`Open ${actionIdentity} in ${itemLocationPath}`} onClick={() => onEditingChange(item.id)}><strong>{item.name}</strong><small>{item.category} · {item.frequency} · {item.tags.join(", ") || "no tags"}</small></button>
+      <button className="item-name" aria-label={`Open ${actionIdentity} in ${itemLocationPath}`} onClick={() => onEditingChange(item.id)}>
+        <strong>{item.name}</strong>
+        {item.description && <small className="item-description-preview">{item.description}</small>}
+        <small>{item.category} · {item.frequency} · {item.tags.join(", ") || "no tags"}</small>
+      </button>
       <b>{item.quantity} {item.unit}</b>
       {itemLocation
         ? <a
@@ -4597,7 +4633,7 @@ function Inventory({ state, commit, editing, editFocus, locationFilter, onEditin
       <b>{shown.length} records</b>
     </div>
     <div className="toolbar inventory-tools">
-      <label className="search"><Search /><input aria-label="Search inventory" value={query} onChange={(event) => { setQuery(event.target.value); setSelected([]); setMoveDestinationId(""); }} placeholder="Search names, categories, tags, constraints, and notes" /></label>
+      <label className="search"><Search /><input aria-label="Search inventory" value={query} onChange={(event) => { setQuery(event.target.value); setSelected([]); setMoveDestinationId(""); }} placeholder="Search names, descriptions, categories, tags, and requirements" /></label>
       <select aria-label="Filter by location" value={locationFilter} onChange={(event) => { onLocationFilterChange(event.target.value); setSelected([]); setMoveDestinationId(""); }}>
         <option value="">Every container</option>
         {locationOptions.map(({ depth, location }) => <option key={location.id} value={location.id}>{`${"  ".repeat(depth)}${depth ? "↳ " : ""}${location.code} · ${location.name}`}</option>)}
@@ -4683,6 +4719,11 @@ function ItemEditor({ item, state, commit, close, focus }: { item: ItemRecord; s
     COMPLETE_CAPTURE_STATUSES.has(currentLocationRecord.captureStatus),
   );
   const hasPlacementRules = item.constraints.foodOnly || item.constraints.avoidWarmth || item.constraints.avoidHumidity || Boolean(item.constraints.keepTogether) || item.constraints.requiredTags.length > 0;
+  const hasOrganizationDetails =
+    item.category !== DEFAULT_ITEM_CATEGORY ||
+    item.frequency !== DEFAULT_ITEM_FREQUENCY ||
+    item.tags.length > 0 ||
+    item.unit !== DEFAULT_ITEM_UNIT;
   useEffect(() => { closeRef.current = close; }, [close]);
   useEffect(() => {
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -4715,11 +4756,12 @@ function ItemEditor({ item, state, commit, close, focus }: { item: ItemRecord; s
       const requestedFocus = initialFocus.current;
       const coarsePointer = matchMedia("(pointer: coarse)").matches;
       if (requestedFocus === "item_details") {
-        const section = dialog.current?.querySelector<HTMLElement>(
+        const section = dialog.current?.querySelector<HTMLDetailsElement>(
           '[data-guidance-section="item_details"]',
         );
+        if (section) section.open = true;
         section?.scrollIntoView({ block: "start" });
-        if (coarsePointer) section?.focus({ preventScroll: true });
+        if (coarsePointer) section?.querySelector<HTMLElement>("summary")?.focus({ preventScroll: true });
         else section?.querySelector<HTMLInputElement>('input[name="category"]')?.focus({ preventScroll: true });
         return;
       }
@@ -4749,7 +4791,7 @@ function ItemEditor({ item, state, commit, close, focus }: { item: ItemRecord; s
       const dimensions = optionalDimensions(data);
       await commit({ type: "item.update", id: item.id, changes: {
         name: String(data.get("name")), quantity: Number(data.get("quantity")), unit: String(data.get("unit")), category: String(data.get("category")), frequency: String(data.get("frequency")) as Frequency,
-        tags: splitList(data.get("tags")), notes: String(data.get("notes")), dimensions,
+        tags: splitList(data.get("tags")), description: String(data.get("description")), dimensions,
         constraints: { avoidHumidity: data.get("avoidHumidity") === "on", avoidWarmth: data.get("avoidWarmth") === "on", foodOnly: data.get("foodOnly") === "on", keepTogether: String(data.get("keepTogether")).trim() || null, requiredTags: splitList(data.get("requiredTags")) },
       } });
       setMessage("Saved on this device.");
@@ -4801,7 +4843,259 @@ function ItemEditor({ item, state, commit, close, focus }: { item: ItemRecord; s
       </section>
     </div>;
   }
-  return <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}><section ref={dialog} tabIndex={-1} className="modal item-editor-modal" role="dialog" aria-modal="true" aria-labelledby="item-editor-title"><header className="item-editor-header"><div><p className="eyebrow">Item details</p><h2 id="item-editor-title">Edit item</h2><p>{item.name}</p></div><button className="icon" aria-label="Close item editor" onClick={close}><X /></button></header><div className="item-editor-context" aria-label="Current item summary"><span><small>Amount</small><strong>{item.quantity} {item.unit}</strong></span><span><small>Stored in</small><strong>{currentLocationLabel}</strong></span></div><div className="item-editor-layout"><form onSubmit={(event) => submitForm(event, save, false)} className="item-editor-form"><section className="item-section item-essential"><div className="item-section-heading"><b>1</b><span><strong>What is it?</strong><small>The everyday details you will use most.</small></span></div><div className="item-core-grid"><label className="item-name-field">Item name<input required name="name" defaultValue={item.name} /></label><label>Quantity<input required name="quantity" type="number" min="0.01" step="any" defaultValue={item.quantity} /></label><label>Unit<input required name="unit" defaultValue={item.unit} /></label></div></section><section className="item-section" data-guidance-section="item_details" tabIndex={-1}><div className="item-section-heading"><b>2</b><span><strong>Organize and find it</strong><small>Structured labels keep search useful without becoming free-form chaos.</small></span></div><div className="item-organize-grid"><label>Category<input name="category" defaultValue={item.category} placeholder="e.g. Baking" /></label><label>How often is it used?<select name="frequency" defaultValue={item.frequency}>{frequencies.map((frequency) => <option key={frequency}>{frequency}</option>)}</select></label><label className="wide">Search tags<input name="tags" defaultValue={item.tags.join(", ")} placeholder="washable, seasonal, breakfast" /><small>Separate tags with commas.</small></label><label className="wide">Notes<textarea name="notes" defaultValue={item.notes} placeholder="Anything useful that does not belong in a structured field." /></label></div></section><details className="item-advanced" open={hasPlacementRules}><summary><span><strong>Placement requirements</strong><small>Only add rules that affect where this item can safely live.</small></span><b>{hasPlacementRules ? "Configured" : "Optional"}</b></summary><div className="item-advanced-body"><div className="constraint-grid"><label><input type="checkbox" name="foodOnly" defaultChecked={item.constraints.foodOnly} /><span><strong>Food-safe only</strong><small>Keep it out of unsuitable spaces.</small></span></label><label><input type="checkbox" name="avoidWarmth" defaultChecked={item.constraints.avoidWarmth} /><span><strong>Avoid warmth</strong><small>Exclude warm cabinets or zones.</small></span></label><label><input type="checkbox" name="avoidHumidity" defaultChecked={item.constraints.avoidHumidity} /><span><strong>Avoid humidity</strong><small>Prefer dry storage.</small></span></label></div><div className="item-organize-grid"><label>Keep-together group<input name="keepTogether" defaultValue={item.constraints.keepTogether ?? ""} placeholder="e.g. Coffee station" /></label><label>Required location tags<input name="requiredTags" defaultValue={item.constraints.requiredTags.join(", ")} placeholder="cool, dark" /></label></div></div></details><details className="item-advanced" data-guidance-section="item_capacity" open={Boolean(item.dimensions)}><summary><span><strong>Size per unit</strong><small>Useful when Stowplan needs to reason about capacity.</small></span><b>{item.dimensions ? "Measured" : "Optional"}</b></summary><div className="item-advanced-body"><div className="dimension-grid"><label>Width<input name="width" type="number" min="0.01" step="any" defaultValue={item.dimensions?.width} /></label><label>Height<input name="height" type="number" min="0.01" step="any" defaultValue={item.dimensions?.height} /></label><label>Depth<input name="depth" type="number" min="0.01" step="any" defaultValue={item.dimensions?.depth} /></label><label>Unit<select name="dimensionUnit" defaultValue={item.dimensions?.unit ?? "in"}><option>in</option><option>cm</option></select></label></div></div></details><footer className="item-save-bar"><span><strong>Changes stay on this device first.</strong><small>Server backup follows when available.</small></span><button className="primary">Save item</button></footer></form><aside className="item-editor-rail"><form onSubmit={(event) => submitForm(event, move, false)} className="move-card"><p className="eyebrow">Placement</p><h3>Move all or part</h3><p>Currently in <strong>{currentLocationLabel}</strong>.</p><label>How many?<input required name="moveQuantity" type="number" min="0.01" max={item.quantity} step="any" defaultValue={item.quantity} /></label><label>Move to<select required name="destination" defaultValue=""><option value="" disabled>Choose a space…</option>{destinationOptions.map(({ depth, location }) => <option key={location.id} value={location.id}>{`${"  ".repeat(depth)}${depth ? "↳ " : ""}${location.code} · ${location.name}`}</option>)}</select></label><button>Move quantity</button><small>Moving fewer than {item.quantity} creates a separate record at the destination.</small></form><details className="item-danger"><summary>More actions</summary><button type="button" className="danger" onClick={() => { if (confirm(`Delete ${item.name}? You can undo this from Activity.`)) void perform(commit, { type: "item.delete", id: item.id }, close); }}><Trash2 /> Delete item record</button><small>Deletion is recorded in Activity and can be undone.</small></details></aside></div>{message && <output className="form-message item-editor-message">{message}</output>}</section></div>;
+  return <div
+    className="modal-backdrop"
+    onMouseDown={(event) => {
+      if (event.target === event.currentTarget) close();
+    }}
+  >
+    <section
+      ref={dialog}
+      tabIndex={-1}
+      className="modal item-editor-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="item-editor-title"
+    >
+      <header className="item-editor-header">
+        <div>
+          <p className="eyebrow">Item details</p>
+          <h2 id="item-editor-title">Edit item</h2>
+          <p>{item.name}</p>
+        </div>
+        <button className="icon" aria-label="Close item editor" onClick={close}>
+          <X />
+        </button>
+      </header>
+      <div className="item-editor-context" aria-label="Current item summary">
+        <span><small>Amount</small><strong>{item.quantity} {item.unit}</strong></span>
+        <span><small>Stored in</small><strong>{currentLocationLabel}</strong></span>
+      </div>
+      <div className="item-editor-layout">
+        <form
+          onSubmit={(event) => submitForm(event, save, false)}
+          className="item-editor-form"
+        >
+          <section className="item-section item-essential">
+            <div className="item-section-heading">
+              <b>1</b>
+              <span>
+                <strong>What is it?</strong>
+                <small>Name, quantity, and a searchable description.</small>
+              </span>
+            </div>
+            <div className="item-core-grid">
+              <label className="item-name-field">
+                Item name
+                <input required name="name" defaultValue={item.name} />
+              </label>
+              <label>
+                Quantity
+                <input
+                  required
+                  name="quantity"
+                  type="number"
+                  min="0.01"
+                  step="any"
+                  defaultValue={item.quantity}
+                />
+              </label>
+              <label className="item-description-field">
+                Description
+                <textarea
+                  name="description"
+                  defaultValue={item.description}
+                  placeholder="Color, condition, or other identifying details"
+                />
+              </label>
+            </div>
+          </section>
+          <details
+            className="item-advanced"
+            data-guidance-section="item_details"
+          >
+            <summary>
+              <span>
+                <strong>More item details</strong>
+                <small>Unit, category, frequency, and search tags.</small>
+              </span>
+              <b>{hasOrganizationDetails ? "Configured" : "Optional"}</b>
+            </summary>
+            <div className="item-advanced-body">
+              <div className="item-organize-grid">
+                <label>
+                  Unit
+                  <input required name="unit" defaultValue={item.unit} />
+                </label>
+                <label>
+                  Category
+                  <input
+                    name="category"
+                    defaultValue={item.category}
+                    placeholder="e.g. Baking"
+                  />
+                </label>
+                <label>
+                  How often is it used?
+                  <select name="frequency" defaultValue={item.frequency}>
+                    {frequencies.map((frequency) =>
+                      <option key={frequency}>{frequency}</option>
+                    )}
+                  </select>
+                </label>
+                <label className="wide">
+                  Search tags
+                  <input
+                    name="tags"
+                    defaultValue={item.tags.join(", ")}
+                    placeholder="washable, seasonal, breakfast"
+                  />
+                  <small>Separate tags with commas.</small>
+                </label>
+              </div>
+            </div>
+          </details>
+          <details className="item-advanced">
+            <summary>
+              <span>
+                <strong>Placement requirements</strong>
+                <small>Only add rules that affect where this item can safely live.</small>
+              </span>
+              <b>{hasPlacementRules ? "Configured" : "Optional"}</b>
+            </summary>
+            <div className="item-advanced-body">
+              <div className="constraint-grid">
+                <label>
+                  <input
+                    type="checkbox"
+                    name="foodOnly"
+                    defaultChecked={item.constraints.foodOnly}
+                  />
+                  <span><strong>Food-safe only</strong><small>Keep it out of unsuitable spaces.</small></span>
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    name="avoidWarmth"
+                    defaultChecked={item.constraints.avoidWarmth}
+                  />
+                  <span><strong>Avoid warmth</strong><small>Exclude warm cabinets or zones.</small></span>
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    name="avoidHumidity"
+                    defaultChecked={item.constraints.avoidHumidity}
+                  />
+                  <span><strong>Avoid humidity</strong><small>Prefer dry storage.</small></span>
+                </label>
+              </div>
+              <div className="item-organize-grid">
+                <label>
+                  Keep-together group
+                  <input
+                    name="keepTogether"
+                    defaultValue={item.constraints.keepTogether ?? ""}
+                    placeholder="e.g. Coffee station"
+                  />
+                </label>
+                <label>
+                  Required location tags
+                  <input
+                    name="requiredTags"
+                    defaultValue={item.constraints.requiredTags.join(", ")}
+                    placeholder="cool, dark"
+                  />
+                </label>
+              </div>
+            </div>
+          </details>
+          <details
+            className="item-advanced"
+            data-guidance-section="item_capacity"
+          >
+            <summary>
+              <span>
+                <strong>Exact dimensions</strong>
+                <small>Useful when Stowplan needs to reason about capacity.</small>
+              </span>
+              <b>{item.dimensions ? "Measured" : "Optional"}</b>
+            </summary>
+            <div className="item-advanced-body">
+              <div className="dimension-grid">
+                <label>Width<input name="width" type="number" min="0.01" step="any" defaultValue={item.dimensions?.width} /></label>
+                <label>Height<input name="height" type="number" min="0.01" step="any" defaultValue={item.dimensions?.height} /></label>
+                <label>Depth<input name="depth" type="number" min="0.01" step="any" defaultValue={item.dimensions?.depth} /></label>
+                <label>Unit<select name="dimensionUnit" defaultValue={item.dimensions?.unit ?? "in"}><option>in</option><option>cm</option></select></label>
+              </div>
+            </div>
+          </details>
+          <footer className="item-save-bar">
+            <span>
+              <strong>Changes stay on this device first.</strong>
+              <small>Server backup follows when available.</small>
+            </span>
+            <button className="primary">Save item</button>
+          </footer>
+        </form>
+        <aside className="item-editor-rail">
+          <form
+            onSubmit={(event) => submitForm(event, move, false)}
+            className="move-card"
+          >
+            <p className="eyebrow">Placement</p>
+            <h3>Move all or part</h3>
+            <p>Currently in <strong>{currentLocationLabel}</strong>.</p>
+            <label>
+              How many?
+              <input
+                required
+                name="moveQuantity"
+                type="number"
+                min="0.01"
+                max={item.quantity}
+                step="any"
+                defaultValue={item.quantity}
+              />
+            </label>
+            <label>
+              Move to
+              <select required name="destination" defaultValue="">
+                <option value="" disabled>Choose a space…</option>
+                {destinationOptions.map(({ depth, location }) =>
+                  <option key={location.id} value={location.id}>
+                    {`${"  ".repeat(depth)}${depth ? "↳ " : ""}${location.code} · ${location.name}`}
+                  </option>
+                )}
+              </select>
+            </label>
+            <button>Move quantity</button>
+            <small>Moving fewer than {item.quantity} creates a separate record at the destination.</small>
+          </form>
+          <details className="item-danger">
+            <summary>More actions</summary>
+            <button
+              type="button"
+              className="danger"
+              onClick={() => {
+                if (confirm(`Delete ${item.name}? You can undo this from Activity.`)) {
+                  void perform(
+                    commit,
+                    { type: "item.delete", id: item.id },
+                    close,
+                  );
+                }
+              }}
+            >
+              <Trash2 /> Delete item record
+            </button>
+            <small>Deletion is recorded in Activity and can be undone.</small>
+          </details>
+        </aside>
+      </div>
+      {message && <output className="form-message item-editor-message">{message}</output>}
+    </section>
+  </div>;
 }
 
 function emptyPlanGuidance(readiness: PlanReadiness): string {

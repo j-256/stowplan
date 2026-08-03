@@ -41,7 +41,7 @@ export default function PrivacyPolicy() {
       <section>
         <h2>Information Stowplan handles</h2>
         <h3>Workspace information</h3>
-        <p>Workspace information includes the names and codes you give rooms, cabinets, drawers, boxes, and other spaces; item names, quantities, categories, tags, notes, conditions, dimensions, and placement preferences; move plans; Activity and undo history; membership and invitation records; and synchronization records. This content can include personal information if you choose to enter it.</p>
+        <p>Workspace information includes the names and codes you give rooms, cabinets, drawers, boxes, and other spaces; item names, quantities, descriptions, categories, tags, conditions, dimensions, and placement preferences; move plans; Activity and undo history; membership and invitation records; and synchronization records. This content can include personal information if you choose to enter it.</p>
         <p>Without an account, workspace information stays in this browser&apos;s IndexedDB storage unless you export it or intentionally send it elsewhere.</p>
         <p>After you sign in, Stowplan attempts to create or update an online copy of the open workspace and to upload waiting changes from other local workspaces. A workspace remains browser-only until a backup succeeds.</p>
 
@@ -158,7 +158,7 @@ export default function PrivacyPolicy() {
       <section>
         <h2>Children and sensitive information</h2>
         <p>The official hosted service is a general household organization tool and is not directed to children under 13 or the minimum digital-consent age where they live. If you believe a child provided personal information improperly, contact the operator so it can be reviewed and removed.</p>
-        <p>Do not use the official hosted service for payment-card data or protected health information subject to HIPAA. Avoid storing passwords, government identifiers, precise financial information, or other sensitive personal information in item names, notes, or shared workspaces.</p>
+        <p>Do not use the official hosted service for payment-card data or protected health information subject to HIPAA. Avoid storing passwords, government identifiers, precise financial information, or other sensitive personal information in item names, descriptions, or shared workspaces.</p>
       </section>
 
       <section>

@@ -1,6 +1,10 @@
 import { meaningfulActivityPatches } from "./activity";
 import { ConflictError, DomainError } from "./errors";
-import { isLegacyCompatibleIssue, validateSnapshot } from "./import";
+import {
+    isLegacyCompatibleIssue,
+    normalizeCommandEnvelope,
+    validateSnapshot,
+} from "./import";
 import type {
     ActivityRecord,
     AuditEvent,
@@ -35,10 +39,10 @@ const locationChangeKeys = new Set([
 const itemChangeKeys = new Set([
     "category",
     "constraints",
+    "description",
     "dimensions",
     "frequency",
     "name",
-    "notes",
     "quantity",
     "tags",
     "unit",
@@ -613,7 +617,7 @@ function validateItem(state: WorkspaceState, item: ItemRecord): void {
     if (!Number.isFinite(item.order)) throw new DomainError("INVALID_ORDER", "Item order must be a number");
     if (
         typeof item.category !== "string" ||
-        typeof item.notes !== "string" ||
+        typeof item.description !== "string" ||
         !Array.isArray(item.tags) ||
         item.tags.some((tag) => typeof tag !== "string") ||
         !frequencies.has(String(item.frequency)) ||
@@ -639,7 +643,7 @@ function equivalent(left: ItemRecord, right: ItemRecord): boolean {
         equal(left.constraints, right.constraints) &&
         equal(left.dimensions, right.dimensions) &&
         left.frequency === right.frequency &&
-        left.notes === right.notes;
+        left.description === right.description;
 }
 
 function moveItemPatches(
@@ -2043,6 +2047,7 @@ export function applyCommand(
     current: WorkspaceState,
     envelope: CommandEnvelope,
 ): CommandResult {
+    envelope = normalizeCommandEnvelope(envelope);
     validateEnvelopeRuntime(envelope);
     if (envelope.workspaceId !== current.workspace.id) {
         throw new DomainError("WRONG_WORKSPACE", "Command belongs to another workspace");

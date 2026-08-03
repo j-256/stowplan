@@ -75,7 +75,7 @@ async function routeFixture() {
     locationId: location.id,
     name: "Route private item",
   });
-  item.notes = "Visible to the audited global control plane";
+  item.description = "Visible to the audited global control plane";
   state.locations.push(location);
   state.items.push(item);
   await new D1SnapshotStore(database).initialize(state);
@@ -153,7 +153,7 @@ describe("global admin workspace routes", () => {
       state: {
         items: [{
           name: fixture.item.name,
-          notes: fixture.item.notes,
+          description: fixture.item.description,
         }],
       },
       workspaceId: fixture.state.workspace.id,

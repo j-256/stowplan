@@ -1,4 +1,14 @@
-import { SCHEMA_VERSION, type ImportPreview, type ValidationIssue, type WorkspaceState } from "./types";
+import {
+    SCHEMA_VERSION,
+    type CommandEnvelope,
+    type ImportPreview,
+    type ValidationIssue,
+    type WorkspaceState,
+} from "./types";
+
+const LEGACY_SCHEMA_VERSION = 1;
+const ITEM_DESCRIPTION_FIELD = "description";
+const LEGACY_ITEM_DESCRIPTION_FIELD = "notes";
 
 function issue(
     issues: ValidationIssue[],
@@ -24,11 +34,11 @@ const patchPaths: Record<string, Set<string>> = {
         "archivedAt",
         "category",
         "constraints",
+        "description",
         "dimensions",
         "frequency",
         "locationId",
         "name",
-        "notes",
         "order",
         "quantity",
         "tags",
@@ -150,7 +160,7 @@ function validFullPatchRecord(target: string, value: unknown, id: string): boole
             Boolean(value.unit.trim()) &&
             typeof value.locationId === "string" &&
             typeof value.category === "string" &&
-            typeof value.notes === "string" &&
+            typeof value.description === "string" &&
             typeof value.createdAt === "string" &&
             typeof value.updatedAt === "string" &&
             (value.archivedAt === null || typeof value.archivedAt === "string") &&
@@ -184,7 +194,7 @@ function validFullPatchRecord(target: string, value: unknown, id: string): boole
 function validPatchValue(target: string, path: string, value: unknown, id: string): boolean {
     if (value === undefined) return true;
     if (!path) return validFullPatchRecord(target, value, id);
-    if (["name", "code", "description", "category", "notes", "unit", "updatedAt"].includes(path)) {
+    if (["name", "code", "description", "category", "unit", "updatedAt"].includes(path)) {
         return typeof value === "string" &&
             (!["name", "code", "unit"].includes(path) || Boolean(value.trim()));
     }
@@ -233,7 +243,83 @@ function requireString(record: Record<string, unknown>, field: string, path: str
     if (typeof record[field] !== "string") issue(issues, "STRING_REQUIRED", `${field} must be a string`, `${path}.${field}`);
 }
 
+function normalizeItemDescription(record: unknown): void {
+    if (!isRecord(record) || !Object.hasOwn(record, LEGACY_ITEM_DESCRIPTION_FIELD)) {
+        return;
+    }
+    if (!Object.hasOwn(record, ITEM_DESCRIPTION_FIELD)) {
+        record[ITEM_DESCRIPTION_FIELD] = record[LEGACY_ITEM_DESCRIPTION_FIELD];
+    }
+    delete record[LEGACY_ITEM_DESCRIPTION_FIELD];
+}
+
+function normalizeItemFieldChanges(changes: unknown): void {
+    if (!isRecord(changes) || !Object.hasOwn(changes, LEGACY_ITEM_DESCRIPTION_FIELD)) {
+        return;
+    }
+    if (!Object.hasOwn(changes, ITEM_DESCRIPTION_FIELD)) {
+        changes[ITEM_DESCRIPTION_FIELD] = changes[LEGACY_ITEM_DESCRIPTION_FIELD];
+    }
+    delete changes[LEGACY_ITEM_DESCRIPTION_FIELD];
+}
+
+function normalizeItemExpectation(expectation: unknown): void {
+    if (!isRecord(expectation) || expectation.target !== "item") return;
+    if (expectation.path === LEGACY_ITEM_DESCRIPTION_FIELD) {
+        expectation.path = ITEM_DESCRIPTION_FIELD;
+    } else if (expectation.path === "") {
+        normalizeItemDescription(expectation.value);
+    }
+}
+
+export function normalizeCommandEnvelope<T extends CommandEnvelope>(
+    envelope: T,
+): T {
+    const normalized = structuredClone(envelope) as T;
+    const candidate = normalized as unknown as Record<string, unknown>;
+    const command = candidate.command;
+    if (isRecord(command)) {
+        if (command.type === "item.create") {
+            normalizeItemDescription(command.item);
+        } else if (command.type === "item.update") {
+            normalizeItemFieldChanges(command.changes);
+        }
+    }
+    if (Array.isArray(candidate.expectations)) {
+        for (const expectation of candidate.expectations) {
+            normalizeItemExpectation(expectation);
+        }
+    }
+    return normalized;
+}
+
 export function normalizeWorkspaceState(state: WorkspaceState): WorkspaceState {
+    const candidate = state as unknown as Record<string, unknown>;
+    if (
+        candidate.schemaVersion === LEGACY_SCHEMA_VERSION ||
+        candidate.schemaVersion === SCHEMA_VERSION
+    ) {
+        if (Array.isArray(candidate.items)) {
+            for (const item of candidate.items) normalizeItemDescription(item);
+        }
+        if (Array.isArray(candidate.activities)) {
+            for (const activity of candidate.activities) {
+                if (!isRecord(activity) || !Array.isArray(activity.patches)) continue;
+                for (const fieldPatch of activity.patches) {
+                    if (!isRecord(fieldPatch) || fieldPatch.target !== "item") continue;
+                    if (fieldPatch.path === LEGACY_ITEM_DESCRIPTION_FIELD) {
+                        fieldPatch.path = ITEM_DESCRIPTION_FIELD;
+                    } else if (fieldPatch.path === "") {
+                        normalizeItemDescription(fieldPatch.before);
+                        normalizeItemDescription(fieldPatch.after);
+                    }
+                }
+            }
+        }
+    }
+    if (candidate.schemaVersion === LEGACY_SCHEMA_VERSION) {
+        candidate.schemaVersion = SCHEMA_VERSION;
+    }
     if (!Array.isArray(state.commandReceipts)) state.commandReceipts = [];
     else state.commandReceipts = [...new Set(state.commandReceipts)];
     if (!Array.isArray(state.items)) return state;
@@ -311,7 +397,12 @@ export function isLegacyCompatibleIssue(candidate: ValidationIssue): boolean {
 }
 
 export function validateImportSnapshot(value: unknown): ValidationIssue[] {
-    return validateSnapshot(value).map((candidate) =>
+    const normalized = isRecord(value)
+        ? normalizeWorkspaceState(
+            structuredClone(value) as unknown as WorkspaceState,
+        )
+        : value;
+    return validateSnapshot(normalized).map((candidate) =>
         candidate.severity === "error" && isLegacyCompatibleIssue(candidate)
             ? {
                 ...candidate,
@@ -514,7 +605,7 @@ export function validateSnapshot(value: unknown): ValidationIssue[] {
         }
         if (!Number.isSafeInteger(candidate.version) || Number(candidate.version) < 1) issue(issues, "ITEM_VERSION", "Item version must be a positive safe integer", `${path}.version`);
         if (typeof candidate.name !== "string" || !candidate.name.trim()) issue(issues, "ITEM_NAME", "Item needs a name", `${path}.name`);
-        for (const field of ["unit", "category", "notes", "createdAt", "updatedAt"] as const) requireString(candidate, field, path, issues);
+        for (const field of ["unit", "category", "description", "createdAt", "updatedAt"] as const) requireString(candidate, field, path, issues);
         if (typeof candidate.unit === "string" && !candidate.unit.trim()) {
             issue(issues, "ITEM_UNIT", "Item unit cannot be blank", `${path}.unit`);
         }

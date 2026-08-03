@@ -14,7 +14,7 @@ The separate **Undo and reapply log** shows each history action and the changes 
 
 Find the change and choose **Undo this**. Stowplan reverses that selected change while leaving unrelated later work intact when it is safe to do so.
 
-Field-aware undo can pluck an older edit from the middle of the timeline. For example, undoing an older quantity edit keeps a newer notes edit on the same item. The undo becomes a new item revision rather than rewinding Stowplan's bookkeeping.
+Field-aware undo can pluck an older edit from the middle of the timeline. For example, undoing an older quantity edit keeps a newer Description edit on the same item. The undo becomes a new item revision rather than rewinding Stowplan's bookkeeping.
 
 If a newer change edited the same information, Stowplan refuses the undo instead of overwriting the newer value. Review the message and correct the workspace manually if needed.
 

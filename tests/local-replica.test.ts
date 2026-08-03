@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { applyCommand } from "../src/domain/commands";
 import { createDemoState } from "../src/domain/demo";
 import { createEmptyState, createEnvelope, createItem } from "../src/domain/factories";
+import { SCHEMA_VERSION } from "../src/domain/types";
 import {
   activateOrInsertServerWorkspaceReplica,
   activateOrInsertWorkspaceReplica,
@@ -80,11 +81,41 @@ describe("local replica", () => {
     expect((await readReplica())?.state.workspace.name).toBe("Offline home");
     expect((await readWorkspaceReplica(state.workspace.id))?.state.workspace.name).toBe("Offline home");
   });
-  it("normalizes legacy replicas without changing snapshot version 1", async () => {
-    const state = createEmptyState("Legacy local");
+  it("upgrades legacy replica descriptions and queued edits", async () => {
+    const initial = createDemoState();
+    const item = initial.items[0]!;
+    reopenFixtureLocation(initial, item.locationId);
+    const description = "Legacy local description";
+    const envelope = createEnvelope(initial, {
+      type: "item.update",
+      id: item.id,
+      changes: { description },
+    });
+    const state = applyCommand(initial, envelope).state;
+    const legacyState = state as unknown as Record<string, unknown>;
+    const legacyItem = state.items.find((candidate) =>
+      candidate.id === item.id
+    ) as unknown as Record<string, unknown>;
+    legacyState.schemaVersion = 1;
+    legacyItem.notes = legacyItem.description;
+    delete legacyItem.description;
+    if (envelope.command.type !== "item.update") {
+      throw new Error("Expected an item update fixture");
+    }
+    const legacyChanges = envelope.command.changes as unknown as Record<
+      string,
+      unknown
+    >;
+    legacyChanges.notes = legacyChanges.description;
+    delete legacyChanges.description;
+    for (const expectation of envelope.expectations) {
+      if (expectation.target === "item" && expectation.path === "description") {
+        expectation.path = "notes";
+      }
+    }
     await writeReplica({
       state,
-      outbox: [],
+      outbox: [{ envelope, status: "pending" }],
       updatedAt: state.workspace.updatedAt,
     });
 
@@ -97,7 +128,18 @@ describe("local replica", () => {
     });
     expect(restored?.authorization?.capabilities.write).toBe(true);
     expect(restored?.serverSummary).toBeNull();
-    expect(restored?.state.schemaVersion).toBe(1);
+    expect(restored?.state.schemaVersion).toBe(SCHEMA_VERSION);
+    expect(restored?.state.items.find((candidate) => candidate.id === item.id)
+      ?.description).toBe(description);
+    const queued = restored?.outbox[0]?.envelope;
+    expect(queued?.command).toMatchObject({
+      changes: { description },
+      type: "item.update",
+    });
+    expect(queued?.expectations).toContainEqual(
+      expect.objectContaining({ path: "description", target: "item" }),
+    );
+    expect(() => applyCommand(initial, queued!)).not.toThrow();
   });
   it("clears a legacy sign-in failure from device-only replicas", () => {
     const state = createEmptyState("Local workspace");

@@ -74,7 +74,7 @@ function matchingItem(item: ItemRecord, query: string): boolean {
   return !query || [
     item.category,
     item.name,
-    item.notes,
+    item.description,
     item.tags.join(" "),
     item.unit,
   ].some((value) => value.toLocaleLowerCase().includes(query));
@@ -265,7 +265,7 @@ function ItemDetails({
         <div><dt>Category</dt><dd>{item.category}</dd></div>
         <div><dt>Use frequency</dt><dd>{item.frequency}</dd></div>
         <div><dt>Tags</dt><dd>{item.tags.join(", ") || "None"}</dd></div>
-        <div className={styles.wideFact}><dt>Notes</dt><dd>{item.notes || "None"}</dd></div>
+        <div className={styles.wideFact}><dt>Description</dt><dd>{item.description || "None"}</dd></div>
       </dl>
       <div className={styles.dialogActions}>
         <button data-dialog-initial-focus onClick={onClose} type="button">Close</button>

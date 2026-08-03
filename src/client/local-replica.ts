@@ -1,5 +1,8 @@
 import { applyCommand } from "../domain/commands";
-import { normalizeWorkspaceState } from "../domain/import";
+import {
+  normalizeCommandEnvelope,
+  normalizeWorkspaceState,
+} from "../domain/import";
 import type { CommandEnvelope, SyncReceipt, WorkspaceState } from "../domain/types";
 import {
   compareServerWorkspaceSummaries,
@@ -256,6 +259,7 @@ export function normalizeLocalReplica(replica: LocalReplica): LocalReplica {
     replica.state.items.map((item) => [item.id, item.order]),
   );
   for (const entry of replica.outbox) {
+    entry.envelope = normalizeCommandEnvelope(entry.envelope);
     if (entry.accountId !== undefined) {
       entry.accountId = typeof entry.accountId === "string" &&
           entry.accountId.trim()

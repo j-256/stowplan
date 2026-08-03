@@ -1,5 +1,8 @@
-import { parseSnapshot } from "../domain/import";
-import type { WorkspaceState } from "../domain/types";
+import {
+  normalizeCommandEnvelope,
+  parseSnapshot,
+} from "../domain/import";
+import type { CommandEnvelope, WorkspaceState } from "../domain/types";
 import type { LocalReplica } from "./local-replica";
 
 export interface ParsedRecoveryUpload {
@@ -68,6 +71,9 @@ export function parseRecoveryUpload(text: string): ParsedRecoveryUpload {
     ) {
       throw new Error("Recovery bundle contains a malformed queued command");
     }
+    entry.envelope = normalizeCommandEnvelope(
+      envelope as unknown as CommandEnvelope,
+    );
     const represented =
       state.commandReceipts?.includes(envelope.id) ||
       state.activities.some((activity) => activity.commandId === envelope.id) ||

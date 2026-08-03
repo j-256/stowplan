@@ -446,10 +446,7 @@ export function AdminWorkspaceInspector({
         <div className={styles.sectionHeading}>
           <div>
             <h2 id="inspection-content-heading">Complete snapshot content</h2>
-            <p>
-              Browser Find searches names, notes, IDs, plans, history, and
-              command receipts in this validated representation.
-            </p>
+            <p>Browser Find searches names, descriptions, IDs, plans, history, and command receipts in this validated representation.</p>
           </div>
           <div className={styles.sectionActions}>
             <button

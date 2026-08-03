@@ -42,6 +42,8 @@ UI / PWA → local replica + outbox → authenticated sync API → SnapshotStore
 
 The Sites manifest binds D1 as `DB`. `db/schema.ts` is the typed collaboration schema and Drizzle generates the SQL packaged under `.openai/drizzle`. The packaged schema includes local-first workspace snapshots plus users, identities, memberships, workspace custody, sessions, creation ledgers, guest links, OAuth state, circuit breakers, governance limits, ban digests, deletion receipts, and audit events. The artifact validator treats the binding and its migration payload as one deployment requirement.
 
+Workspace snapshot schema 2 names the item's searchable free-text field `description`. Normalization upgrades schema 1 `notes` values in live items, retained whole-record and field history, queued item commands, and field expectations before validation or application. Adapters, local replicas, imports, restores, recovery bundles, and command application share that normalization path so an offline schema 1 edit keeps its conflict and undo meaning.
+
 ## Authentication and operational administration
 
 Direct Google OIDC is the ordinary production identity path. A same-origin POST begins every OAuth transaction only after Managed Turnstile Siteverify succeeds for the expected hostname and `oauth_start` action. The transaction is single-use, short-lived, browser-bound, and contains PKCE, an OIDC nonce, a validated local return path, and an explicit sign-in, link, or reauthentication intent. The callback validates Google's signature, issuer, audience, token time, nonce, stable subject, and verified-email claim. The optional `azp` claim must match when present and is required for a multi-audience token.

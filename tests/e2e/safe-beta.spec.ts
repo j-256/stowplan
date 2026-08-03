@@ -2433,7 +2433,7 @@ test(
         id: "item_private_records",
         locationId: "loc_private_archive",
         name: "Private tax records",
-        notes: "Inspector-only improvement clue",
+        description: "Inspector-only improvement clue",
         order: 0,
         quantity: 2,
         tags: ["private"],
@@ -2464,7 +2464,7 @@ test(
         updatedAt: timestamp,
       }],
       plans: [],
-      schemaVersion: 1,
+      schemaVersion: 2,
       workspace: {
         createdAt: timestamp,
         id: workspaceId,
@@ -2666,7 +2666,7 @@ test(
       const exported = JSON.parse(exportedText) as typeof state;
       expect(exported.items[0]).toEqual(expect.objectContaining({
         name: "Private tax records",
-        notes: "Inspector-only improvement clue",
+        description: "Inspector-only improvement clue",
       }));
       expect(exported.commandReceipts).toContain(
         "cmd_compacted_private_records",
@@ -2790,7 +2790,7 @@ test(
       items: [],
       locations: [],
       plans: [],
-      schemaVersion: 1,
+      schemaVersion: 2,
       workspace: {
         createdAt: initialTimestamp,
         id: workspaceId,

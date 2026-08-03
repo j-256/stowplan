@@ -194,7 +194,7 @@ Browser mutations require a trusted `Origin`, reject cross-site Fetch Metadata, 
 ```json
 {
   "workspaceId": "ws_…",
-  "snapshot": { "schemaVersion": 1, "workspace": {} },
+  "snapshot": { "schemaVersion": 2, "workspace": {} },
   "commands": [{ "id": "cmd_…", "baseRevision": 12, "expectations": [], "command": {} }]
 }
 ```

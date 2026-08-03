@@ -25,7 +25,7 @@ export default function InAppDocs() {
     </header>
     <section>
       <h2>Capture one space at a time</h2>
-      <p>Give a room, cabinet, drawer, box, or bin the same short ID as its physical label. Enter each distinct item as quantity, unit, and name. Add nested containers while you are looking at them, then choose <strong>Counted & next</strong> when the records are accurate enough to organize.</p>
+      <p>Give a room, cabinet, drawer, box, or bin the same short ID as its physical label. Enter each distinct item by name, adjusting the default quantity only when needed. Description and unit are optional details. Add nested containers while you are looking at them, then choose <strong>Counted & next</strong> when the records are accurate enough to organize.</p>
     </section>
     <section>
       <h2>Keep working without service</h2>
