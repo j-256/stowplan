@@ -3233,6 +3233,55 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
         </button>
       </aside>
     : null;
+  const emptySpaceActions = !captureComplete &&
+      items.length > 0 &&
+      !hasNestedSpaces
+    ? <details
+        className="capture-empty-actions"
+        onToggle={(event) => {
+          const disclosure = event.currentTarget;
+          if (
+            !disclosure.open ||
+            !matchMedia(STACKED_TOUCH_LAYOUT_QUERY).matches
+          ) return;
+          requestAnimationFrame(() => disclosure.scrollIntoView({
+            behavior: matchMedia("(prefers-reduced-motion: reduce)").matches
+              ? "auto"
+              : "smooth",
+            block: "end",
+          }));
+        }}
+      >
+        <summary>
+          <PackageX aria-hidden="true" />
+          <span>
+            <strong>Contents no longer match?</strong>
+            <small>Review empty-space actions</small>
+          </span>
+        </summary>
+        <div className="capture-empty-actions-body">
+          <p>Known empty records an observation and never removes item records. Empty container removes the listed records after confirmation when the physical contents are gone.</p>
+          <div>
+            <button
+              className="known-empty-action"
+              onClick={(event) => void markKnownEmpty(event.currentTarget)}
+              type="button"
+            >
+              <PackageX />
+              <span>Known empty & next</span>
+            </button>
+            <button
+              className="danger"
+              onClick={(event) => reviewEmptyContainer(event.currentTarget)}
+              type="button"
+            >
+              <Trash2 />
+              <span>Empty container</span>
+            </button>
+          </div>
+        </div>
+      </details>
+    : null;
   const capturePanel = <section className="panel capture-card" ref={editor} tabIndex={-1} aria-label={current ? `Capture inside ${current.name}` : "Capture editor"}>{current ? <><nav className="breadcrumbs" aria-label="Current container path">{breadcrumbs.map((location, index) => <span key={location.id}>{index > 0 && <i aria-hidden>›</i>}<button onClick={() => selectCaptureLocation(location.id)}>{location.code}</button></span>)}</nav><div className="title"><div><p className="eyebrow">Inside this container</p><h2>{current.code} · {current.name}</h2></div><span className="tag capture-status" data-status={current.captureStatus}><CaptureStatusIcon /><span>{current.captureStatus.replace("_", " ")}</span></span></div>{demoIntroPanel}{nextUncounted && <button className="capture-next-location" type="button" aria-label={`Open next unfinished location without changing ${current.name}: ${nextUncounted.code}, ${nextUncounted.name}`} onClick={() => selectCaptureLocation(nextUncounted.id)}><span>Next unfinished</span><strong>{nextUncounted.code} · {nextUncounted.name}</strong></button>}{captureComplete ? <div className="capture-locked" role="status"><CheckCircle2 /><span><strong>Capture is complete</strong><small>Reopen this space before adding, editing, or reordering its contents.</small></span></div> : <form key={current.id} className="quick" onSubmit={(event) => submitForm(event, addItem, true, '[name="name"]')}><label>Qty<input required type="number" min="0.01" step="any" name="quantity" defaultValue="1" /></label><label>Unit<input required name="unit" defaultValue="each" list="capture-units" /><datalist id="capture-units"><option value="each" /><option value="boxes" /><option value="bags" /><option value="cans" /><option value="pairs" /></datalist></label><label className="grow">What is it?<input required name="name" placeholder="e.g. winter gloves" /></label><button className="primary">Save & add next</button></form>}
       {nested.length > 0 && <div className="nested-list"><small>Nested containers</small>{nested.map((location) => <button key={location.id} onClick={() => selectCaptureLocation(location.id)}><b>{location.code}</b><span>{location.name}</span><small>{location.captureStatus.replace("_", " ")}</small></button>)}</div>}
       <div className="captured">{items.map((item, index) => {
@@ -3268,7 +3317,7 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
           <span className="reorder-drop-copy" aria-hidden>{cue === "before" ? "Place before" : cue === "after" ? "Place after" : ""}</span>
           {!captureComplete && <div className="row-actions"><button className="icon small" aria-label={`Move ${item.name} up`} disabled={index === 0} onClick={() => reorder(item.id, -1)}><ArrowUp /></button><button className="icon small" aria-label={`Move ${item.name} down`} disabled={index === items.length - 1} onClick={() => reorder(item.id, 1)}><ArrowDown /></button><button className="icon small" aria-label={`Edit ${item.name}`} onClick={() => setEditing(item.id)}><Edit3 /></button></div>}
         </div>;
-      })}{!items.length && <Empty title={emptyItemsTitle} text={emptyItemsText} />}</div><div className="finish">{captureComplete ? <button className="reopen-capture" onClick={() => void reopenCapture()}><RotateCcw /><span>Reopen capture</span></button> : <>{items.length > 0 && <button className="danger" onClick={(event) => reviewEmptyContainer(event.currentTarget)}><Trash2 /><span>Empty container</span></button>}{!hasNestedSpaces && <button className="known-empty-action" onClick={(event) => void markKnownEmpty(event.currentTarget)}><PackageX /><span>Known empty & next</span></button>}<button className="primary" onClick={() => void finish("counted")}><CheckCircle2 /><span>Counted & next</span></button></>}</div></> : <Empty title="Add your first space" text="Give a room, cabinet, box, or drawer the same code as its physical label." />}</section>;
+      })}{!items.length && <Empty title={emptyItemsTitle} text={emptyItemsText} />}</div>{emptySpaceActions}<div className="finish">{captureComplete ? <button className="reopen-capture" onClick={() => void reopenCapture()}><RotateCcw /><span>Reopen capture</span></button> : <>{!hasNestedSpaces && items.length === 0 && <button className="known-empty-action" onClick={(event) => void markKnownEmpty(event.currentTarget)}><PackageX /><span>Known empty & next</span></button>}<button className="primary" onClick={() => void finish("counted")}><CheckCircle2 /><span>Counted & next</span></button></>}</div></> : <Empty title="Add your first space" text="Give a room, cabinet, box, or drawer the same code as its physical label." />}</section>;
   return <>
     <ResizablePanels
       activeCompactPanel={activeCompactPanel}

@@ -27,9 +27,9 @@ The breadcrumb above the capture form shows where the selected container sits. E
 
 ## Record an empty space safely
 
-Choose **Known empty & next** only after checking the physical space. If item records remain, Stowplan opens a review and changes nothing. Move or remove those records first.
+Choose **Known empty & next** only after checking the physical space. When no records or nested spaces remain, the action stays beside **Counted & next**. When item records remain, expand **Contents no longer match?** to review the uncommon empty-space actions without putting them in the frequent completion path. Choosing **Known empty & next** there opens a review and changes nothing; move or remove the records first.
 
-If the physical contents are already gone and the records should be removed, close that review and choose **Empty container**. Its confirmation names what will be removed. The deletion and known-empty status become one Activity entry, so one undo restores both.
+If the physical contents are already gone and the records should be removed, choose **Empty container** in the same disclosure. Its confirmation names what will be removed. The deletion and known-empty status become one Activity entry, so one undo restores both.
 
 A space with a nested space cannot be marked known empty because the nested space is still part of its contents.
 

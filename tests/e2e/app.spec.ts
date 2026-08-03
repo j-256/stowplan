@@ -1992,7 +1992,35 @@ test("keeps known empty separate from an undoable empty-container action", async
   await page.getByRole("button", { name: "Reopen capture" }).click();
   await expect(page.locator(".feedback-toast")).toBeHidden();
   await expect(page.getByRole("button", { name: "Counted & next" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Empty container" })).toBeVisible();
+  const emptySpaceActions = page.getByText("Contents no longer match?", {
+    exact: true,
+  });
+  await expect(emptySpaceActions).toBeVisible();
+  await expect(page.getByRole("button", {
+    name: "Empty container",
+    exact: true,
+  })).toBeHidden();
+  await expect(page.getByRole("button", {
+    name: "Known empty & next",
+  })).toBeHidden();
+  await emptySpaceActions.click();
+  const emptyContainer = page.getByRole("button", {
+    name: "Empty container",
+    exact: true,
+  });
+  const counted = page.getByRole("button", { name: "Counted & next" });
+  await expect(emptyContainer).toBeInViewport();
+  await expect(page.getByRole("button", {
+    name: "Known empty & next",
+  })).toBeInViewport();
+  const [emptyContainerBox, countedBox] = await Promise.all([
+    emptyContainer.boundingBox(),
+    counted.boundingBox(),
+  ]);
+  expect(emptyContainerBox).not.toBeNull();
+  expect(countedBox).not.toBeNull();
+  expect(emptyContainerBox!.y + emptyContainerBox!.height)
+    .toBeLessThanOrEqual(countedBox!.y);
 
   await page.getByRole("button", { name: "Known empty & next" }).click();
   await expect(page.locator(".feedback-toast")).toBeHidden();
@@ -2075,7 +2103,7 @@ test("keeps known empty separate from an undoable empty-container action", async
   await expect(knownEmptyReview).toBeHidden();
   await expect(page.locator(".feedback-toast")).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Empty container" }).click();
+  await emptyContainer.click();
   const emptyContainerReview = page.getByRole("dialog", {
     name: "Empty container?",
   });
