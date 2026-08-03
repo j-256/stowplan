@@ -362,6 +362,14 @@
 .space-tags-field{grid-column:span 4}
 .space-description-field{grid-column:span 8}
 .space-description-field textarea{min-height:44px}
+.space-advanced{overflow:hidden;border:1px solid var(--line);border-radius:12px}
+.space-advanced>summary{display:flex;align-items:center;min-height:58px;padding:10px 14px;cursor:pointer;list-style:none}
+.space-advanced>summary::-webkit-details-marker{display:none}
+.space-advanced>summary:before{content:"+";display:grid;place-items:center;flex:none;width:24px;height:24px;margin-right:10px;border:1px solid var(--line);border-radius:50%;color:var(--sage);font-weight:800}
+.space-advanced[open]>summary:before{content:"−"}
+.space-advanced>summary>span{display:flex;flex-direction:column;gap:2px}
+.space-advanced>summary small{color:var(--muted);font-size:10px;line-height:1.4}
+.space-advanced-body{display:grid;gap:12px;padding:12px;border-top:1px solid var(--line)}
 .inspector .editor-form label{margin:0}
 .inspector .check-grid label:has(input[type="checkbox"]){min-height:44px}
 .inspector .editor-form{gap:12px}

@@ -22,6 +22,8 @@ Open **Spaces** to follow rooms, zones, cabinets, shelves, boxes, bins, and cont
 
 Select a space to inspect its details and direct contents. On a phone, the selected row exposes **Earlier**, **Later**, **Edit details**, and **Move**. Choose **Edit details** to switch from the hierarchy to the focused editor, then use **Back to hierarchy** when you are done. Switching panels preserves unfinished editor input. The move dialog lets you choose the new parent and exact position without dragging.
 
+The space editor keeps name, Short ID, type, parent, and **Save space** in the primary flow. Expand **More space details** for tags, description, suitability, and interior dimensions. A planning-review action opens the relevant details automatically.
+
 You can also drag a space before, inside, or after another row. Stowplan prevents a space from becoming its own parent or descendant.
 
 ## Describe useful storage facts

@@ -3419,6 +3419,10 @@ function Spaces({ state, current, select, commit, focusEditorKey, focusEditorSec
               `[data-guidance-section="${focusEditorSection}"]`,
             )
           : inspector.current;
+        const disclosure = target?.closest<HTMLDetailsElement>(
+          ".space-advanced",
+        );
+        if (disclosure) disclosure.open = true;
         target?.scrollIntoView({ behavior, block: "start" });
         target?.focus({ preventScroll: true });
       });
@@ -4148,28 +4152,40 @@ function LocationEditor({ state, location, commit, select, reorder, remove, edit
         <label className="space-code-field">Short ID<input required name="code" defaultValue={location.code} autoCapitalize="characters" /></label>
         <label className="space-kind-field">Type<select name="kind" defaultValue={location.kind}>{kinds.map((kind) => <option key={kind}>{kind}</option>)}</select></label>
         <label className="space-parent-field">Parent space<select key={location.parentId ?? "root"} name="parentId" defaultValue={parentIsAvailable ? location.parentId ?? "" : ""}><option value="">Top level</option>{parentOptions.map(({ depth, location: candidate }) => <option key={candidate.id} value={candidate.id}>{`${"  ".repeat(depth)}${depth ? "↳ " : ""}${candidate.code} · ${candidate.name}`}</option>)}</select></label>
-        <label className="space-tags-field">Tags, comma-separated<input name="tags" defaultValue={location.tags.join(", ")} /></label>
-        <label className="space-description-field">Description<textarea name="description" defaultValue={location.description} /></label>
       </div>
-      <fieldset data-guidance-section="space_suitability" tabIndex={-1}>
-        <legend>Suitability</legend>
-        <div className="check-grid">
-          <label><input type="checkbox" name="foodSafe" defaultChecked={location.conditions.foodSafe} /> Food safe</label>
-          <label><input type="checkbox" name="dry" defaultChecked={location.conditions.dry} /> Dry</label>
-          <label><input type="checkbox" name="dark" defaultChecked={location.conditions.dark} /> Dark</label>
-          <label>Temperature<select name="temperature" defaultValue={location.conditions.temperature}><option>cold</option><option>cool</option><option>normal</option><option>warm</option></select></label>
-          <label>Humidity<select name="humidity" defaultValue={location.conditions.humidity}><option>dry</option><option>normal</option><option>humid</option></select></label>
+      <details className="space-advanced">
+        <summary>
+          <span>
+            <strong>More space details</strong>
+            <small>Tags, description, suitability, and dimensions</small>
+          </span>
+        </summary>
+        <div className="space-advanced-body">
+          <div className="form-grid">
+            <label className="space-tags-field">Tags, comma-separated<input name="tags" defaultValue={location.tags.join(", ")} /></label>
+            <label className="space-description-field">Description<textarea name="description" defaultValue={location.description} /></label>
+          </div>
+          <fieldset data-guidance-section="space_suitability" tabIndex={-1}>
+            <legend>Suitability</legend>
+            <div className="check-grid">
+              <label><input type="checkbox" name="foodSafe" defaultChecked={location.conditions.foodSafe} /> Food safe</label>
+              <label><input type="checkbox" name="dry" defaultChecked={location.conditions.dry} /> Dry</label>
+              <label><input type="checkbox" name="dark" defaultChecked={location.conditions.dark} /> Dark</label>
+              <label>Temperature<select name="temperature" defaultValue={location.conditions.temperature}><option>cold</option><option>cool</option><option>normal</option><option>warm</option></select></label>
+              <label>Humidity<select name="humidity" defaultValue={location.conditions.humidity}><option>dry</option><option>normal</option><option>humid</option></select></label>
+            </div>
+          </fieldset>
+          <fieldset data-guidance-section="space_capacity" tabIndex={-1}>
+            <legend>Interior dimensions (optional)</legend>
+            <div className="dimension-grid">
+              <label>W<input name="width" type="number" min="0.01" step="any" defaultValue={location.dimensions?.width} /></label>
+              <label>H<input name="height" type="number" min="0.01" step="any" defaultValue={location.dimensions?.height} /></label>
+              <label>D<input name="depth" type="number" min="0.01" step="any" defaultValue={location.dimensions?.depth} /></label>
+              <label>Unit<select name="dimensionUnit" defaultValue={location.dimensions?.unit ?? "in"}><option>in</option><option>cm</option></select></label>
+            </div>
+          </fieldset>
         </div>
-      </fieldset>
-      <fieldset data-guidance-section="space_capacity" tabIndex={-1}>
-        <legend>Interior dimensions (optional)</legend>
-        <div className="dimension-grid">
-          <label>W<input name="width" type="number" min="0.01" step="any" defaultValue={location.dimensions?.width} /></label>
-          <label>H<input name="height" type="number" min="0.01" step="any" defaultValue={location.dimensions?.height} /></label>
-          <label>D<input name="depth" type="number" min="0.01" step="any" defaultValue={location.dimensions?.depth} /></label>
-          <label>Unit<select name="dimensionUnit" defaultValue={location.dimensions?.unit ?? "in"}><option>in</option><option>cm</option></select></label>
-        </div>
-      </fieldset>
+      </details>
       <button className="primary">Save space</button>
     </form>
     <div className="inspector-actions">

@@ -3600,6 +3600,21 @@ test("moves a space from visible mobile tree actions and atomically reopens its 
   await edit.click();
   await expect(page.locator(".tree-panel")).toBeHidden();
   await expect(inspector).toBeVisible();
+  const moreDetails = inspector.getByText("More space details", {
+    exact: true,
+  });
+  const suitability = inspector.getByRole("group", {
+    name: "Suitability",
+  });
+  await expect(moreDetails).toBeVisible();
+  await expect(suitability).toBeHidden();
+  await moreDetails.click();
+  await expect(suitability).toBeVisible();
+  await moreDetails.click();
+  await expect(suitability).toBeHidden();
+  await expect(inspector.getByRole("button", {
+    name: "Save space",
+  })).toBeInViewport();
   await inspector.getByLabel("Friendly name").fill(draftName);
   await inspector.getByRole("button", {
     name: "Back to hierarchy",
