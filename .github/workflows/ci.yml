@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node-version: [24, 26]
+        node-version: ["24.18.1", "26"]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -25,11 +25,11 @@ jobs:
       # Exercise the release-only scripts on every push so a break surfaces
       # here rather than when a tag is already published. Both are offline and
       # need no credentials; neither publishes anything
-      - if: ${{ matrix.node-version == 24 }}
+      - if: ${{ matrix.node-version == '24.18.1' }}
         run: bash scripts/deploy-checks.sh
-      - if: ${{ matrix.node-version == 24 }}
+      - if: ${{ matrix.node-version == '24.18.1' }}
         run: bash scripts/release-artifacts.sh
-      - if: ${{ matrix.node-version == 24 }}
+      - if: ${{ matrix.node-version == '24.18.1' }}
         uses: actions/upload-artifact@v7
         with:
           name: sbom

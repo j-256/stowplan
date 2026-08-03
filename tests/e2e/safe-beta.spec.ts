@@ -54,6 +54,55 @@ function cardFor(page: Page, workspaceName: string): Locator {
   });
 }
 
+async function openMobileMore(page: Page): Promise<Locator> {
+  await page.getByRole("button", {
+    exact: true,
+    name: "More",
+  }).click();
+  const dialog = page.getByRole("dialog", { name: "More" });
+  await expect(dialog).toBeVisible();
+  return dialog;
+}
+
+async function navigateToWorkspaceView(
+  page: Page,
+  view: "Activity" | "Settings",
+): Promise<void> {
+  const desktopLink = page.locator(".app-shell > aside").getByRole("link", {
+    exact: true,
+    name: view,
+  });
+  if (await desktopLink.isVisible()) {
+    await desktopLink.click();
+    return;
+  }
+  const dialog = await openMobileMore(page);
+  await dialog.getByRole("link", { exact: true, name: view }).click();
+}
+
+async function openWorkspaceHub(page: Page): Promise<void> {
+  const desktopLink = page.locator(".header-actions").getByRole("link", {
+    name: "Workspaces and backup status",
+  });
+  if (await desktopLink.isVisible()) {
+    await desktopLink.click();
+    return;
+  }
+  const dialog = await openMobileMore(page);
+  await dialog.getByRole("link", {
+    name: "Workspaces and backup status",
+  }).click();
+}
+
+async function expectWorkspaceRolePermissions(
+  page: Page,
+  role: "Editor" | "Owner" | "Viewer",
+): Promise<void> {
+  await expect(page.getByText(`${role} role permissions`, {
+    exact: true,
+  })).toBeVisible();
+}
+
 function syncRequestHasCommands(request: Request): boolean {
   if (
     request.method() !== "POST" ||
@@ -482,19 +531,20 @@ test(
       await expect(itemDialog).toBeVisible();
       await itemDialog.getByRole("button", { name: "Close" }).click();
 
-      for (const view of ["Plan", "Activity"]) {
-        await page.getByRole("link", {
-          exact: true,
-          name: view,
-        }).first().click();
-        await expect(page.getByRole("heading", {
-          exact: true,
-          name: view,
-        })).toBeVisible();
-      }
       await page.getByRole("link", {
-        name: /^(?:Open settings|Settings)$/,
+        exact: true,
+        name: "Plan",
       }).first().click();
+      await expect(page.getByRole("heading", {
+        exact: true,
+        name: "Plan",
+      })).toBeVisible();
+      await navigateToWorkspaceView(page, "Activity");
+      await expect(page.getByRole("heading", {
+        exact: true,
+        name: "Activity",
+      })).toBeVisible();
+      await navigateToWorkspaceView(page, "Settings");
       await expect(page.getByRole("heading", {
         exact: true,
         name: "Settings",
@@ -577,9 +627,7 @@ test(
       ).toBe(0);
 
       await page.getByRole("link", { name: "Workspace access" }).click();
-      await expect(page.getByRole("heading", {
-        name: "Editor role",
-      })).toBeVisible();
+      await expectWorkspaceRolePermissions(page, "Editor");
       await expect(page.getByRole("heading", {
         name: "Access management is owner-only",
       })).toBeVisible();
@@ -936,9 +984,7 @@ test(
       })).toBeFocused();
       await page.keyboard.press("Tab");
       await page.keyboard.press("Enter");
-      await expect(page.getByRole("heading", {
-        name: "Editor role",
-      })).toBeVisible();
+      await expectWorkspaceRolePermissions(page, "Editor");
       await expect(page.getByRole("heading", {
         name: "Access management is owner-only",
       })).toBeVisible();
@@ -956,9 +1002,7 @@ test(
         workspaceId: workspace.summary.id,
         workspaceLabel: workspace.summary.name,
       }));
-      await expect(targetPage.getByRole("heading", {
-        name: "Owner role",
-      })).toBeVisible();
+      await expectWorkspaceRolePermissions(targetPage, "Owner");
       const formerOwner = targetPage.getByRole("listitem").filter({
         hasText: owner.email,
       });
@@ -1451,9 +1495,7 @@ test(
 
       await expect(page.getByText("Viewer access", { exact: true }))
         .toBeVisible();
-      await expect(page.getByRole("heading", {
-        name: "Viewer role",
-      })).toBeVisible();
+      await expectWorkspaceRolePermissions(page, "Viewer");
       await expect(page.getByRole("heading", {
         name: "Access management is owner-only",
       })).toBeVisible();
@@ -1505,10 +1547,7 @@ test(
         workspaceId: workspace.summary.id,
         workspaceLabel: workspace.summary.name,
       }));
-      await expect(page.getByRole("heading", {
-        exact: true,
-        name: "Editor role",
-      })).toBeVisible();
+      await expectWorkspaceRolePermissions(page, "Editor");
       await expect(page.getByRole("button", {
         name: "Refresh access",
       })).toBeVisible();
@@ -1566,9 +1605,10 @@ test(
       await expect(page.getByRole("button", {
         name: "Refresh access",
       })).toHaveCount(0);
-      await expect(page.getByRole("heading", {
-        name: /^(Owner|Editor|Viewer) role$/,
-      })).toHaveCount(0);
+      await expect(page.getByText(
+        /^(Owner|Editor|Viewer) role permissions$/,
+        { exact: true },
+      )).toHaveCount(0);
 
       const retained = await readActiveReplica(page);
       expect(retained?.authorization?.status).toBe("revoked");
@@ -1851,7 +1891,7 @@ test(
       "viewer",
     );
 
-    await page.getByLabel("Workspaces and backup status").click();
+    await openWorkspaceHub(page);
     await cardFor(page, backedUp!.state.workspace.name).getByRole("button", {
       name: "Reset kitchen demo",
     }).click();
@@ -1913,7 +1953,7 @@ test(
     );
     expect(retiredInvite.status()).toBe(409);
 
-    await page.getByLabel("Workspaces and backup status").click();
+    await openWorkspaceHub(page);
     await expect(cardFor(page, fresh!.state.workspace.name)).toHaveCount(1);
   },
 );
