@@ -17,7 +17,9 @@ Each prompt opens the relevant Capture, Inventory, or Spaces editor. Measurement
 
 ## Generate and review
 
-Generate a plan and read the reasons on each suggested move. Stowplan considers:
+Generate a plan to move directly to a focused **Next move** card. Its source, destination, amount, and **Mark moved** action stay visible. Expand **Why this move and review details** when you need the reasoning or links to the underlying records, and expand **Review full plan** when you want the complete route.
+
+Stowplan considers:
 
 - rules that make a destination unsuitable
 - measured capacity when both sides have compatible measurements
@@ -30,11 +32,11 @@ Missing measurements are shown as unverified capacity, not as proof that an item
 
 ## Work through the steps
 
-Complete plan steps in their displayed order. Later steps wait because an earlier move may free space needed by the next one.
+Complete plan steps in order because an earlier move may free space needed by the next one. After **Mark moved**, the same focused card advances to the next physical action.
 
 Before completing a step, check the named source, destination, and amount against the physical item or container. If the saved workspace has changed since the plan was made, Stowplan stops and asks for review instead of moving a different record.
 
-Use the item, container, and destination links to inspect the evidence without completing the step.
+Use the item, container, and destination links inside the details disclosure to inspect the evidence without completing the step.
 
 ## Change your mind
 

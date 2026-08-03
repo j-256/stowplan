@@ -6,7 +6,9 @@ Use **Spaces** when you know the place you want to inspect. Use **Inventory** wh
 
 Open **Inventory** and search by name, description, category, tag, or placement requirement. The result shows the item's location path so you can follow the same room-to-container route in the physical world.
 
-Choose **Edit / move** to:
+Choose **Edit / move** for a record in an unfinished space. A record in a counted space instead says **Review, reopen to edit** because changing it makes that space's earlier count stale. Confirm **Reopen capture**, make the correction or move in the same dialog, then choose **Mark counted again** after checking the physical contents.
+
+The item editor can:
 
 - Change the everyday name, quantity, or Description
 - Expand **More item details** for unit, categories, tags, or frequency

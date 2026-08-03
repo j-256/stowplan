@@ -70,6 +70,7 @@ import type {
   ItemRecord,
   Location,
   LocationKind,
+  PlanStep,
   PlanWeights,
   ThemePreference,
   WorkspaceState,
@@ -240,6 +241,7 @@ const COMPLETE_CAPTURE_STATUSES = new Set<CaptureStatus>([
   "counted",
   "known_empty",
 ]);
+const RECERTIFIED_CAPTURE_STATUS: CaptureStatus = "counted";
 
 function demoEntryLocationId(
   state: WorkspaceState,
@@ -4567,6 +4569,16 @@ function Inventory({ state, commit, editing, editFocus, locationFilter, onEditin
     const siblings = sortItems(state.items.filter((candidate) => !candidate.archivedAt && candidate.locationId === item.locationId));
     const siblingIndex = siblings.findIndex((candidate) => candidate.id === item.id);
     const actionIdentity = `${item.name}, ${item.quantity} ${item.unit}`;
+    const itemCaptureComplete = Boolean(
+      itemLocation &&
+      COMPLETE_CAPTURE_STATUSES.has(itemLocation.captureStatus),
+    );
+    const rowActionLabel = itemCaptureComplete
+      ? "Review, reopen to edit"
+      : "Edit / move";
+    const rowActionDescription = itemCaptureComplete
+      ? `Review ${actionIdentity} in ${itemLocationPath}; reopen to edit`
+      : `Edit or move ${actionIdentity} in ${itemLocationPath}`;
     const validDrop = nativeReorderSource?.type === "item"
       ? canDropItem(nativeReorderSource.id, item.id)
       : null;
@@ -4620,7 +4632,7 @@ function Inventory({ state, commit, editing, editFocus, locationFilter, onEditin
         : <span className="location-path">{itemLocationPath}</span>}
       {canReorder && <span className="inventory-order-actions"><button type="button" className="icon small" aria-label={`Move ${actionIdentity} up`} disabled={siblingIndex === 0} onClick={() => reorderItem(item, -1)}><ArrowUp /></button><button type="button" className="icon small" aria-label={`Move ${actionIdentity} down`} disabled={siblingIndex === siblings.length - 1} onClick={() => reorderItem(item, 1)}><ArrowDown /></button></span>}
       <span className="reorder-drop-copy" aria-hidden>{cue === "before" ? "Place before" : cue === "after" ? "Place after" : ""}</span>
-      <button className="row-action" aria-label={`Edit or move ${actionIdentity} in ${itemLocationPath}`} onClick={() => onEditingChange(item.id)}><Edit3 /><span>Edit / move</span></button>
+      <button className="row-action" aria-label={rowActionDescription} onClick={() => onEditingChange(item.id)}><Edit3 /><span>{rowActionLabel}</span></button>
     </div>;
   };
   return <div className="content inventory-page">
@@ -4705,9 +4717,15 @@ function Inventory({ state, commit, editing, editFocus, locationFilter, onEditin
 
 function ItemEditor({ item, state, commit, close, focus }: { item: ItemRecord; state: WorkspaceState; commit: Commit; close: () => void; focus?: GuidanceFocus }) {
   const [message, setMessage] = useState("");
+  const [recertificationReady, setRecertificationReady] = useState(false);
+  const [recertifying, setRecertifying] = useState(false);
+  const [reopenedLocationId, setReopenedLocationId] = useState<string | null>(
+    null,
+  );
   const dialog = useRef<HTMLElement | null>(null);
   const closeRef = useRef(close);
   const initialFocus = useRef(focus);
+  const recertificationPrompt = useRef<HTMLElement | null>(null);
   const destinationOptions = flattenLocationTree(state.locations.filter((location) => !location.archivedAt && location.id !== item.locationId));
   const currentLocation = locationPath(state.locations, item.locationId);
   const currentLocationLabel = currentLocation.length ? currentLocation.map((location) => location.name).join(" › ") : "Unplaced";
@@ -4718,6 +4736,9 @@ function ItemEditor({ item, state, commit, close, focus }: { item: ItemRecord; s
     currentLocationRecord &&
     COMPLETE_CAPTURE_STATUSES.has(currentLocationRecord.captureStatus),
   );
+  const reopenedLocation = reopenedLocationId
+    ? state.locations.find((location) => location.id === reopenedLocationId)
+    : null;
   const hasPlacementRules = item.constraints.foodOnly || item.constraints.avoidWarmth || item.constraints.avoidHumidity || Boolean(item.constraints.keepTogether) || item.constraints.requiredTags.length > 0;
   const hasOrganizationDetails =
     item.category !== DEFAULT_ITEM_CATEGORY ||
@@ -4786,6 +4807,21 @@ function ItemEditor({ item, state, commit, close, focus }: { item: ItemRecord; s
       if (previous?.isConnected) previous.focus();
     };
   }, [captureComplete]);
+  useEffect(() => {
+    if (!recertificationReady) return;
+    const frame = requestAnimationFrame(() => {
+      recertificationPrompt.current?.scrollIntoView({
+        behavior: matchMedia("(prefers-reduced-motion: reduce)").matches
+          ? "auto"
+          : "smooth",
+        block: "nearest",
+      });
+      recertificationPrompt.current
+        ?.querySelector<HTMLButtonElement>("button")
+        ?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [recertificationReady]);
   const save = async (data: FormData) => {
     try {
       const dimensions = optionalDimensions(data);
@@ -4795,6 +4831,7 @@ function ItemEditor({ item, state, commit, close, focus }: { item: ItemRecord; s
         constraints: { avoidHumidity: data.get("avoidHumidity") === "on", avoidWarmth: data.get("avoidWarmth") === "on", foodOnly: data.get("foodOnly") === "on", keepTogether: String(data.get("keepTogether")).trim() || null, requiredTags: splitList(data.get("requiredTags")) },
       } });
       setMessage("Saved on this device.");
+      if (reopenedLocationId) setRecertificationReady(true);
       return true;
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not save item");
@@ -4803,26 +4840,50 @@ function ItemEditor({ item, state, commit, close, focus }: { item: ItemRecord; s
   };
   const move = async (data: FormData) => {
     try {
-      await commit({ type: "item.move", id: item.id, destinationId: String(data.get("destination")), quantity: Number(data.get("moveQuantity")) });
-      close();
+      const destinationId = String(data.get("destination"));
+      const destination = state.locations.find(
+        (location) => location.id === destinationId,
+      );
+      await commit({ type: "item.move", id: item.id, destinationId, quantity: Number(data.get("moveQuantity")) });
+      if (reopenedLocationId) {
+        setMessage(`Moved to ${destination?.name ?? "the selected space"}.`);
+        setRecertificationReady(true);
+      } else {
+        close();
+      }
       return true;
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not move item");
       return false;
     }
   };
-  const reopenCapture = () => {
+  const reopenCapture = async () => {
     if (!currentLocationRecord) return;
-    void perform(commit, {
+    const locationId = currentLocationRecord.id;
+    const reopened = await perform(commit, {
       type: "capture.status",
-      id: currentLocationRecord.id,
+      id: locationId,
       status: "in_progress",
-    }, () => {
+    });
+    if (!reopened) return;
+    setReopenedLocationId(locationId);
+    requestAnimationFrame(() => {
       requestAnimationFrame(() =>
         dialog.current?.querySelector<HTMLInputElement>('input[name="name"]')
           ?.focus()
       );
     });
+  };
+  const recertifyCapture = async () => {
+    if (!reopenedLocation || recertifying) return;
+    setRecertifying(true);
+    const recertified = await perform(commit, {
+      type: "capture.status",
+      id: reopenedLocation.id,
+      status: RECERTIFIED_CAPTURE_STATUS,
+    });
+    setRecertifying(false);
+    if (recertified) close();
   };
   if (captureComplete && currentLocationRecord) {
     return <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
@@ -4837,8 +4898,8 @@ function ItemEditor({ item, state, commit, close, focus }: { item: ItemRecord; s
         </div>
         <div className="capture-locked capture-locked-action" role="status">
           <CheckCircle2 />
-          <span><strong>{currentLocationRecord.name} is read-only</strong><small>Reopen capture before editing, moving, or deleting this item record.</small></span>
-          <button type="button" data-reopen-capture onClick={reopenCapture}><RotateCcw /> Reopen capture</button>
+          <span><strong>{currentLocationRecord.name} is read-only</strong><small>Reopen capture to edit or move this record, then mark the space counted again here.</small></span>
+          <button type="button" data-reopen-capture onClick={() => void reopenCapture()}><RotateCcw /> Reopen capture</button>
         </div>
       </section>
     </div>;
@@ -5093,6 +5154,25 @@ function ItemEditor({ item, state, commit, close, focus }: { item: ItemRecord; s
           </details>
         </aside>
       </div>
+      {recertificationReady && reopenedLocation && <section
+        aria-live="polite"
+        className="item-recertification"
+        ref={recertificationPrompt}
+      >
+        <CheckCircle2 aria-hidden="true" />
+        <span>
+          <strong>{reopenedLocation.name} needs a fresh count</strong>
+          <small>Confirm the physical contents now match this edited record.</small>
+        </span>
+        <button
+          className="primary"
+          disabled={recertifying}
+          onClick={() => void recertifyCapture()}
+          type="button"
+        >
+          {recertifying ? "Marking counted..." : "Mark counted again"}
+        </button>
+      </section>}
       {message && <output className="form-message item-editor-message">{message}</output>}
     </section>
   </div>;
@@ -5273,6 +5353,8 @@ function Planner({ state, commit, openGuidanceTarget }: { state: WorkspaceState;
   const [weights, setWeights] = useState<PlanWeights>({ ...DEFAULT_PLAN_WEIGHTS });
   const [name, setName] = useState("Suggested reset");
   const [message, setMessage] = useState("");
+  const [nextMoveFocusRequest, setNextMoveFocusRequest] = useState(0);
+  const nextMoveCard = useRef<HTMLElement | null>(null);
   const generate = async () => {
     const plan = buildMovePlan(state, { name, weights });
     if (!plan.steps.length) {
@@ -5282,14 +5364,78 @@ function Planner({ state, commit, openGuidanceTarget }: { state: WorkspaceState;
     try {
       await commit({ type: "plan.create", plan });
       setMessage(`${plan.steps.length} explainable ${plan.steps.length === 1 ? "move" : "moves"} added to the new plan.`);
+      setNextMoveFocusRequest((request) => request + 1);
     } catch (error) { setMessage(error instanceof Error ? error.message : "Could not create the plan"); }
   };
   const updateWeight = (key: keyof PlanWeights, value: number) => setWeights((current) => ({ ...current, [key]: value }));
   const complete = active?.steps.filter((step) => step.completedAt).length ?? 0;
+  const nextStepIndex = active?.steps.findIndex((step) => !step.completedAt) ?? -1;
+  const nextStep = nextStepIndex >= 0
+    ? active?.steps[nextStepIndex] ?? null
+    : null;
+  const nextStepId = nextStep?.id ?? null;
   const placeLabel = (locationId: string) => {
     const path = locationPath(state.locations, locationId);
     return path.length ? path.map((location) => `${location.code} · ${location.name}`).join(" › ") : "Unknown space";
   };
+  const subjectForStep = (step: PlanStep) => {
+    const item = step.itemId
+      ? state.items.find((candidate) => candidate.id === step.itemId)
+      : null;
+    const container = step.locationId
+      ? state.locations.find((candidate) => candidate.id === step.locationId)
+      : null;
+    return {
+      container,
+      item,
+      label: item
+        ? `${step.quantity ?? item.quantity} ${item.unit} of ${item.name}`
+        : container?.name ?? "container",
+    };
+  };
+  const capacityIsUnverified = (step: PlanStep) => step.explanation.some(
+    (reason) =>
+      reason.includes("capacity is unmeasured") ||
+      reason.includes("capacity cannot be verified"),
+  );
+  const completeStep = async (step: PlanStep) => {
+    if (!active) return;
+    const completesPlan = active.steps.filter(
+      (candidate) => !candidate.completedAt,
+    ).length === 1;
+    const moved = await perform(commit, {
+      type: "plan.step.complete",
+      planId: active.id,
+      stepId: step.id,
+    });
+    if (!moved) return;
+    if (completesPlan) setMessage("");
+    else setNextMoveFocusRequest((request) => request + 1);
+  };
+  useEffect(() => {
+    if (!nextMoveFocusRequest || !nextStepId) return;
+    let focusFrame = 0;
+    const renderFrame = requestAnimationFrame(() => {
+      focusFrame = requestAnimationFrame(() => {
+        const card = nextMoveCard.current;
+        if (!card) return;
+        card.scrollIntoView({
+          behavior: matchMedia("(prefers-reduced-motion: reduce)").matches
+            ? "auto"
+            : "smooth",
+          block: "start",
+        });
+        card.focus({ preventScroll: true });
+      });
+    });
+    return () => {
+      cancelAnimationFrame(renderFrame);
+      cancelAnimationFrame(focusFrame);
+    };
+  }, [nextMoveFocusRequest, nextStepId]);
+  const nextSubject = nextStep ? subjectForStep(nextStep) : null;
+  const nextItemId = nextSubject?.item?.id ?? null;
+  const nextContainerId = nextSubject?.container?.id ?? null;
   return <div className="content">
     <section className="panel hero planner-hero">
       <div>
@@ -5324,37 +5470,63 @@ function Planner({ state, commit, openGuidanceTarget }: { state: WorkspaceState;
       {message && <output className="form-message">{message}</output>}
     </section>
     {hasConflictingPlans && <section className="panel form-message" role="alert"><h3>Resolve overlapping active plans</h3><p>This older workspace contains {activePlans.length} active plans. Generate a fresh plan to replace all of them, or discard plans until one remains before executing a move.</p>{activePlans.map((plan) => <button key={plan.id} onClick={() => void perform(commit, { type: "plan.status", planId: plan.id, status: "discarded" })}>Discard {plan.name}</button>)}</section>}
-    {active && !hasConflictingPlans ? <>
+    {active && !hasConflictingPlans && nextStep && nextSubject ? <>
       <div className="plan-progress"><strong>{active.name}</strong><span>{complete} of {active.steps.length} complete</span></div>
-      <p className="plan-review-note">Review links do not move anything. Saving changed item or destination details discards this plan so the next plan uses the corrected evidence.</p>
-      <section className="panel plan-list">{active.steps.map((step, index) => {
-        const item = step.itemId ? state.items.find((candidate) => candidate.id === step.itemId) : null;
-        const container = step.locationId ? state.locations.find((candidate) => candidate.id === step.locationId) : null;
-        const subject = item ? `${step.quantity ?? item.quantity} ${item.unit} of ${item.name}` : container?.name ?? "container";
-        const blockingStepIndex = active.steps.findIndex(
-          (candidate, candidateIndex) =>
-            candidateIndex < index && !candidate.completedAt,
-        );
-        const blockedByEarlier = blockingStepIndex >= 0;
-        const moveActionState = step.completedAt
-          ? "complete"
-          : blockedByEarlier
-            ? "blocked"
-            : "ready";
-        const moveActionLabel = step.completedAt
-          ? "Moved"
-          : blockedByEarlier
-            ? `Step ${blockingStepIndex + 1} first`
-            : "Mark moved";
-        const capacityUnverified = step.explanation.some(
-          (reason) =>
-            reason.includes("capacity is unmeasured") ||
-            reason.includes("capacity cannot be verified"),
-        );
-        const completesPlan = !step.completedAt &&
-          active.steps.filter((candidate) => !candidate.completedAt).length === 1;
-        return <div key={step.id} data-done={!!step.completedAt}><i>{index + 1}</i><span><strong>Move {subject}</strong><small className="plan-route">{placeLabel(step.sourceId)} → {placeLabel(step.destinationId)}</small>{capacityUnverified && <em className="plan-confidence">Capacity unverified</em>}<small>{step.explanation.join(" · ")}</small></span><b>{state.locations.find((location) => location.id === step.sourceId)?.code} → {state.locations.find((location) => location.id === step.destinationId)?.code}</b><div className="plan-step-actions">{item && <button onClick={() => openGuidanceTarget("inventory", item.id)}>Review item</button>}{container && <button onClick={() => openGuidanceTarget("spaces", container.id)}>Review container</button>}<button onClick={() => openGuidanceTarget("spaces", step.destinationId)}>Review destination</button><button className="primary" data-step-state={moveActionState} disabled={moveActionState !== "ready"} title={blockedByEarlier ? `Complete step ${blockingStepIndex + 1} first.` : undefined} onClick={() => void perform(commit, { type: "plan.step.complete", planId: active.id, stepId: step.id }, completesPlan ? () => setMessage("") : undefined)}>{moveActionLabel}</button></div></div>;
-      })}</section>
+      <section
+        aria-label="Next move"
+        className="panel plan-next-move"
+        data-step-id={nextStep.id}
+        ref={nextMoveCard}
+        tabIndex={-1}
+      >
+        <header>
+          <div>
+            <p className="eyebrow">Next move</p>
+            <h3>Move {nextSubject.label}</h3>
+          </div>
+          <b>Step {nextStepIndex + 1} of {active.steps.length}</b>
+        </header>
+        <p className="plan-route">{placeLabel(nextStep.sourceId)} → {placeLabel(nextStep.destinationId)}</p>
+        <button
+          className="primary plan-next-action"
+          data-step-state="ready"
+          onClick={() => void completeStep(nextStep)}
+        >
+          Mark moved
+        </button>
+        <details className="plan-step-support">
+          <summary>Why this move and review details</summary>
+          <div>
+            {capacityIsUnverified(nextStep) && <em className="plan-confidence">Capacity unverified</em>}
+            <p>{nextStep.explanation.join(" · ")}</p>
+            <p className="plan-review-note">Review links do not move anything. Saving changed item or destination details discards this plan so the next plan uses the corrected evidence.</p>
+            <div className="plan-review-actions">
+              {nextItemId && <button onClick={() => openGuidanceTarget("inventory", nextItemId)}>Review item</button>}
+              {nextContainerId && <button onClick={() => openGuidanceTarget("spaces", nextContainerId)}>Review container</button>}
+              <button onClick={() => openGuidanceTarget("spaces", nextStep.destinationId)}>Review destination</button>
+            </div>
+          </div>
+        </details>
+      </section>
+      <details className="panel plan-itinerary">
+        <summary>Review full plan <span>{countLabel(active.steps.length, "move")}</span></summary>
+        <ol>{active.steps.map((step, index) => {
+          const subject = subjectForStep(step);
+          const status = step.completedAt
+            ? "Moved"
+            : index === nextStepIndex
+              ? "Next"
+              : "Upcoming";
+          return <li data-status={status.toLowerCase()} key={step.id}>
+            <b>{index + 1}</b>
+            <span>
+              <strong>Move {subject.label}</strong>
+              <small>{placeLabel(step.sourceId)} → {placeLabel(step.destinationId)}</small>
+            </span>
+            <em>{status}</em>
+          </li>;
+        })}</ol>
+      </details>
     </> : <Empty title="No active plan" text={readiness.canGenerateUsefulPlan ? "There is enough evidence to try a plan. Review the readiness guidance, then generate when you are comfortable with the gaps." : emptyPlanGuidance(readiness)} />}
   </div>;
 }

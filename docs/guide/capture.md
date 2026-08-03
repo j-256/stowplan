@@ -40,6 +40,8 @@ Counted and known-empty spaces protect their contents from accidental edits. Cho
 
 Reopening a space with contents returns it to **In progress**. Reopening an empty space returns it to **Uncounted**.
 
+Inventory labels an item in a completed space **Review, reopen to edit**. The review keeps the confirmation explicit, then opens the full editor in the same dialog. After a successful edit or move, choose **Mark counted again** there to restore the original space's trusted first-pass status without detouring through Capture.
+
 Moving a nested container can affect both its old and new completed parents. Stowplan names those parents and asks before reopening them and making the move as one change.
 
 ## Fix or move an item

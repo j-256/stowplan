@@ -33,7 +33,11 @@ export default function InAppDocs() {
     </section>
     <section>
       <h2>Find and move things</h2>
-      <p>Use <strong>Spaces</strong> when you know the place and <strong>Inventory</strong> when you know the item. Search across the workspace, edit a record, or move all or part of its quantity. Reopen a counted space before changing what it contains.</p>
+      <p>Use <strong>Spaces</strong> when you know the place and <strong>Inventory</strong> when you know the item. Search across the workspace, edit a record, or move all or part of its quantity. For an item in a counted space, review and reopen it in the item dialog, make the change, then choose <strong>Mark counted again</strong> there.</p>
+    </section>
+    <section>
+      <h2>Follow the next move</h2>
+      <p>Generating a plan focuses its compact <strong>Next move</strong> card. Keep the route and <strong>Mark moved</strong> action in view while working, expand the supporting details only when needed, and let the card advance after each completed move.</p>
     </section>
     <section>
       <h2>Correct a mistake</h2>

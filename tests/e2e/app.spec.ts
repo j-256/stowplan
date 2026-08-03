@@ -2185,6 +2185,82 @@ test("requires Reopen before completed contents change from Spaces or Inventory"
   await expect(page.getByRole("button", { name: "Save item" })).toBeVisible();
 });
 
+test("guides completed inventory edits and moves through recertification", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    !["desktop-chromium", "mobile-chromium"].includes(testInfo.project.name),
+    "Phone and wide desktop cover the guided item flow",
+  );
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
+  await page.locator(".nav:visible", { hasText: "Inventory" }).click();
+
+  const flour = page.locator('.inventory-row[data-item-id="item_flour"]');
+  const reviewAction = flour.getByRole("button", {
+    name: /Review All-purpose flour, 1 bag in .*reopen to edit/,
+  });
+  await expect(reviewAction).toContainText("Review, reopen to edit");
+  await reviewAction.click();
+
+  let editor = page.getByRole("dialog", { name: "Review item" });
+  await expect(editor).toContainText(
+    "Reopen capture to edit or move this record, then mark the space counted again here",
+  );
+  await editor.getByRole("button", { name: "Reopen capture" }).click();
+  editor = page.getByRole("dialog", { name: "Edit item" });
+  await editor.getByLabel("Description").fill("Unbleached all-purpose flour");
+  await editor.getByRole("button", { name: "Save item" }).click();
+  await expect(editor.getByText("Saved on this device.")).toBeVisible();
+  await expect(editor.getByText("Baking bin needs a fresh count")).toBeVisible();
+  await editor.getByRole("button", { name: "Mark counted again" }).click();
+  await expect(editor).toBeHidden();
+  await expect.poll(async () => {
+    const replica = await localReplica(page) as {
+      state: {
+        items: { description: string; id: string; locationId: string }[];
+        locations: { captureStatus: string; id: string }[];
+      };
+    };
+    return {
+      description: replica.state.items.find((item) => item.id === "item_flour")
+        ?.description,
+      status: replica.state.locations.find((location) => location.id === "loc_bin")
+        ?.captureStatus,
+    };
+  }).toEqual({
+    description: "Unbleached all-purpose flour",
+    status: "counted",
+  });
+
+  await reviewAction.click();
+  editor = page.getByRole("dialog", { name: "Review item" });
+  await editor.getByRole("button", { name: "Reopen capture" }).click();
+  editor = page.getByRole("dialog", { name: "Edit item" });
+  await editor.getByLabel("Move to").selectOption("loc_corner");
+  await editor.getByRole("button", { name: "Move quantity" }).click();
+  await expect(editor).toContainText("Moved to Corner cabinet.");
+  await expect(editor.getByText("Baking bin needs a fresh count")).toBeVisible();
+  await editor.getByRole("button", { name: "Mark counted again" }).click();
+  await expect(editor).toBeHidden();
+  await expect.poll(async () => {
+    const replica = await localReplica(page) as {
+      state: {
+        items: { id: string; locationId: string }[];
+        locations: { captureStatus: string; id: string }[];
+      };
+    };
+    return {
+      locationId: replica.state.items.find((item) => item.id === "item_flour")
+        ?.locationId,
+      status: replica.state.locations.find((location) => location.id === "loc_bin")
+        ?.captureStatus,
+    };
+  }).toEqual({
+    locationId: "loc_corner",
+    status: "counted",
+  });
+});
+
 test("visibly refuses unchanged item and space saves", async ({ page }) => {
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await reopenCaptureLocation(page, "loc_warm");
@@ -3885,49 +3961,47 @@ test("guides incomplete evidence into a reviewable plan", async ({ page }) => {
   await page.locator(".nav:visible", { hasText: "Plan" }).click();
   await page.getByRole("button", { name: "Generate move plan" }).click();
   await expect(page.getByText(/explainable moves added to the new plan/)).toBeVisible();
-  const planCards = page.locator(".plan-list > div");
-  await expect(planCards.first().getByText("Capacity unverified")).toBeVisible();
-  await expect(planCards.first().getByRole("button", { name: "Review destination" })).toBeVisible();
-  const readyMove = planCards.first().getByRole("button", { name: "Mark moved" });
-  const blockedMove = planCards.nth(1).getByRole("button", { name: "Step 1 first" });
+  const nextMove = page.getByRole("region", { name: "Next move" });
+  await expect(nextMove).toBeFocused();
+  await expect(nextMove).toBeInViewport();
+  const readyMove = nextMove.getByRole("button", { name: "Mark moved" });
   await expect(readyMove).toBeEnabled();
-  await expect(blockedMove).toBeDisabled();
-  await expect(blockedMove).toHaveAttribute("data-step-state", "blocked");
-  const moveStyles = await Promise.all([readyMove, blockedMove].map(
-    (button) => button.evaluate((element) => {
-      const styles = getComputedStyle(element);
-      return {
-        background: styles.backgroundColor,
-        color: styles.color,
-        cursor: styles.cursor,
-      };
-    }),
-  ));
-  expect(moveStyles[1]?.background).not.toBe(moveStyles[0]?.background);
-  expect(moveStyles[1]?.cursor).toBe("not-allowed");
-  const planLayout = await planCards.first().evaluate((card) => {
-    const buttons = [...card.querySelectorAll<HTMLButtonElement>(".plan-step-actions button")];
-    const reviewBounds = buttons.slice(0, 2).map((button) => button.getBoundingClientRect());
-    const moveBounds = buttons.at(-1)?.getBoundingClientRect();
+  await expect(readyMove).toBeInViewport();
+  await expect(page.getByRole("button", { name: "Mark moved" })).toHaveCount(1);
+  const closedCardHeight = await nextMove.evaluate((card) =>
+    Math.round(card.getBoundingClientRect().height)
+  );
+  expect(closedCardHeight).toBeLessThan(320);
+  const support = nextMove.locator(".plan-step-support");
+  await expect(support).not.toHaveAttribute("open", "");
+  await expect(nextMove.getByRole("button", { name: "Review destination" }))
+    .toBeHidden();
+  await support.getByText("Why this move and review details", {
+    exact: true,
+  }).click();
+  await expect(nextMove.getByText("Capacity unverified")).toBeVisible();
+  await expect(nextMove.getByRole("button", { name: "Review destination" }))
+    .toBeVisible();
+  const planLayout = await nextMove.evaluate((card) => {
+    const markMoved = card.querySelector<HTMLButtonElement>(
+      'button[data-step-state="ready"]',
+    );
+    const moveBounds = markMoved?.getBoundingClientRect();
     return {
       documentOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
-      narrowTargets: buttons
+      markMovedInViewport: Boolean(
+        moveBounds &&
+        moveBounds.top >= 0 &&
+        moveBounds.bottom <= innerHeight,
+      ),
+      narrowTargets: [...card.querySelectorAll<HTMLButtonElement>("button")]
         .filter((button) => button.getBoundingClientRect().height < 44)
         .map((button) => button.textContent),
-      reviewsShareRow: reviewBounds.length === 2
-        ? Math.abs(reviewBounds[0]!.top - reviewBounds[1]!.top) < 2
-        : false,
-      moveFollowsReviews: reviewBounds.length === 2 && moveBounds
-        ? moveBounds.top >= Math.max(reviewBounds[0]!.bottom, reviewBounds[1]!.bottom)
-        : false,
     };
   });
   expect(planLayout.documentOverflow).toBe(false);
+  expect(planLayout.markMovedInViewport).toBe(true);
   expect(planLayout.narrowTargets).toEqual([]);
-  if ((page.viewportSize()?.width ?? 0) <= 760) {
-    expect(planLayout.reviewsShareRow).toBe(true);
-    expect(planLayout.moveFollowsReviews).toBe(true);
-  }
   const planAccessibility = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa"])
     .analyze();
@@ -3947,28 +4021,46 @@ test("guides incomplete evidence into a reviewable plan", async ({ page }) => {
         steps: {
           destinationId: string;
           itemId: string | null;
+          locationId: string | null;
         }[];
       }[];
     };
   };
   const activePlan = generated.state.plans.find((plan) => plan.status === "active");
-  const itemStep = activePlan?.steps.find((step) => step.itemId);
-  const reviewedItem = generated.state.items.find((item) => item.id === itemStep?.itemId);
-  expect(reviewedItem).toBeTruthy();
-
-  await page.getByRole("button", { name: "Review item" }).first().click();
-  const itemEditor = page.getByRole("dialog", { name: "Review item" });
-  await expect(itemEditor.getByText(reviewedItem?.name ?? "", { exact: true })).toBeVisible();
-  const afterItemReview = await localReplica(page) as typeof generated;
-  expect(afterItemReview.state.activities).toEqual(generated.state.activities);
-  expect(afterItemReview.state.plans).toEqual(generated.state.plans);
-  await itemEditor.getByRole("button", { name: "Close item editor" }).click();
+  const firstStep = activePlan?.steps[0];
+  expect(firstStep).toBeTruthy();
+  if (firstStep?.itemId) {
+    const reviewedItem = generated.state.items.find(
+      (item) => item.id === firstStep.itemId,
+    );
+    expect(reviewedItem).toBeTruthy();
+    await nextMove.getByRole("button", { name: "Review item" }).click();
+    const itemEditor = page.getByRole("dialog", { name: "Review item" });
+    await expect(itemEditor.getByText(reviewedItem?.name ?? "", { exact: true }))
+      .toBeVisible();
+    await itemEditor.getByRole("button", { name: "Close item editor" }).click();
+  } else {
+    const reviewedContainer = generated.state.locations.find(
+      (location) => location.id === firstStep?.locationId,
+    );
+    expect(reviewedContainer).toBeTruthy();
+    await nextMove.getByRole("button", { name: "Review container" }).click();
+    await expect(page.getByRole("region", {
+      name: `Edit ${reviewedContainer?.name ?? ""}`,
+    })).toBeFocused();
+  }
+  const afterSubjectReview = await localReplica(page) as typeof generated;
+  expect(afterSubjectReview.state.activities).toEqual(generated.state.activities);
+  expect(afterSubjectReview.state.plans).toEqual(generated.state.plans);
 
   const firstDestination = generated.state.locations.find(
     (location) => location.id === activePlan?.steps[0]?.destinationId,
   );
   expect(firstDestination).toBeTruthy();
   await page.locator(".nav:visible", { hasText: "Plan" }).click();
+  await page.getByText("Why this move and review details", {
+    exact: true,
+  }).click();
   await page.getByRole("button", { name: "Review destination" }).first().click();
   await expect(page.getByRole("region", { name: `Edit ${firstDestination?.name ?? ""}` })).toBeFocused();
   const afterDestinationReview = await localReplica(page) as typeof generated;
@@ -4257,13 +4349,21 @@ test("executes a planned move and rolls it back from Activity", async ({ page })
   };
   const step = before.state.plans.find((plan) => plan.status === "active")!.steps[0]!;
 
-  await page.getByRole("button", { name: "Mark moved" }).first().click();
+  const nextMove = page.getByRole("region", { name: "Next move" });
+  const firstStepId = await nextMove.getAttribute("data-step-id");
+  await nextMove.getByRole("button", { name: "Mark moved" }).click();
   await expect.poll(async () => {
     const moved = await localReplica(page) as typeof before;
     return step.type === "item"
       ? moved.state.items.find((item) => item.id === step.itemId)?.locationId
       : moved.state.locations.find((location) => location.id === step.locationId)?.parentId;
   }).toBe(step.destinationId);
+  if (before.state.plans.find((plan) => plan.status === "active")!.steps.length > 1) {
+    await expect(nextMove).not.toHaveAttribute("data-step-id", firstStepId ?? "");
+    await expect(nextMove).toBeFocused();
+    await expect(nextMove.getByRole("button", { name: "Mark moved" }))
+      .toBeInViewport();
+  }
   const afterMove = await localReplica(page) as typeof before;
   for (const locationId of [step.sourceId, step.destinationId]) {
     expect(
