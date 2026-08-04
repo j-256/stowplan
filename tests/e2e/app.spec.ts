@@ -4319,6 +4319,19 @@ test("keeps the Capture hierarchy readable at compact desktop widths", async ({
     matchMedia("(hover: hover) and (pointer: fine)").matches,
   );
   if (usesFinePointer) {
+    const activeRow = page.locator(
+      '.capture-location-row[data-location-id="loc_box"]',
+    );
+    await expect(activeRow.getByRole("button", {
+      exact: true,
+      name: "Move Appliance parts",
+    })).toBeVisible();
+    await expect(activeRow.getByRole("button", {
+      name: "Move Appliance parts up",
+    })).toBeHidden();
+    await expect(activeRow.getByRole("button", {
+      name: "Move Appliance parts down",
+    })).toBeHidden();
     await expect.poll(() => page.evaluate(() =>
       [...document.querySelectorAll<HTMLElement>(".capture-location-row > .row-actions")]
         .filter((actions) => Number.parseFloat(getComputedStyle(actions).opacity) > 0.1)

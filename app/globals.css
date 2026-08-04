@@ -480,6 +480,13 @@
   .capture-location-row>.drag-handle{width:36px;min-width:36px;height:40px;min-height:40px}
   .capture-location-row>.drag-handle[data-collapsible="true"]{grid-template-columns:11px 11px;padding-inline:7px}
 }
+@media(min-width:761px) and (max-width:1100px){
+  .capture-location-row[data-active="true"]>.queue-row,.capture-location-row:hover>.queue-row,.capture-location-row:focus-within>.queue-row{padding-right:64px}
+  .capture-location-row>.row-actions button:not(.capture-move-action){display:none}
+  .capture-location-row>.row-actions .capture-move-action{width:60px;min-width:60px;min-height:40px}
+  .capture-move-action svg{display:none}
+  .capture-move-action span{display:inline;font-size:10px;font-weight:700}
+}
 @media(max-width:760px), (max-height:520px) and (pointer:coarse) and (min-width:761px){
   .capture-location-row>.queue-row,.capture-location-row[data-active="true"]>.queue-row,.capture-location-row:hover>.queue-row,.capture-location-row:focus-within>.queue-row{padding-right:48px}
   .capture-location-row>.row-actions{display:flex;opacity:1;pointer-events:auto}
