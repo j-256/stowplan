@@ -4,7 +4,7 @@
 
 ```bash
 npm ci
-npm audit --omit=dev --audit-level=high
+npm audit
 npm run typecheck
 npm run lint
 npm run test:coverage
@@ -55,7 +55,7 @@ One real production Google account is sufficient to canary Google's hosted flow,
 
 Quota and circuit tests assert both the preflight response and the transaction-time guard. A test that pauses one circuit must prove unaffected paths remain available. Security-pause tests cover future resume and repeated-trigger metadata; capacity-pause tests remain latched until an audited reopen. Reconnect tests limit concurrent workspaces, preserve the full `Retry-After` not-before floor while bounding local backoff and timer slices, and prove no outbox envelope is lost or reordered.
 
-The release gate audits the production dependency tree. VitePress and migration/build CLIs are development-only tools and may inherit advisories that have no compatible upstream release; run them only against trusted source on localhost or in isolated CI, and review the full unfiltered `npm audit` report during dependency updates.
+The release gate audits the complete dependency tree and fails on every reported severity. Production packages and development tooling can both process inputs, contact services, or expose local servers during builds, so keep every reported advisory resolved and run tooling only against trusted source on localhost or in isolated CI.
 
 ## Version policy
 

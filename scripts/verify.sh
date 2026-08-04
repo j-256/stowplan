@@ -26,8 +26,8 @@ endgroup() {
   echo "::endgroup::"
 }
 
-group "npm audit"
-npm audit --omit=dev --audit-level=high
+group "full dependency audit"
+npm audit
 endgroup
 
 group "typecheck"
