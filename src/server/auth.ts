@@ -206,18 +206,31 @@ export function authenticationBaseUrl(
   }
 }
 
+function usesTurnstileTestCredential(
+  env: RuntimeEnv,
+): boolean {
+  return TURNSTILE_TEST_SITE_KEYS.has(
+    env.AUTH_TURNSTILE_SITE_KEY ?? "",
+  ) || TURNSTILE_TEST_SECRET_KEYS.has(
+    env.AUTH_TURNSTILE_SECRET_KEY ?? "",
+  );
+}
+
+function hasTurnstileTestCredentialPair(
+  env: RuntimeEnv,
+): boolean {
+  return TURNSTILE_TEST_SITE_KEYS.has(
+    env.AUTH_TURNSTILE_SITE_KEY ?? "",
+  ) && TURNSTILE_TEST_SECRET_KEYS.has(
+    env.AUTH_TURNSTILE_SECRET_KEY ?? "",
+  );
+}
+
 function turnstileConfigurationAllowed(
   env: RuntimeEnv,
   requestUrl = "",
 ): boolean {
-  const usesTestCredential =
-    TURNSTILE_TEST_SITE_KEYS.has(
-      env.AUTH_TURNSTILE_SITE_KEY ?? "",
-    )
-    || TURNSTILE_TEST_SECRET_KEYS.has(
-      env.AUTH_TURNSTILE_SECRET_KEY ?? "",
-    );
-  return !usesTestCredential
+  return !usesTurnstileTestCredential(env)
     || isolatedAuthenticationHostnameAllowed(
       env,
       requestUrl,
@@ -2223,11 +2236,22 @@ export async function verifyTurnstile(
       : "",
   );
   const challengeAge = Date.now() - challengeAt;
+  const metadataAccepted =
+    (
+      hasTurnstileTestCredentialPair(env)
+      && isolatedAuthenticationHostnameAllowed(
+        env,
+        requestUrl,
+      )
+    )
+    || (
+      result.action === OAUTH_TURNSTILE_ACTION
+      && typeof result.hostname === "string"
+      && result.hostname.toLowerCase() === expectedHostname
+    );
   if (
     result.success !== true
-    || result.action !== OAUTH_TURNSTILE_ACTION
-    || typeof result.hostname !== "string"
-    || result.hostname.toLowerCase() !== expectedHostname
+    || !metadataAccepted
     || !Number.isFinite(challengeAt)
     || challengeAge < -TURNSTILE_CLOCK_TOLERANCE_MS
     || challengeAge >

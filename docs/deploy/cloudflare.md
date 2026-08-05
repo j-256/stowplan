@@ -54,7 +54,7 @@ Create an External Google web application, publish it for production use, reques
 https://YOUR_ORIGIN/api/auth/google/callback
 ```
 
-Create a Managed Turnstile widget restricted to the exact production hostname. Stowplan requires the Siteverify response to carry that hostname and the `oauth_start` action. Use separate documented test credentials on loopback, `.test`, CI, and isolated test deployments. The production application refuses the test pair.
+Create a Managed Turnstile widget restricted to the exact production hostname. Stowplan requires a production Siteverify response to carry that hostname and the `oauth_start` action. Use a complete pair of separate documented test credentials on loopback, `.test`, CI, and isolated test deployments. Cloudflare's dummy response can carry a placeholder hostname and omit the requested action, so Stowplan relaxes only those metadata checks for a complete official test-key pair behind the isolated-host guard while still requiring a successful, fresh Siteverify result. Any known test site or secret key makes the provider unavailable on a public host before Siteverify is called.
 
 Install the runtime values through Sites environment management or, for a direct Worker, with Wrangler:
 

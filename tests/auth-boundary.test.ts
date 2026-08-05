@@ -27,6 +27,14 @@ import {
 import { OAUTH_TURNSTILE_ACTION } from "../src/shared/authentication";
 import { numberedMigrationDatabase } from "./helpers/sqlite-d1";
 
+const TURNSTILE_ALWAYS_PASS_TEST_SECRET_KEY =
+  "1x0000000000000000000000000000000AA";
+const TURNSTILE_ALWAYS_PASS_TEST_SITE_KEY =
+  "1x00000000000000000000AA";
+const TURNSTILE_DUMMY_TOKEN = "XXXX.DUMMY.TOKEN.XXXX";
+const TURNSTILE_PRODUCTION_SECRET_KEY = "production-secret-key";
+const TURNSTILE_PRODUCTION_SITE_KEY = "production-site-key";
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -146,15 +154,32 @@ describe("Turnstile verification", () => {
     } satisfies Partial<TurnstileVerificationError>);
   });
 
-  it("refuses official test credentials on a production hostname", async () => {
+  it.each([
+    {
+      label: "a complete official test-key pair",
+      secretKey: TURNSTILE_ALWAYS_PASS_TEST_SECRET_KEY,
+      siteKey: TURNSTILE_ALWAYS_PASS_TEST_SITE_KEY,
+    },
+    {
+      label: "an official test secret mixed with another site key",
+      secretKey: TURNSTILE_ALWAYS_PASS_TEST_SECRET_KEY,
+      siteKey: TURNSTILE_PRODUCTION_SITE_KEY,
+    },
+    {
+      label: "an official test site key mixed with another secret",
+      secretKey: TURNSTILE_PRODUCTION_SECRET_KEY,
+      siteKey: TURNSTILE_ALWAYS_PASS_TEST_SITE_KEY,
+    },
+  ])("refuses $label on a production hostname", async ({
+    secretKey,
+    siteKey,
+  }) => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     await expect(verifyTurnstile(
       {
         AUTH_BASE_URL: "https://stowplan.jklein.dev",
-        AUTH_TURNSTILE_SECRET_KEY:
-          "1x0000000000000000000000000000000AA",
-        AUTH_TURNSTILE_SITE_KEY:
-          "1x00000000000000000000AA",
+        AUTH_TURNSTILE_SECRET_KEY: secretKey,
+        AUTH_TURNSTILE_SITE_KEY: siteKey,
       },
       "dummy-token",
       "https://stowplan.jklein.dev",
@@ -162,6 +187,90 @@ describe("Turnstile verification", () => {
       status: 503,
     } satisfies Partial<TurnstileVerificationError>);
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("accepts official test-key placeholder metadata on an isolated hostname", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValue(Response.json({
+        challenge_ts: new Date().toISOString(),
+        "error-codes": [],
+        hostname: "example.com",
+        metadata: { result_with_testing_key: true },
+        success: true,
+      }));
+
+    await expect(verifyTurnstile(
+      {
+        AUTH_BASE_URL: "http://localhost:3000",
+        AUTH_TURNSTILE_SECRET_KEY:
+          TURNSTILE_ALWAYS_PASS_TEST_SECRET_KEY,
+        AUTH_TURNSTILE_SITE_KEY:
+          TURNSTILE_ALWAYS_PASS_TEST_SITE_KEY,
+      },
+      TURNSTILE_DUMMY_TOKEN,
+      "http://localhost:3000/api/auth/google/start",
+    )).resolves.toBeUndefined();
+
+    const request = fetchSpy.mock.calls[0]?.[1];
+    const body = request?.body as URLSearchParams;
+    expect(body.get("response")).toBe(TURNSTILE_DUMMY_TOKEN);
+    expect(body.get("secret")).toBe(
+      TURNSTILE_ALWAYS_PASS_TEST_SECRET_KEY,
+    );
+  });
+
+  it.each([
+    { challenge_ts: "2020-01-01T00:00:00.000Z" },
+    { success: false },
+  ])("rejects an unsuccessful or stale official test-key result", async (
+    override,
+  ) => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        challenge_ts: new Date().toISOString(),
+        hostname: "example.com",
+        success: true,
+        ...override,
+      }),
+    );
+
+    await expect(verifyTurnstile(
+      {
+        AUTH_BASE_URL: "http://localhost:3000",
+        AUTH_TURNSTILE_SECRET_KEY:
+          TURNSTILE_ALWAYS_PASS_TEST_SECRET_KEY,
+        AUTH_TURNSTILE_SITE_KEY:
+          TURNSTILE_ALWAYS_PASS_TEST_SITE_KEY,
+      },
+      TURNSTILE_DUMMY_TOKEN,
+      "http://localhost:3000/api/auth/google/start",
+    )).rejects.toMatchObject({
+      status: 400,
+    } satisfies Partial<TurnstileVerificationError>);
+  });
+
+  it("keeps strict metadata validation for an incomplete test-key pair", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        challenge_ts: new Date().toISOString(),
+        hostname: "example.com",
+        success: true,
+      }),
+    );
+
+    await expect(verifyTurnstile(
+      {
+        AUTH_BASE_URL: "http://localhost:3000",
+        AUTH_TURNSTILE_SECRET_KEY:
+          TURNSTILE_ALWAYS_PASS_TEST_SECRET_KEY,
+        AUTH_TURNSTILE_SITE_KEY:
+          TURNSTILE_PRODUCTION_SITE_KEY,
+      },
+      TURNSTILE_DUMMY_TOKEN,
+      "http://localhost:3000/api/auth/google/start",
+    )).rejects.toMatchObject({
+      status: 400,
+    } satisfies Partial<TurnstileVerificationError>);
   });
 
   it("does not forward an invalid client address", async () => {
@@ -309,9 +418,9 @@ describe("identity enforcement boundary", () => {
       AUTH_GOOGLE_CLIENT_SECRET: "client-secret",
       AUTH_IDENTITY_DIGEST_KEY: digestKey,
       AUTH_TURNSTILE_SECRET_KEY:
-        "1x0000000000000000000000000000000AA",
+        TURNSTILE_ALWAYS_PASS_TEST_SECRET_KEY,
       AUTH_TURNSTILE_SITE_KEY:
-        "1x00000000000000000000AA",
+        TURNSTILE_ALWAYS_PASS_TEST_SITE_KEY,
     };
     expect(provider(
       {
