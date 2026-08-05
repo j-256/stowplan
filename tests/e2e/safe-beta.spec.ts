@@ -876,6 +876,13 @@ test(
       await expect(targetRole).toBeFocused();
 
       const expiry = page.getByLabel("Invitation expires after hours");
+      await expect(expiry).toHaveAttribute("name", "guestExpiryHours");
+      await expect(expiry).toHaveAttribute("autocomplete", "off");
+      await expect(page.getByLabel("Invite link status"))
+        .toHaveAttribute("name", "guestStatus");
+      const memberSearch = page.getByLabel("Search members");
+      await expect(memberSearch).toHaveAttribute("name", "memberQuery");
+      await expect(memberSearch).toHaveAttribute("autocomplete", "off");
       const createInvite = page.getByRole("button", {
         name: "Create invite link",
       });
@@ -888,8 +895,12 @@ test(
         name: "Invite link created",
       });
       await expect(viewerDialog).toBeVisible();
-      await expect(viewerDialog.getByLabel("Single-use enrollment URL"))
-        .toBeFocused();
+      const viewerUrlField = viewerDialog.getByLabel(
+        "Single-use enrollment URL",
+      );
+      await expect(viewerUrlField).toBeFocused();
+      await expect(viewerUrlField).toHaveAttribute("name", "inviteUrl");
+      await expect(viewerUrlField).toHaveAttribute("autocomplete", "off");
       await expect.poll(() => createdInviteBodies.length).toBe(1);
       expect(createdInviteBodies[0]).toMatchObject({
         expiresInHours: 12,
@@ -1998,6 +2009,10 @@ test(
     );
     const confirmation = deleteDialog.getByRole("textbox");
     await expect(confirmation).toBeFocused();
+    await expect(confirmation).toHaveAttribute(
+      "name",
+      "workspaceDeletionConfirmation",
+    );
     await confirmation.fill(workspace.summary.name);
     const confirmDelete = deleteDialog.getByRole("button", {
       name: "Delete server workspace",
@@ -2729,6 +2744,10 @@ test(
     );
     const confirmation = deletionDialog.getByRole("textbox");
     await expect(confirmation).toBeFocused();
+    await expect(confirmation).toHaveAttribute(
+      "name",
+      "workspaceDeletionConfirmation",
+    );
     const confirmDelete = deletionDialog.getByRole("button", {
       name: "Delete server workspace",
     });

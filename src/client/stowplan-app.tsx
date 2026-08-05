@@ -273,6 +273,7 @@ const ITEM_MODAL_HISTORY_STATE = Object.freeze({
 const DISMISS_FEEDBACK_EVENT = "stowplan:feedback-dismiss";
 const DEMO_ENTRY_FOCUS_DELAY_MS = 100;
 const FEEDBACK_EVENT = "stowplan:feedback";
+const ITEM_EDITOR_FOCUS_RESTORE_FRAMES = 3;
 const SEARCH_BLOCKED_EVENT = "stowplan:search-blocked";
 const REORDER_DROP_MIDPOINT = 0.5;
 const TOUCH_TAP_DISTANCE_PX = 8;
@@ -659,6 +660,42 @@ function readDrag(event: React.DragEvent): DragPayload | null {
 function splitList(value: FormDataEntryValue | null): string[] {
   return String(value ?? "").split(",").map((part) => part.trim()).filter(Boolean);
 }
+type UncontrolledFormValue = boolean | string;
+type UncontrolledFormValues = Readonly<Record<string, UncontrolledFormValue>>;
+function reconcileUntouchedFormControls(
+  form: HTMLFormElement | null,
+  previous: UncontrolledFormValues,
+  next: UncontrolledFormValues,
+): void {
+  if (!form) return;
+  for (const [name, nextValue] of Object.entries(next)) {
+    const control = form.elements.namedItem(name);
+    if (
+      !(control instanceof HTMLInputElement) &&
+      !(control instanceof HTMLSelectElement) &&
+      !(control instanceof HTMLTextAreaElement)
+    ) {
+      continue;
+    }
+    const previousValue = previous[name];
+    if (
+      control instanceof HTMLInputElement &&
+      (control.type === "checkbox" || control.type === "radio") &&
+      typeof previousValue === "boolean" &&
+      typeof nextValue === "boolean"
+    ) {
+      if (control.checked === previousValue) control.checked = nextValue;
+      continue;
+    }
+    if (
+      typeof previousValue === "string" &&
+      typeof nextValue === "string" &&
+      control.value === previousValue
+    ) {
+      control.value = nextValue;
+    }
+  }
+}
 function optionalDimensions(data: FormData): Dimensions | null {
   const raw = ["width", "height", "depth"].map((field) =>
     String(data.get(field) ?? "").trim()
@@ -676,6 +713,48 @@ function optionalDimensions(data: FormData): Dimensions | null {
   const unit = String(data.get("dimensionUnit"));
   if (unit !== "cm" && unit !== "in") throw new Error("Choose a valid dimension unit.");
   return { depth, height, unit, width };
+}
+
+function locationFormValues(location: Location): UncontrolledFormValues {
+  return {
+    code: location.code,
+    dark: location.conditions.dark,
+    depth: String(location.dimensions?.depth ?? ""),
+    description: location.description,
+    dimensionUnit: location.dimensions?.unit ?? "in",
+    dry: location.conditions.dry,
+    foodSafe: location.conditions.foodSafe,
+    height: String(location.dimensions?.height ?? ""),
+    humidity: location.conditions.humidity,
+    kind: location.kind,
+    name: location.name,
+    parentId: location.parentId ?? "",
+    tags: location.tags.join(", "),
+    temperature: location.conditions.temperature,
+    width: String(location.dimensions?.width ?? ""),
+  };
+}
+
+function itemFormValues(item: ItemRecord): UncontrolledFormValues {
+  return {
+    avoidHumidity: item.constraints.avoidHumidity,
+    avoidWarmth: item.constraints.avoidWarmth,
+    category: item.category,
+    depth: String(item.dimensions?.depth ?? ""),
+    description: item.description,
+    dimensionUnit: item.dimensions?.unit ?? "in",
+    foodOnly: item.constraints.foodOnly,
+    frequency: item.frequency,
+    height: String(item.dimensions?.height ?? ""),
+    keepTogether: item.constraints.keepTogether ?? "",
+    moveQuantity: String(item.quantity),
+    name: item.name,
+    quantity: String(item.quantity),
+    requiredTags: item.constraints.requiredTags.join(", "),
+    tags: item.tags.join(", "),
+    unit: item.unit,
+    width: String(item.dimensions?.width ?? ""),
+  };
 }
 function formatTimestamp(value: string | null): string {
   if (!value) return "Never";
@@ -1219,6 +1298,7 @@ function LocationCreateFields({
         required
         name="code"
         aria-label="Short ID"
+        autoComplete="off"
         placeholder="Suggested Short ID"
         autoCapitalize="characters"
         onInput={(event) => {
@@ -1238,6 +1318,7 @@ function LocationCreateFields({
       required
       name="name"
       aria-label="Friendly name"
+      autoComplete="off"
       placeholder={namePlaceholder}
       onInput={update}
     />
@@ -2225,7 +2306,7 @@ function Application({
         <span>{syncStatus.label}</span>
       </a>
     </aside>
-    <main>
+    <main tabIndex={-1}>
       <header>
         <div>
           <p className="eyebrow">{state.workspace.name}</p>
@@ -2237,7 +2318,8 @@ function Application({
         </div>
         <div className="header-actions">
           <button
-            aria-label="Search and jump, Command or Control K"
+            aria-keyshortcuts="Control+K Meta+K"
+            aria-label="Search ⌘ / Ctrl K and jump"
             className="jump-trigger"
             onClick={() => setJumpPaletteOpen(true)}
           >
@@ -3108,7 +3190,7 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
     : hasNestedSpaces
       ? `${countLabel(nested.length, "nested space")} ${nested.length === 1 ? "is" : "are"} already recorded here. Add a direct item, or mark this space counted.`
       : "Add an item, or mark this space known empty.";
-  const queuePanel = <section className="panel queue"><div className="title"><div><p className="eyebrow">First-pass coverage</p><h2>{done} of {live.length} checked</h2></div><b>{live.length - done} left</b></div><div className="progress"><i style={{ width: `${live.length ? done / live.length * 100 : 0}%` }} /></div>{live.length > 5 && <label className="queue-search"><Search /><input aria-label="Find container" value={queueQuery} onChange={(event) => setQueueQuery(event.target.value)} placeholder="Jump by code or name" /></label>}{live.length > 0 && <p className="capture-order-help">Drag onto the top, middle, or bottom of a row to place before, move inside, or place after. Use Move for a precise destination.</p>}<div className="capture-tree" role="list" aria-label="Container hierarchy" data-dragging={hierarchyDragging || nativeReorderSource?.type === "location" ? "true" : undefined}>
+  const queuePanel = <section className="panel queue"><div className="title"><div><p className="eyebrow">First-pass coverage</p><h2>{done} of {live.length} checked</h2></div><b>{live.length - done} left</b></div><div className="progress"><i style={{ width: `${live.length ? done / live.length * 100 : 0}%` }} /></div>{live.length > 5 && <label className="queue-search"><Search /><input aria-label="Find container" autoComplete="off" name="containerQuery" value={queueQuery} onChange={(event) => setQueueQuery(event.target.value)} placeholder="Jump by code or name" /></label>}{live.length > 0 && <p className="capture-order-help">Drag onto the top, middle, or bottom of a row to place before, move inside, or place after. Use Move for a precise destination.</p>}<div className="capture-tree" role="list" aria-label="Container hierarchy" data-dragging={hierarchyDragging || nativeReorderSource?.type === "location" ? "true" : undefined}>
     <div
       className="capture-root-drop"
       data-drop-target="root"
@@ -3304,7 +3386,7 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
         </div>
       </details>
     : null;
-  const capturePanel = <section className="panel capture-card" ref={editor} tabIndex={-1} aria-label={current ? `Capture inside ${current.name}` : "Capture editor"}>{current ? <><nav className="breadcrumbs" aria-label="Current container path">{breadcrumbs.map((location, index) => <span key={location.id}>{index > 0 && <i aria-hidden>›</i>}<button onClick={() => selectCaptureLocation(location.id)}>{location.code}</button></span>)}</nav><div className="title"><div><p className="eyebrow">Inside this container</p><h2>{current.code} · {current.name}</h2></div><span className="tag capture-status" data-status={current.captureStatus}><CaptureStatusIcon /><span>{current.captureStatus.replace("_", " ")}</span></span></div>{demoIntroPanel}{nextUncounted && <button className="capture-next-location" type="button" aria-label={`Open next unfinished location without changing ${current.name}: ${nextUncounted.code}, ${nextUncounted.name}`} onClick={() => selectCaptureLocation(nextUncounted.id)}><span>Next unfinished</span><strong>{nextUncounted.code} · {nextUncounted.name}</strong></button>}{captureComplete ? <div className="capture-locked" role="status"><CheckCircle2 /><span><strong>Capture is complete</strong><small>Reopen this space before adding, editing, or reordering its contents.</small></span></div> : <form key={current.id} className="quick" onSubmit={(event) => submitForm(event, addItem, true, '[name="name"]')}>
+  const capturePanel = <section className="panel capture-card" ref={editor} tabIndex={-1} aria-label={current ? `Capture inside ${current.name}` : "Capture editor"}>{current ? <><nav className="breadcrumbs" aria-label="Current container path">{breadcrumbs.map((location, index) => <span key={location.id}>{index > 0 && <i aria-hidden>›</i>}<button onClick={() => selectCaptureLocation(location.id)}>{location.code}</button></span>)}</nav><div className="title"><div><p className="eyebrow">Inside this container</p><h2>{current.code} · {current.name}</h2></div><span className="tag capture-status" data-status={current.captureStatus}><CaptureStatusIcon /><span>{current.captureStatus.replace("_", " ")}</span></span></div>{demoIntroPanel}{nextUncounted && <button className="capture-next-location" type="button" onClick={() => selectCaptureLocation(nextUncounted.id)}><span>Next unfinished</span><strong>{nextUncounted.code} · {nextUncounted.name}</strong><span className="sr-only">Open without changing {current.name}</span></button>}{captureComplete ? <div className="capture-locked" role="status"><CheckCircle2 /><span><strong>Capture is complete</strong><small>Reopen this space before adding, editing, or reordering its contents.</small></span></div> : <form key={current.id} className="quick" onSubmit={(event) => submitForm(event, addItem, true, '[name="name"]')}>
       <div className="quick-primary">
         <label className="grow">What is it?<input required name="name" placeholder="e.g. winter gloves" /></label>
         <label>Qty<input required type="number" min="0.01" step="any" name="quantity" defaultValue={DEFAULT_ITEM_QUANTITY} /></label>
@@ -4168,6 +4250,14 @@ function LocationMoveDialog({
 
 function LocationEditor({ state, location, commit, select, reorder, remove, editItem, moveByDrop, requestHierarchyChange, setDragging, startNativeDrag, endNativeDrag }: { state: WorkspaceState; location: Location; commit: Commit; select: (id: string) => void; reorder: (location: Location, direction: -1 | 1) => void; remove: () => void; editItem: (id: string) => void; moveByDrop: (payload: DragPayload, target: DropTarget) => void; requestHierarchyChange: (command: LocationHierarchyCommand, trigger?: HTMLElement | null) => Promise<boolean>; setDragging: (dragging: boolean) => void; startNativeDrag: (event: React.DragEvent, payload: DragPayload) => void; endNativeDrag: () => void }) {
   const hierarchyChangeTrigger = useRef<HTMLElement | null>(null);
+  const editorForm = useRef<HTMLFormElement | null>(null);
+  const formBaseline = useRef(locationFormValues(location));
+  useLayoutEffect(() => {
+    const previous = formBaseline.current;
+    const next = locationFormValues(location);
+    formBaseline.current = next;
+    reconcileUntouchedFormControls(editorForm.current, previous, next);
+  }, [location]);
   const invalidParents = new Set([location.id, ...descendantIds(state, location.id)]);
   const contents = sortItems(state.items.filter((item) => item.locationId === location.id && !item.archivedAt));
   const liveDescendantCount = descendantIds(state, location.id).filter(
@@ -4217,6 +4307,7 @@ function LocationEditor({ state, location, commit, select, reorder, remove, edit
   });
   return <>
     <form
+      ref={editorForm}
       onSubmit={(event) => {
         hierarchyChangeTrigger.current =
           event.currentTarget.querySelector<HTMLButtonElement>(
@@ -4580,9 +4671,7 @@ function Inventory({ state, commit, editing, editFocus, locationFilter, onEditin
     const rowActionLabel = itemCaptureComplete
       ? "Review, reopen to edit"
       : "Edit / move";
-    const rowActionDescription = itemCaptureComplete
-      ? `Review ${actionIdentity} in ${itemLocationPath}; reopen to edit`
-      : `Edit or move ${actionIdentity} in ${itemLocationPath}`;
+    const rowActionContext = `for ${actionIdentity} in ${itemLocationPath}`;
     const validDrop = nativeReorderSource?.type === "item"
       ? canDropItem(nativeReorderSource.id, item.id)
       : null;
@@ -4611,12 +4700,13 @@ function Inventory({ state, commit, editing, editFocus, locationFilter, onEditin
         const target = reorderTargetAt(clientX, clientY, "item");
         return target?.id && canDropItem(item.id, target.id) ? target : null;
       }} onDrop={(target) => moveItemByDrop({ type: "item", id: item.id }, target)} onInvalidDrop={() => showFeedback(`Choose a different destination for ${item.name}`)} />}
-      <label className="inventory-select"><input aria-label={`Select ${actionIdentity} in ${itemLocationPath}`} type="checkbox" checked={activeSelection.includes(item.id)} onChange={() => setSelected((current) => { const valid = current.filter((id) => shownIds.has(id)); return valid.includes(item.id) ? valid.filter((id) => id !== item.id) : [...valid, item.id]; })} /></label>
-      <button className="item-name" aria-label={`Open ${actionIdentity} in ${itemLocationPath}`} onClick={() => onEditingChange(item.id)}>
+      <label className="inventory-select"><input aria-label={`Select ${actionIdentity} in ${itemLocationPath}`} name="selectedItem" type="checkbox" value={item.id} checked={activeSelection.includes(item.id)} onChange={() => setSelected((current) => { const valid = current.filter((id) => shownIds.has(id)); return valid.includes(item.id) ? valid.filter((id) => id !== item.id) : [...valid, item.id]; })} /></label>
+      <button className="item-name" onClick={() => onEditingChange(item.id)}>
         <strong>{item.name}</strong>
         <small className="inventory-mobile-location"><MapIcon aria-hidden="true" /><span>{itemLocationShortLabel}</span></small>
         {item.description && <small className="item-description-preview">{item.description}</small>}
         <small>{item.category} · {item.frequency} · {item.tags.join(", ") || "no tags"}</small>
+        <span className="sr-only">, {item.quantity} {item.unit}, Open item details in {itemLocationPath}</span>
       </button>
       <b>{item.quantity} {item.unit}</b>
       {itemLocation
@@ -4637,7 +4727,7 @@ function Inventory({ state, commit, editing, editFocus, locationFilter, onEditin
         : <span className="location-path">{itemLocationPath}</span>}
       {canReorder && <span className="inventory-order-actions"><button type="button" className="icon small" aria-label={`Move ${actionIdentity} up`} disabled={siblingIndex === 0} onClick={() => reorderItem(item, -1)}><ArrowUp /></button><button type="button" className="icon small" aria-label={`Move ${actionIdentity} down`} disabled={siblingIndex === siblings.length - 1} onClick={() => reorderItem(item, 1)}><ArrowDown /></button></span>}
       <span className="reorder-drop-copy" aria-hidden>{cue === "before" ? "Place before" : cue === "after" ? "Place after" : ""}</span>
-      <button className="row-action" aria-label={rowActionDescription} onClick={() => onEditingChange(item.id)}><Edit3 /><span>{rowActionLabel}</span></button>
+      <button className="row-action" onClick={() => onEditingChange(item.id)}><Edit3 /><span>{rowActionLabel}</span><span className="sr-only">{rowActionContext}</span></button>
     </div>;
   };
   return <div className="content inventory-page">
@@ -4650,12 +4740,12 @@ function Inventory({ state, commit, editing, editFocus, locationFilter, onEditin
       <b>{shown.length} records</b>
     </div>
     <div className="toolbar inventory-tools">
-      <label className="search"><Search /><input aria-label="Search inventory" value={query} onChange={(event) => { setQuery(event.target.value); setSelected([]); setMoveDestinationId(""); }} placeholder="Search names, descriptions, categories, tags, and requirements" /></label>
-      <select aria-label="Filter by location" value={locationFilter} onChange={(event) => { onLocationFilterChange(event.target.value); setSelected([]); setMoveDestinationId(""); }}>
+      <label className="search"><Search /><input aria-label="Search inventory" autoComplete="off" name="inventoryQuery" value={query} onChange={(event) => { setQuery(event.target.value); setSelected([]); setMoveDestinationId(""); }} placeholder="Search names, descriptions, categories, tags, and requirements" /></label>
+      <select aria-label="Filter by location" name="inventoryLocation" value={locationFilter} onChange={(event) => { onLocationFilterChange(event.target.value); setSelected([]); setMoveDestinationId(""); }}>
         <option value="">Every container</option>
         {locationOptions.map(({ depth, location }) => <option key={location.id} value={location.id}>{`${"  ".repeat(depth)}${depth ? "↳ " : ""}${location.code} · ${location.name}`}</option>)}
       </select>
-      <select aria-label="Sort inventory" value={sortBy} onChange={(event) => setSortBy(event.target.value as typeof sortBy)} disabled={canReorder}>
+      <select aria-label="Sort inventory" name="inventorySort" value={sortBy} onChange={(event) => setSortBy(event.target.value as typeof sortBy)} disabled={canReorder}>
         <option value="name">Sort: name</option>
         <option value="location">Sort: location</option>
         <option value="quantity">Sort: quantity</option>
@@ -4666,11 +4756,11 @@ function Inventory({ state, commit, editing, editFocus, locationFilter, onEditin
       <span><strong>{filteredLocation.name} is read-only</strong><small>Reopen capture before editing, moving, or reordering its item records.</small></span>
       <button type="button" onClick={reopenFilteredCapture}><RotateCcw /> Reopen capture</button>
     </div>}
-    <p className="drag-hint">{filteredCaptureComplete ? "This completed container is available for review. Reopen capture to change its records." : canReorder ? `Showing one container. Drag handles or arrow buttons reorder ${shown.length} records here; use Edit / move to change containers.` : locationFilter && query.trim() ? "Search results are sorted for review. Clear the search before changing physical order." : "Showing the containerless inventory. Select one or more records to move them, or use Edit / move for details and partial quantities."}</p>
+    <p className="drag-hint">{filteredCaptureComplete ? "This completed container is available for review. Reopen capture to change its records." : canReorder ? `Showing one container. Drag handles or arrow buttons reorder ${shown.length} records here; use Edit / move to change containers.` : locationFilter && query.trim() ? "Search results are sorted for review. Clear the search before changing physical order." : "Showing all inventory. Select one or more records to move them, or use Edit / move for details and partial quantities."}</p>
     <section className="panel inventory">{shown.map(inventoryRow)}{shown.length === 0 && <Empty title="No matching records" text="Clear a filter or capture something new." />}</section>
     {activeSelection.length > 0 && <div className="floating">
       <b>{activeSelection.length} selected</b>
-      <select aria-label="Move selected items" value={moveDestinationId} onChange={(event) => { if (event.target.value) moveSelected(event.target.value); else setMoveDestinationId(""); }}>
+      <select aria-label="Move selected items" name="bulkMoveDestination" value={moveDestinationId} onChange={(event) => { if (event.target.value) moveSelected(event.target.value); else setMoveDestinationId(""); }}>
         <option value="">Move to…</option>
         {locationOptions.map(({ depth, location }) => <option disabled={selectedItems.length > 0 && selectedItems.every((item) => item.locationId === location.id)} value={location.id} key={location.id}>{`${"  ".repeat(depth)}${depth ? "↳ " : ""}${location.code} · ${location.name}`}</option>)}
       </select>
@@ -4728,6 +4818,12 @@ function ItemEditor({ item, state, commit, close, focus }: { item: ItemRecord; s
     null,
   );
   const dialog = useRef<HTMLElement | null>(null);
+  const itemForm = useRef<HTMLFormElement | null>(null);
+  const moveForm = useRef<HTMLFormElement | null>(null);
+  const formBaseline = useRef({
+    id: item.id,
+    values: itemFormValues(item),
+  });
   const closeRef = useRef(close);
   const initialFocus = useRef(focus);
   const recertificationPrompt = useRef<HTMLElement | null>(null);
@@ -4750,6 +4846,18 @@ function ItemEditor({ item, state, commit, close, focus }: { item: ItemRecord; s
     item.frequency !== DEFAULT_ITEM_FREQUENCY ||
     item.tags.length > 0 ||
     item.unit !== DEFAULT_ITEM_UNIT;
+  useLayoutEffect(() => {
+    const previous = formBaseline.current;
+    const next = itemFormValues(item);
+    formBaseline.current = { id: item.id, values: next };
+    if (previous.id !== item.id) {
+      itemForm.current?.reset();
+      moveForm.current?.reset();
+      return;
+    }
+    reconcileUntouchedFormControls(itemForm.current, previous.values, next);
+    reconcileUntouchedFormControls(moveForm.current, previous.values, next);
+  }, [item]);
   useEffect(() => { closeRef.current = close; }, [close]);
   useEffect(() => {
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -4809,7 +4917,24 @@ function ItemEditor({ item, state, commit, close, focus }: { item: ItemRecord; s
       cancelAnimationFrame(frame);
       removeEventListener("keydown", keyboard);
       document.body.style.overflow = previousBodyOverflow;
-      if (previous?.isConnected) previous.focus();
+      setTimeout(() => {
+        let remainingFrames = ITEM_EDITOR_FOCUS_RESTORE_FRAMES;
+        const restoreFocus = () => {
+          if (remainingFrames > 0) {
+            remainingFrames -= 1;
+            requestAnimationFrame(restoreFocus);
+            return;
+          }
+          if (document.querySelector("[aria-modal='true'][role='dialog']")) {
+            return;
+          }
+          const focusTarget = previous?.isConnected
+            ? previous
+            : document.querySelector<HTMLElement>("main");
+          focusTarget?.focus({ preventScroll: true });
+        };
+        requestAnimationFrame(restoreFocus);
+      }, 0);
     };
   }, [captureComplete]);
   useEffect(() => {
@@ -4939,6 +5064,7 @@ function ItemEditor({ item, state, commit, close, focus }: { item: ItemRecord; s
       </div>
       <div className="item-editor-layout">
         <form
+          ref={itemForm}
           onSubmit={(event) => submitForm(event, save, false)}
           className="item-editor-form"
         >
@@ -4953,7 +5079,12 @@ function ItemEditor({ item, state, commit, close, focus }: { item: ItemRecord; s
             <div className="item-core-grid">
               <label className="item-name-field">
                 Item name
-                <input required name="name" defaultValue={item.name} />
+                <input
+                  autoComplete="off"
+                  required
+                  name="name"
+                  defaultValue={item.name}
+                />
               </label>
               <label>
                 Quantity
@@ -5106,6 +5237,7 @@ function ItemEditor({ item, state, commit, close, focus }: { item: ItemRecord; s
         </form>
         <aside className="item-editor-rail">
           <form
+            ref={moveForm}
             onSubmit={(event) => submitForm(event, move, false)}
             className="move-card"
           >
@@ -5450,7 +5582,7 @@ function Planner({ state, commit, openGuidanceTarget }: { state: WorkspaceState;
       </div>
       <details className="plan-settings">
         <summary>Plan priorities</summary>
-        <label>Plan name<input value={name} onChange={(event) => setName(event.target.value)} /></label>
+        <label>Plan name<input autoComplete="off" name="planName" value={name} onChange={(event) => setName(event.target.value)} /></label>
         {(Object.keys(weights) as (keyof PlanWeights)[]).map((key) => {
           const help = planPriorityHelp[key];
           const tooltipId = `priority-${key}-help`;
@@ -5542,6 +5674,25 @@ function History({ state, commit }: { state: WorkspaceState; commit: Commit }) {
   />;
 }
 function Preferences({ state, commit, theme, setTheme, openMenu, returnTo, serverBacked }: { state: WorkspaceState; commit: Commit; theme: ThemePreference; setTheme: (theme: ThemePreference) => void; openMenu: () => void; returnTo: string; serverBacked: boolean }) {
+  const workspaceNameBaseline = useRef({
+    id: state.workspace.id,
+    name: state.workspace.name,
+  });
+  const [workspaceNameDraft, setWorkspaceNameDraft] = useState(
+    state.workspace.name,
+  );
+  useEffect(() => {
+    const previous = workspaceNameBaseline.current;
+    workspaceNameBaseline.current = {
+      id: state.workspace.id,
+      name: state.workspace.name,
+    };
+    setWorkspaceNameDraft((current) =>
+      previous.id !== state.workspace.id || current === previous.name
+        ? state.workspace.name
+        : current
+    );
+  }, [state.workspace.id, state.workspace.name]);
   const download = () => {
     let url: string | null = null;
     try {
@@ -5565,7 +5716,7 @@ function Preferences({ state, commit, theme, setTheme, openMenu, returnTo, serve
       if (url) URL.revokeObjectURL(url);
     }
   };
-  return <div className="content settings"><section className="panel"><h2>Workspace</h2><form className="workspace-rename" onSubmit={(event) => submitForm(event, (data) => perform(commit, { type: "workspace.rename", name: String(data.get("workspaceName")) }), false)}><label>Workspace name<input required maxLength={80} name="workspaceName" defaultValue={state.workspace.name} /></label><button>Rename workspace</button></form><p className="muted">Switch workspaces, inspect backup status, or manage device copies.</p><a className="settings-workspaces-link" href={WORKSPACE_LIST_PATH} onClick={(event) => followAppLink(event, openMenu)}><Home /> Workspaces and backup status</a>{serverBacked && <a href={workspacePath({ view: "access", workspaceId: state.workspace.id, workspaceLabel: state.workspace.name })}>Workspace access</a>}<h2>Appearance</h2><div className="segments">{(["system", "light", "dark"] as const).map((entry) => <button aria-pressed={theme === entry} data-active={theme === entry} key={entry} onClick={() => setTheme(entry)}>{entry}</button>)}</div><h2>Backup & recovery</h2><p className="muted">Export a complete portable snapshot. Imports are validated and previewed before replacement.</p><button onClick={download}>Export JSON backup</button><a href="/recovery">Review sync issues or restore a backup</a><a href="/labels">Print text and QR labels</a></section><section className="panel"><h2>Account & server backup</h2><a href={`/account?workspace=${encodeURIComponent(state.workspace.id)}&returnTo=${encodeURIComponent(returnTo)}`}>Sign in or review this account</a><h2>Help & source</h2><a target="_blank" rel="noreferrer" href={USER_GUIDE_URL}>Open full user guide</a><a href="/docs/">Read the offline quick guide</a><a target="_blank" rel="noreferrer" href={SOURCE_REPOSITORY_URL}>View source repository</a><p className="license">A Strange Lasers project<br />AGPL-3.0-only<br />Copyright © 2026 James Klein (j-256)</p></section></div>;
+  return <div className="content settings"><section className="panel"><h2>Workspace</h2><form className="workspace-rename" onSubmit={(event) => submitForm(event, (data) => perform(commit, { type: "workspace.rename", name: String(data.get("workspaceName")) }), false)}><label>Workspace name<input required maxLength={80} name="workspaceName" value={workspaceNameDraft} onChange={(event) => setWorkspaceNameDraft(event.currentTarget.value)} /></label><button>Rename workspace</button></form><p className="muted">Switch workspaces, inspect backup status, or manage device copies.</p><a className="settings-workspaces-link" href={WORKSPACE_LIST_PATH} onClick={(event) => followAppLink(event, openMenu)}><Home /> Workspaces and backup status</a>{serverBacked && <a href={workspacePath({ view: "access", workspaceId: state.workspace.id, workspaceLabel: state.workspace.name })}>Workspace access</a>}<h2>Appearance</h2><div className="segments">{(["system", "light", "dark"] as const).map((entry) => <button aria-pressed={theme === entry} data-active={theme === entry} key={entry} onClick={() => setTheme(entry)}>{entry}</button>)}</div><h2>Backup & recovery</h2><p className="muted">Export a complete portable snapshot. Imports are validated and previewed before replacement.</p><button onClick={download}>Export JSON backup</button><a href="/recovery">Review sync issues or restore a backup</a><a href="/labels">Print text and QR labels</a></section><section className="panel"><h2>Account & server backup</h2><a href={`/account?workspace=${encodeURIComponent(state.workspace.id)}&returnTo=${encodeURIComponent(returnTo)}`}>Sign in or review this account</a><h2>Help & source</h2><a target="_blank" rel="noreferrer" href={USER_GUIDE_URL}>Open full user guide</a><a href="/docs/">Read the offline quick guide</a><a target="_blank" rel="noreferrer" href={SOURCE_REPOSITORY_URL}>View source repository</a><p className="license">A Strange Lasers project<br />AGPL-3.0-only<br />Copyright © 2026 James Klein (j-256)</p></section></div>;
 }
 function Empty({ title, text }: { title: string; text: string }) {
   return <div className="empty"><b>□</b><h3>{title}</h3><p>{text}</p></div>;

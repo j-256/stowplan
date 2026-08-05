@@ -14,6 +14,8 @@ Save either file somewhere outside the browser or device whose data you are prot
 
 Open **Settings → Review sync issues or restore a backup**. The screen lists waiting and refused changes with the time and server message.
 
+If the browser refuses to open site storage, Recovery shows a blocking alert and does not offer export, reset, or restore actions. Do not clear site data as a troubleshooting step. Correct the browser or private-browsing restriction and reload Recovery so Stowplan can read the device copy before offering any action.
+
 Before changing anything, choose **Export full recovery bundle** and confirm that you saved the file. If your account can still read the online workspace, choose **Load authorized server copy** to compare without changing either copy.
 
 If your role permits edits, choose one of these guarded paths:

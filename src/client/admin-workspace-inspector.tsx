@@ -573,6 +573,7 @@ export function AdminWorkspaceInspector({
           autoComplete="off"
           data-dialog-initial-focus
           disabled={busy}
+          name="workspaceDeletionConfirmation"
           onChange={event => setConfirmationName(event.target.value)}
           value={confirmationName}
         />

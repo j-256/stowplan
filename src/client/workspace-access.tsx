@@ -1171,9 +1171,11 @@ function WorkspaceAccessContent({
               <label>
                 <span>Invitation expires after hours</span>
                 <input
+                  autoComplete="off"
                   inputMode="numeric"
                   max={GUEST_LINK_EXPIRY_HOURS.maximum}
                   min={GUEST_LINK_EXPIRY_HOURS.minimum}
+                  name="guestExpiryHours"
                   onChange={(event) =>
                     setGuestExpiry(event.currentTarget.value)}
                   required
@@ -1200,6 +1202,7 @@ function WorkspaceAccessContent({
               <span>Invite link status</span>
               <select
                 disabled={busyKey === "guest-filter"}
+                name="guestStatus"
                 onChange={(event) => {
                   const status = event.currentTarget.value;
                   void filterGuestLinks(
@@ -1294,7 +1297,9 @@ function WorkspaceAccessContent({
               <label>
                 <span>Search members</span>
                 <input
+                  autoComplete="off"
                   maxLength={120}
+                  name="memberQuery"
                   onChange={(event) =>
                     setMemberQuery(event.currentTarget.value)}
                   type="search"
@@ -1334,6 +1339,7 @@ function WorkspaceAccessContent({
                         : undefined}
                       disabled={ownMembership ||
                         busyKey === `member-role:${member.userId}`}
+                      name="memberRole"
                       onChange={(event) => {
                         const role = event.currentTarget.value as WorkspaceRole;
                         if (role !== member.role) {
@@ -1588,7 +1594,9 @@ function WorkspaceAccessContent({
           <label className={styles.oneTimeUrl}>
             <span>Single-use enrollment URL</span>
             <input
+              autoComplete="off"
               data-dialog-initial-focus
+              name="inviteUrl"
               onFocus={(event) => event.currentTarget.select()}
               readOnly
               value={oneTimeLink.oneTimeUrl}
@@ -1664,6 +1672,7 @@ function WorkspaceAccessContent({
         <input
           autoComplete="off"
           data-dialog-initial-focus
+          name="workspaceDeletionConfirmation"
           onChange={(event) =>
             setDeleteConfirmation(event.currentTarget.value)}
           value={deleteConfirmation}

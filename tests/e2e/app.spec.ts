@@ -13,11 +13,17 @@ const MAX_FACING_CONTENT_GAP = 54;
 const MAX_PANEL_GUTTER = 16;
 const MAX_PANEL_PADDING = 18;
 const MAX_PANEL_SHELL_PADDING = 22;
+const MIN_POINTER_TARGET_SIZE = 24;
 const MIN_RESIZE_TARGET = 32;
 const AUTO_COMPACT_SIDEBAR_MAX_WIDTH = 1160;
 const COMPACT_SIDEBAR_WIDTH = 80;
 const EXPANDED_SIDEBAR_WIDTH = 248;
 const MAX_COMPACT_INVENTORY_ROW_HEIGHT = 72;
+const MAX_GOOD_CUMULATIVE_LAYOUT_SHIFT = 0.1;
+const MAX_LAYOUT_GEOMETRY_DRIFT = 1;
+const NO_CSS_TRANSITION_DURATION = "0s";
+const COLOR_CONTRAST_RULE = "color-contrast";
+const LABEL_CONTENT_NAME_RULE = "label-content-name-mismatch";
 const MOCK_ACCOUNT_ID = "user_test";
 const MOCK_ACCOUNT_HEADERS = Object.freeze({
   "x-stowplan-account-id": MOCK_ACCOUNT_ID,
@@ -29,6 +35,41 @@ const MOCK_OWNER_CAPABILITIES = Object.freeze({
   read: true,
   write: true,
 });
+const STANDALONE_PAGE_TITLES = Object.freeze({
+  "/account": "Account",
+  "/admin": "Administration",
+  "/docs": "Quick guide",
+  "/labels": "Printable labels",
+  "/offline": "Offline",
+  "/recovery": "Recovery",
+});
+const OFFLINE_UTILITY_ROUTES = Object.freeze([
+  {
+    cachePath: "/docs",
+    heading: "Stowplan quick guide",
+    paths: ["/docs", "/docs/"],
+  },
+  {
+    cachePath: "/labels",
+    heading: "Print container labels",
+    paths: ["/labels", "/labels/"],
+  },
+  {
+    cachePath: "/recovery",
+    heading: "Sync & recovery",
+    paths: ["/recovery", "/recovery/"],
+  },
+  {
+    cachePath: "/offline",
+    heading: "Stowplan still works.",
+    paths: ["/offline", "/offline/"],
+  },
+  {
+    cachePath: "/privacy",
+    heading: "Privacy policy",
+    paths: ["/privacy", "/privacy/"],
+  },
+]);
 
 function mockOwnerSyncResponse(
   state: {
@@ -99,6 +140,31 @@ async function localReplica(page: Page) {
   } finally {
     await handle.dispose();
   }
+}
+
+async function expectVisibleLabelsInAccessibleNames(
+  page: Page,
+): Promise<void> {
+  const results = await new AxeBuilder({ page })
+    .options({
+      rules: {
+        [LABEL_CONTENT_NAME_RULE]: { enabled: true },
+      },
+    })
+    .withRules([LABEL_CONTENT_NAME_RULE])
+    .analyze();
+  expect(results.violations).toEqual([]);
+}
+
+async function expectFormControlsIdentified(page: Page): Promise<void> {
+  const unidentified = await page.locator([
+    "input:not([id]):not([name])",
+    "select:not([id]):not([name])",
+    "textarea:not([id]):not([name])",
+  ].join(", ")).evaluateAll((controls) =>
+    controls.map((control) => control.outerHTML)
+  );
+  expect(unidentified).toEqual([]);
 }
 
 async function expectCompactPanelSpacing(panel: Locator): Promise<void> {
@@ -415,6 +481,40 @@ test("uses one application name in invitation titles", async ({ page }) => {
   await expect(page).toHaveTitle(
     "Accept workspace invitation · Stowplan",
   );
+});
+
+test("names standalone utility pages", async ({ page }, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "desktop-chromium",
+    "One desktop project covers static page metadata",
+  );
+  for (const [path, title] of Object.entries(STANDALONE_PAGE_TITLES)) {
+    await page.goto(path);
+    await expect(page).toHaveTitle(`${title} · Stowplan`);
+  }
+});
+
+test("keeps printable label metadata readable in dark mode", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "desktop-chromium",
+    "One desktop project covers printable label contrast",
+  );
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
+  await expect.poll(async () => {
+    const replica = await localReplica(page) as {
+      state: { locations: unknown[] };
+    };
+    return replica.state.locations.length;
+  }).toBeGreaterThan(0);
+  await page.goto("/labels");
+  await expect(page.locator(".label-sheet article").first()).toBeVisible();
+  const results = await new AxeBuilder({ page })
+    .withRules([COLOR_CONTRAST_RULE])
+    .analyze();
+  expect(results.violations).toEqual([]);
 });
 
 test("explains the offered editor role before invitation acceptance", async ({
@@ -809,6 +909,162 @@ test("closes item routes without duplicating Inventory history", async ({
   await expect(page).toHaveURL(captureUrl);
 });
 
+test("reconciles device-only editor changes across open tabs", async ({
+  context,
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "desktop-chromium",
+    "One desktop project covers device-only cross-tab reconciliation",
+  );
+  await page.getByRole("button", {
+    name: "Open kitchen demo",
+  }).click();
+  await page.locator(".nav:visible", { hasText: "Settings" }).click();
+  const settingsUrl = page.url();
+  const firstName = `First tab ${Date.now()}`;
+  const secondName = `Second tab ${Date.now()}`;
+  const thirdName = `Third tab ${Date.now()}`;
+  const unsavedDraft = `Unsaved draft ${Date.now()}`;
+  const firstInput = page.getByLabel("Workspace name");
+
+  const secondTab = await context.newPage();
+  try {
+    await secondTab.goto(settingsUrl);
+    const secondInput = secondTab.getByLabel("Workspace name");
+    await expect(secondInput).toHaveValue("Kitchen reset");
+
+    await firstInput.fill(firstName);
+    await page.getByRole("button", { name: "Rename workspace" }).click();
+    await expect(secondInput).toHaveValue(firstName);
+
+    await secondInput.fill(secondName);
+    await secondTab.getByRole("button", {
+      name: "Rename workspace",
+    }).click();
+    await expect(firstInput).toHaveValue(secondName);
+    await expect.poll(async () => {
+      const replica = await localReplica(page) as {
+        state: { workspace: { name: string } };
+      };
+      return replica.state.workspace.name;
+    }).toBe(secondName);
+
+    await firstInput.fill(unsavedDraft);
+    await secondInput.fill(thirdName);
+    await secondTab.getByRole("button", {
+      name: "Rename workspace",
+    }).click();
+    await expect(firstInput).toHaveValue(unsavedDraft);
+    await expect(page.getByText(thirdName, { exact: true })).toBeVisible();
+    await expect.poll(async () => {
+      const replica = await localReplica(page) as {
+        state: { workspace: { name: string } };
+      };
+      return replica.state.workspace.name;
+    }).toBe(thirdName);
+
+    await page.locator(".nav:visible", { hasText: "Spaces" }).click();
+    await secondTab.locator(".nav:visible", { hasText: "Spaces" }).click();
+    const firstSpaceEditor = page.locator(".inspector:visible");
+    const secondSpaceEditor = secondTab.locator(".inspector:visible");
+    const firstSpaceName = firstSpaceEditor.getByLabel("Friendly name");
+    const secondSpaceName = secondSpaceEditor.getByLabel("Friendly name");
+    const savedSpaceName = `Saved space ${Date.now()}`;
+    const latestSpaceName = `Latest space ${Date.now()}`;
+    const spaceDraft = `Space draft ${Date.now()}`;
+
+    await firstSpaceName.fill(savedSpaceName);
+    await firstSpaceEditor.getByRole("button", {
+      name: "Save space",
+    }).click();
+    await expect(secondSpaceName).toHaveValue(savedSpaceName);
+
+    await secondSpaceName.fill(spaceDraft);
+    await firstSpaceName.fill(latestSpaceName);
+    await firstSpaceEditor.getByRole("button", {
+      name: "Save space",
+    }).click();
+    await expect(secondSpaceName).toHaveValue(spaceDraft);
+    await expect.poll(async () => {
+      const replica = await localReplica(secondTab) as {
+        state: { locations: { id: string; name: string }[] };
+      };
+      return replica.state.locations.find(
+        (location) => location.id === "loc_kitchen",
+      )?.name;
+    }).toBe(latestSpaceName);
+
+    await page.locator(".nav:visible", { hasText: "Inventory" }).click();
+    await secondTab.locator(".nav:visible", { hasText: "Inventory" }).click();
+    await page.locator('[data-item-id="item_lids"] .item-name').click();
+    await secondTab.locator('[data-item-id="item_lids"] .item-name').click();
+    const firstItemEditor = page.getByRole("dialog", { name: "Edit item" });
+    const secondItemEditor = secondTab.getByRole("dialog", {
+      name: "Edit item",
+    });
+    const firstItemName = firstItemEditor.getByLabel("Item name");
+    const secondItemName = secondItemEditor.getByLabel("Item name");
+    const firstItemDescription = firstItemEditor.getByLabel("Description");
+    const secondItemDescription = secondItemEditor.getByLabel("Description");
+    const firstPlacement = firstItemEditor.locator("details", {
+      hasText: "Placement requirements",
+    });
+    const secondPlacement = secondItemEditor.locator("details", {
+      hasText: "Placement requirements",
+    });
+    await firstPlacement.locator("summary").click();
+    await secondPlacement.locator("summary").click();
+    const firstFoodOnly = firstPlacement.getByLabel("Food-safe only");
+    const secondFoodOnly = secondPlacement.getByLabel("Food-safe only");
+    const savedItemName = `Saved item ${Date.now()}`;
+    const latestItemName = `Latest item ${Date.now()}`;
+    const itemDescriptionDraft = `Item draft ${Date.now()}`;
+    const savedItemDescription = `Saved description ${Date.now()}`;
+
+    await firstItemName.fill(savedItemName);
+    await firstFoodOnly.check();
+    await firstItemEditor.getByRole("button", { name: "Save item" }).click();
+    await expect(secondItemName).toHaveValue(savedItemName);
+    await expect(secondFoodOnly).toBeChecked();
+
+    await secondItemDescription.fill(itemDescriptionDraft);
+    await secondFoodOnly.uncheck();
+    await firstItemName.fill(latestItemName);
+    await firstItemDescription.fill(savedItemDescription);
+    await firstItemEditor.getByRole("button", { name: "Save item" }).click();
+    await expect(secondItemName).toHaveValue(latestItemName);
+    await expect(secondItemDescription).toHaveValue(itemDescriptionDraft);
+    await expect(secondFoodOnly).not.toBeChecked();
+    await expect.poll(async () => {
+      const replica = await localReplica(secondTab) as {
+        state: {
+          items: {
+            constraints: { foodOnly: boolean };
+            description: string;
+            id: string;
+            name: string;
+          }[];
+        };
+      };
+      const item = replica.state.items.find(
+        (candidate) => candidate.id === "item_lids",
+      );
+      return item && {
+        description: item.description,
+        foodOnly: item.constraints.foodOnly,
+        name: item.name,
+      };
+    }).toEqual({
+      description: savedItemDescription,
+      foodOnly: true,
+      name: latestItemName,
+    });
+  } finally {
+    await secondTab.close();
+  }
+});
+
 test("refuses stale item and space targets without rewriting their URLs", async ({
   page,
 }) => {
@@ -838,6 +1094,7 @@ test("refuses stale item and space targets without rewriting their URLs", async 
   page.once("dialog", (dialog) => dialog.accept());
   await page.keyboard.press("Enter");
   await expect(page.getByRole("dialog", { name: /item/i })).toHaveCount(0);
+  await expect(page.getByRole("main")).toBeFocused();
   await expect(page).toHaveURL(new RegExp(`${workspacePrefix}/inventory$`));
 
   const archivedItemUrl =
@@ -1132,6 +1389,242 @@ test("switches, resizes, and persists responsive panel layouts", async ({ page }
   }))).toEqual({ body: true, document: true });
 });
 
+test("keeps mobile Capture stable while responsive state settles", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "mobile-chromium",
+    "The portrait phone project measures Capture layout stability",
+  );
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
+  const capture = page.locator(".capture.resizable-panels");
+  await expect(capture).toHaveAttribute("data-panel-layout", "stacked");
+  const unsettledGeometry = await capture.evaluate((element) => {
+    element.setAttribute("data-panel-layout", "side-by-side");
+    const containerBounds = element.getBoundingClientRect();
+    const containerStyles = getComputedStyle(element);
+    const contentLeft = containerBounds.left
+      + Number.parseFloat(containerStyles.paddingLeft);
+    const contentWidth = containerBounds.width
+      - Number.parseFloat(containerStyles.paddingLeft)
+      - Number.parseFloat(containerStyles.paddingRight);
+    const captureBounds = element.querySelector<HTMLElement>(
+      ":scope > .capture-card",
+    )?.getBoundingClientRect();
+    const resizer = element.querySelector<HTMLElement>(
+      ":scope > .pane-resizer",
+    );
+    return {
+      leftDrift: captureBounds
+        ? Math.abs(captureBounds.left - contentLeft)
+        : Number.POSITIVE_INFINITY,
+      resizerDisplay: resizer ? getComputedStyle(resizer).display : "missing",
+      widthDrift: captureBounds
+        ? Math.abs(captureBounds.width - contentWidth)
+        : Number.POSITIVE_INFINITY,
+    };
+  });
+  expect(unsettledGeometry.leftDrift).toBeLessThanOrEqual(
+    MAX_LAYOUT_GEOMETRY_DRIFT,
+  );
+  expect(unsettledGeometry.widthDrift).toBeLessThanOrEqual(
+    MAX_LAYOUT_GEOMETRY_DRIFT,
+  );
+  expect(unsettledGeometry.resizerDisplay).toBe("none");
+
+  await page.addInitScript(() => {
+    type LayoutShiftEntry = PerformanceEntry & {
+      hadRecentInput: boolean;
+      value: number;
+    };
+    const measuredWindow = window as Window & {
+      __stowplanCumulativeLayoutShift?: number;
+    };
+    measuredWindow.__stowplanCumulativeLayoutShift = 0;
+    new PerformanceObserver((list) => {
+      for (const entry of list.getEntries() as LayoutShiftEntry[]) {
+        if (!entry.hadRecentInput) {
+          measuredWindow.__stowplanCumulativeLayoutShift =
+            (measuredWindow.__stowplanCumulativeLayoutShift ?? 0) + entry.value;
+        }
+      }
+    }).observe({ buffered: true, type: "layout-shift" });
+  });
+
+  await page.reload();
+  await expect(capture).toHaveAttribute(
+    "data-panel-layout",
+    "stacked",
+  );
+  await page.waitForTimeout(1_000);
+  const cumulativeLayoutShift = await page.evaluate(() =>
+    (window as Window & { __stowplanCumulativeLayoutShift?: number })
+      .__stowplanCumulativeLayoutShift ?? 0
+  );
+  expect(cumulativeLayoutShift).toBeLessThanOrEqual(
+    MAX_GOOD_CUMULATIVE_LAYOUT_SHIFT,
+  );
+});
+
+test("identifies non-personal organizer fields for browser autofill", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "desktop-chromium",
+    "One desktop project covers browser form diagnostics",
+  );
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
+
+  const containerSearch = page.getByRole("textbox", {
+    name: "Find container",
+  });
+  await expect(containerSearch).toHaveAttribute("name", "containerQuery");
+  await expect(containerSearch).toHaveAttribute("autocomplete", "off");
+  await expect(page.getByRole("textbox", { name: "Short ID" }))
+    .toHaveAttribute("autocomplete", "off");
+  await expect(page.getByRole("textbox", { name: "Friendly name" }))
+    .toHaveAttribute("autocomplete", "off");
+  await expectFormControlsIdentified(page);
+
+  await page.getByRole("button", { name: /Search .*jump/ }).click();
+  const jumpQuery = page.getByRole("combobox", {
+    name: "Search views, spaces, and items",
+  });
+  await expect(jumpQuery).toHaveAttribute("name", "jumpQuery");
+  await expect(jumpQuery).toHaveAttribute("autocomplete", "off");
+  await expectFormControlsIdentified(page);
+  await page.keyboard.press("Escape");
+
+  await page.locator(".nav:visible", { hasText: "Inventory" }).click();
+  await expect(page.getByRole("heading", { name: "All item records" }))
+    .toBeVisible();
+  await expectFormControlsIdentified(page);
+  const flour = page.locator('[data-item-id="item_flour"]');
+  await flour.getByRole("checkbox").check();
+  await expect(page.getByRole("combobox", {
+    name: "Move selected items",
+  })).toHaveAttribute("name", "bulkMoveDestination");
+  await flour.locator(".item-name").click();
+  const review = page.getByRole("dialog", { name: "Review item" });
+  await review.getByRole("button", { name: "Reopen capture" }).click();
+  const itemEditor = page.getByRole("dialog", { name: "Edit item" });
+  await expect(itemEditor.getByLabel("Item name"))
+    .toHaveAttribute("autocomplete", "off");
+  await expectFormControlsIdentified(page);
+  await itemEditor.getByRole("button", { name: "Close item editor" }).click();
+
+  await page.locator(".nav:visible", { hasText: "Plan" }).click();
+  await expect(page.locator(".plan-settings > summary")).toBeVisible();
+  await expectFormControlsIdentified(page);
+
+  await navigateToWorkspaceView(page, "Activity");
+  const historyCount = page.getByRole("spinbutton", {
+    name: "Batch history count",
+  });
+  await expect(historyCount).toHaveAttribute("name", "historyCount");
+  await expect(historyCount).toHaveAttribute("autocomplete", "off");
+  await expectFormControlsIdentified(page);
+
+  await openWorkspaceHub(page);
+  await expect(page.getByRole("heading", { name: "Your workspaces" }))
+    .toBeVisible();
+  await expectFormControlsIdentified(page);
+
+  await page.goto("/recovery");
+  await expect(page.getByRole("heading", {
+    exact: true,
+    name: "Sync & recovery",
+  })).toBeVisible();
+  await expectFormControlsIdentified(page);
+});
+
+test("makes Recovery storage failures explicit and non-destructive", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "desktop-chromium",
+    "One desktop project covers the unavailable-storage boundary",
+  );
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "indexedDB", {
+      configurable: true,
+      value: {
+        open() {
+          throw new DOMException(
+            "Storage disabled for recovery test",
+            "InvalidStateError",
+          );
+        },
+      },
+    });
+  });
+  await page.goto("/recovery");
+
+  const alert = page.locator(".storage-error[role='alert']");
+  await expect(alert.getByRole("heading", {
+    name: "On-device storage could not be opened",
+  })).toBeVisible();
+  await expect(alert).toContainText(
+    "Stowplan has not changed any workspace data",
+  );
+  await expect(alert).toContainText("Storage disabled for recovery test");
+  await expect(alert.getByRole("button", {
+    name: "Reload Recovery",
+  })).toBeVisible();
+  await expect(page.getByRole("button", {
+    name: "Export full recovery bundle",
+  })).toHaveCount(0);
+});
+
+test("keeps failed workspace writes visible, non-destructive, and retryable", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "desktop-chromium",
+    "One desktop project covers the IndexedDB write-failure boundary",
+  );
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
+  await page.locator(".nav:visible", { hasText: "Settings" }).click();
+  const workspaceName = page.getByLabel("Workspace name");
+  const originalName = await workspaceName.inputValue();
+  const failedDraft = `Quota draft ${Date.now()}`;
+
+  await workspaceName.fill(failedDraft);
+  await page.evaluate(() => {
+    const originalPut = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function () {
+      IDBObjectStore.prototype.put = originalPut;
+      throw new DOMException(
+        "Storage quota exhausted for test",
+        "QuotaExceededError",
+      );
+    };
+  });
+  await page.getByRole("button", { name: "Rename workspace" }).click();
+
+  await expect(page.locator(".feedback-toast[role='alert']")).toHaveText(
+    "Storage quota exhausted for test",
+  );
+  await expect(workspaceName).toHaveValue(failedDraft);
+  await expect.poll(async () => {
+    const replica = await localReplica(page) as {
+      state: { workspace: { name: string } };
+    };
+    return replica.state.workspace.name;
+  }).toBe(originalName);
+
+  const recoveredName = `Recovered ${Date.now()}`;
+  await workspaceName.fill(recoveredName);
+  await page.getByRole("button", { name: "Rename workspace" }).click();
+  await expect(page.getByText(recoveredName, { exact: true })).toBeVisible();
+  await expect.poll(async () => {
+    const replica = await localReplica(page) as {
+      state: { workspace: { name: string } };
+    };
+    return replica.state.workspace.name;
+  }).toBe(recoveredName);
+});
+
 test("opens a selected Capture container in one tap on mobile", async ({
   page,
 }, testInfo) => {
@@ -1246,7 +1739,7 @@ test("keeps the focused workspace header reachable on a narrow phone", async ({
   });
   expect(metrics.visibleLabels).toHaveLength(2);
   expect(metrics.visibleLabels[0]).toBe(
-    "Search and jump, Command or Control K",
+    "Search ⌘ / Ctrl K and jump",
   );
   expect(metrics.visibleLabels[1]).toMatch(/^Open user menu/);
 });
@@ -1661,7 +2154,7 @@ test("aligns header controls and immediately toggles the applied system theme", 
 
   const header = page.locator(".app-shell > main > header");
   const search = header.getByRole("button", {
-    name: "Search and jump, Command or Control K",
+    name: "Search ⌘ / Ctrl K and jump",
   });
   const account = header.getByRole("button", { name: /Open user menu/ });
   if (mobile) {
@@ -1777,6 +2270,68 @@ test("aligns header controls and immediately toggles the applied system theme", 
   })).toBeFocused();
 });
 
+test("removes organizer transitions when reduced motion is requested", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "desktop-chromium",
+    "One desktop project covers reduced-motion styling",
+  );
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
+  await page.locator(".nav:visible", { hasText: "Spaces" }).click();
+  await expect(page.getByRole("heading", { exact: true, name: "Spaces" }))
+    .toBeVisible();
+  const spacesTransitions = await page.evaluate(() => {
+    const rootDrop = document.querySelector<HTMLElement>(".root-drop");
+    const rowActions = document.querySelector<HTMLElement>(
+      ".tree-panel .tree-row > .row-actions",
+    );
+    if (!rootDrop || !rowActions) {
+      throw new Error("Spaces transition targets are missing");
+    }
+    return {
+      rootDrop: getComputedStyle(rootDrop).transitionDuration,
+      rowActions: getComputedStyle(rowActions).transitionDuration,
+    };
+  });
+
+  await page.locator(".nav:visible", { hasText: "Plan" }).click();
+  const planSummary = page.locator(".plan-settings > summary");
+  await expect(planSummary).toBeVisible();
+  const planDisclosure = await planSummary.evaluate((summary) =>
+    getComputedStyle(summary, "::before").transitionDuration
+  );
+  expect({
+    ...spacesTransitions,
+    planDisclosure,
+  }).toEqual({
+    planDisclosure: NO_CSS_TRANSITION_DURATION,
+    rootDrop: NO_CSS_TRANSITION_DURATION,
+    rowActions: NO_CSS_TRANSITION_DURATION,
+  });
+});
+
+test("keeps Plan sliders large enough for direct pointer input", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "desktop-chromium",
+    "One desktop project covers slider target geometry",
+  );
+  await page.setViewportSize({ height: 568, width: 320 });
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
+  await page.locator(".nav:visible", { hasText: "Plan" }).click();
+  const sliders = page.locator('.plan-priority > input[type="range"]');
+  await expect(sliders).toHaveCount(5);
+  const heights = await sliders.evaluateAll((controls) =>
+    controls.map((control) => control.getBoundingClientRect().height)
+  );
+  expect(Math.min(...heights)).toBeGreaterThanOrEqual(
+    MIN_POINTER_TARGET_SIZE,
+  );
+});
+
 test("navigates every active surface with arrow keys while preserving native controls", async ({
   page,
 }) => {
@@ -1785,7 +2340,7 @@ test("navigates every active surface with arrow keys while preserving native con
   }).click();
 
   const jump = page.getByRole("button", {
-    name: "Search and jump, Command or Control K",
+    name: "Search ⌘ / Ctrl K and jump",
   });
   await jump.focus();
   await page.keyboard.press("ArrowDown");
@@ -2168,7 +2723,7 @@ test("keeps known empty separate from an undoable empty-container action", async
 
   await navigateToWorkspaceView(page, "Activity");
   await page.getByRole("button", {
-    name: "Undo Emptied Baking bin and marked it known empty",
+    name: /^Undo this Emptied Baking bin and marked it known empty from/,
   }).click();
   await expect.poll(async () => {
     const replica = await localReplica(page) as {
@@ -2240,15 +2795,14 @@ test("guides completed inventory edits and moves through recertification", async
   const flour = page.locator('.inventory-row[data-item-id="item_flour"]');
   const reviewAction = flour.locator(".row-action");
   await expect(reviewAction).toContainText("Review, reopen to edit");
-  await expect(reviewAction).toHaveAttribute(
-    "aria-label",
-    /Review All-purpose flour, 1 bag in .*reopen to edit/,
-  );
   const openReview = async () => {
     if (testInfo.project.name === "mobile-chromium") {
       await expect(reviewAction).toBeHidden();
       await flour.locator(".item-name").click();
     } else {
+      await expect(reviewAction).toHaveAccessibleName(
+        /Review, reopen to edit for All-purpose flour, 1 bag in/,
+      );
       await reviewAction.click();
     }
   };
@@ -2425,7 +2979,7 @@ test("onboards, captures, edits, searches, plans, rolls back, and persists local
   await expect(page.getByText("Test tea towels", { exact: true })).toBeVisible();
   await page.locator(".nav:visible", { hasText: "Inventory" }).click();
   await expect(page.getByRole("heading", { name: "All item records" })).toBeVisible();
-  await expect(page.getByText("Showing the containerless inventory.")).toBeVisible();
+  await expect(page.getByText("Showing all inventory.")).toBeVisible();
   await expect(page.locator('.inventory-row .drag-handle[title="Drag Test tea towels to reorder"]')).toHaveCount(0);
   await page.getByPlaceholder("Search names, descriptions, categories, tags, and requirements").fill("washable");
   await expect(page.getByText("Test tea towels", { exact: true })).toBeVisible();
@@ -3989,7 +4543,7 @@ test("guides incomplete evidence into a reviewable plan", async ({ page }) => {
     state: { locations: { captureStatus: string; id: string }[] };
   };
   await page.getByRole("button", {
-    name: "Open next unfinished location without changing Corner cabinet: BX-09, Appliance parts",
+    name: "Next unfinished BX-09 · Appliance parts Open without changing Corner cabinet",
   }).click();
   await expect(page.getByRole("heading", { name: "BX-09 · Appliance parts" })).toBeVisible();
   const afterAdvance = await localReplica(page) as typeof beforeAdvance;
@@ -4278,9 +4832,11 @@ test("distinguishes duplicate inventory actions by quantity and unit", async ({ 
 
   for (const amount of ["2 AA", "3 AAA"]) {
     await expect(page.getByRole("checkbox", { name: `Select Batteries, ${amount} in Kitchen` })).toBeVisible();
-    await expect(page.getByRole("button", { name: `Open Batteries, ${amount} in Kitchen` })).toBeVisible();
+    await expect(page.getByRole("button", {
+      name: new RegExp(`^Batteries .*${amount}, Open item details in Kitchen$`),
+    })).toBeVisible();
     const editAction = page.getByRole("button", {
-      name: `Edit or move Batteries, ${amount} in Kitchen`,
+      name: `Edit / move for Batteries, ${amount} in Kitchen`,
     });
     if ((page.viewportSize()?.width ?? 0) <= 760) {
       await expect(editAction).toBeHidden();
@@ -4431,7 +4987,7 @@ test("keeps Inventory rows dense at compact desktop widths", async ({
   await expect(rows.first()).toBeVisible();
   const flour = page.locator('.inventory-row[data-item-id="item_flour"]');
   await expect(flour.getByRole("button", {
-    name: /Review All-purpose flour, 1 bag in .*reopen to edit/,
+    name: /Review, reopen to edit for All-purpose flour, 1 bag in/,
   })).toContainText("Review, reopen to edit");
   await expect(flour.locator(".inventory-mobile-location")).toBeHidden();
 
@@ -4597,7 +5153,9 @@ test("executes a planned move and rolls it back from Activity", async ({ page })
   }
 
   await navigateToWorkspaceView(page, "Activity");
-  await page.locator(".history>div").first().getByRole("button", { name: /^Undo Completed plan step:/ }).click();
+  await page.locator(".history>div").first().getByRole("button", {
+    name: /^Undo this Completed plan step:/,
+  }).click();
   await expect.poll(async () => {
     const rolledBack = await localReplica(page) as typeof before;
     return step.type === "item"
@@ -4657,7 +5215,7 @@ test("plucks an older same-item edit and records each history action", async ({
   ).toEqual([]);
   const quantityRow = rows.filter({ hasText: "quantity" });
   const undo = quantityRow.getByRole("button", {
-    name: /^Undo Updated Pasta from/,
+    name: /^Undo this Updated Pasta from/,
   });
   await undo.evaluate((button) => {
     const element = button as HTMLButtonElement;
@@ -4916,7 +5474,7 @@ test("confirms one atomic bulk move across completed spaces", async ({
 
   await navigateToWorkspaceView(page, "Activity");
   await page.getByRole("button", {
-    name: "Undo Moved 2 item records and reopened affected spaces",
+    name: /^Undo this Moved 2 item records and reopened affected spaces from/,
   }).click();
   await expect.poll(async () => {
     const replica = await localReplica(page) as typeof before;
@@ -5442,11 +6000,12 @@ test("keeps redacted post-ban accounts disabled in administration", async ({
   );
   await expect(user.getByRole("button", {
     name:
-      "Redacted account ban_lifted@banned.invalid cannot be enabled",
+      "Redacted account cannot be enabled for ban_lifted@banned.invalid",
   })).toBeDisabled();
   await expect(user.getByRole("button", {
-    name: "Ban ban_lifted@banned.invalid",
+    name: "Ban account for ban_lifted@banned.invalid",
   })).toBeEnabled();
+  await expectVisibleLabelsInAccessibleNames(page);
 });
 
 test("surfaces transport failures from admin mutations", async ({
@@ -5900,6 +6459,12 @@ test("keeps server administration searchable and responsive", async ({
   await expect(page.getByRole("heading", {
     name: "Stowplan administration",
   })).toBeVisible();
+  const adminSearch = page.getByRole("searchbox", {
+    name: "Search server records",
+  });
+  await expect(adminSearch).toHaveAttribute("name", "adminQuery");
+  await expect(adminSearch).toHaveAttribute("autocomplete", "off");
+  await expectFormControlsIdentified(page);
   const sectionNavigation = page.getByRole("navigation", {
     name: "Administration sections",
   });
@@ -5963,8 +6528,9 @@ test("keeps server administration searchable and responsive", async ({
   await expect(currentSession).toContainText("Current browser session");
   await expect(currentSession.getByRole("button", {
     exact: true,
-    name: "Revoke current session ses_capacity for owner@example.test and sign out",
+    name: "Revoke and sign out current session ses_capacity for owner@example.test",
   })).toHaveClass(/danger/u);
+  await expectVisibleLabelsInAccessibleNames(page);
   await expect(page.locator("#admin-deletions")).toContainText(
     "deletion_test",
   );
@@ -6039,7 +6605,7 @@ test("keeps server administration searchable and responsive", async ({
   });
   await currentSession.getByRole("button", {
     exact: true,
-    name: "Revoke current session ses_capacity for owner@example.test and sign out",
+    name: "Revoke and sign out current session ses_capacity for owner@example.test",
   }).click();
   await expect.poll(() => currentSessionConfirmation).toContain(
     "This signs you out immediately",
@@ -6184,4 +6750,95 @@ test("has no serious accessibility violations and reloads offline", async ({ pag
   await context.setOffline(true);
   await page.reload();
   await expect(page.getByRole("heading", { name: "Capture" })).toBeVisible();
+});
+
+test("keeps approved shell routes available without caching APIs", async ({
+  context,
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "desktop-chromium",
+    "One production Chromium project covers service-worker cache boundaries",
+  );
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  await page.reload();
+
+  const activityHref = await page.getByRole("link", {
+    exact: true,
+    name: "Activity",
+  }).getAttribute("href");
+  expect(activityHref).toBeTruthy();
+  const healthStatus = await page.evaluate(async () =>
+    (await fetch("/api/health")).status
+  );
+  expect(healthStatus).toBe(200);
+  expect(await page.evaluate(async () =>
+    Boolean(await caches.match("/api/health"))
+  )).toBe(false);
+  const cachedShellPaths = await page.evaluate(async () => {
+    const paths: string[] = [];
+    for (const cacheName of await caches.keys()) {
+      const cache = await caches.open(cacheName);
+      for (const request of await cache.keys()) {
+        paths.push(new URL(request.url).pathname);
+      }
+    }
+    return paths;
+  });
+  expect(cachedShellPaths).toEqual(expect.arrayContaining(
+    OFFLINE_UTILITY_ROUTES.map((route) => route.cachePath),
+  ));
+
+  await context.setOffline(true);
+  await page.goto(activityHref as string);
+  await expect(page.getByRole("heading", { name: "Activity" })).toBeVisible();
+  for (const route of OFFLINE_UTILITY_ROUTES) {
+    for (const path of route.paths) {
+      await page.goto(path);
+      await expect(page.getByRole("heading", {
+        exact: true,
+        name: route.heading,
+      })).toBeVisible();
+    }
+  }
+
+  await page.goto("/account");
+  await expect(page.getByRole("heading", {
+    name: "Stowplan still works.",
+  })).toBeVisible();
+  expect(await page.evaluate(async () => {
+    try {
+      await fetch("/api/health");
+      return false;
+    } catch {
+      return true;
+    }
+  })).toBe(true);
+  expect(await page.evaluate(async () =>
+    Boolean(await caches.match("/api/health"))
+  )).toBe(false);
+});
+
+test("includes visible labels in names of core controls", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    !["desktop-chromium", "mobile-chromium"].includes(testInfo.project.name),
+    "Phone and wide desktop cover responsive visible labels",
+  );
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
+  await expectVisibleLabelsInAccessibleNames(page);
+
+  await page.locator(".nav:visible", { hasText: "Inventory" }).click();
+  await expect(page.getByRole("heading", { name: "All item records" }))
+    .toBeVisible();
+  await expectVisibleLabelsInAccessibleNames(page);
+
+  if (testInfo.project.name === "mobile-chromium") return;
+  await page.locator(".nav:visible", { hasText: "Plan" }).click();
+  await page.getByRole("button", { name: "Generate move plan" }).click();
+  await navigateToWorkspaceView(page, "Activity");
+  await expect(page.locator(".activity-row button").first()).toBeVisible();
+  await expectVisibleLabelsInAccessibleNames(page);
 });

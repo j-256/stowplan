@@ -279,6 +279,7 @@ export function AccountDeletion({
               <input
                 autoComplete="off"
                 disabled={deleting}
+                name="accountDeletionConfirmation"
                 onChange={(event) =>
                   setConfirmation(event.target.value)}
                 value={confirmation}

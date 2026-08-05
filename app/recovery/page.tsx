@@ -121,6 +121,7 @@ export default function Recovery() {
     useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [storageError, setStorageError] = useState("");
   const refresh = async () => setReplica(await readReplica());
   const saveExport = (
     name: string,
@@ -143,7 +144,7 @@ export default function Recovery() {
   useEffect(() => {
     void readReplica()
       .then(setReplica)
-      .catch((error) => setMessage(
+      .catch((error) => setStorageError(
         error instanceof Error ? error.message : "On-device storage is unavailable",
       ));
   }, []);
@@ -165,6 +166,26 @@ export default function Recovery() {
       active = false;
     };
   }, []);
+
+  if (storageError) {
+    return <main className="admin-page recovery-page">
+      <header>
+        <div>
+          <p className="eyebrow">Inspect before changing anything</p>
+          <h1>Sync & recovery</h1>
+        </div>
+        <Link href="/">Back</Link>
+      </header>
+      <section className="storage-error" role="alert">
+        <h2>On-device storage could not be opened</h2>
+        <p>Stowplan has not changed any workspace data. Recovery actions are unavailable until this browser can open site storage.</p>
+        <small>{storageError}</small>
+        <button onClick={() => location.reload()} type="button">
+          Reload Recovery
+        </button>
+      </section>
+    </main>;
+  }
 
   const loadServerSnapshot = async (
     workspaceId: string,
@@ -719,7 +740,7 @@ export default function Recovery() {
         );
       }}>Export full recovery bundle</button>
       {replica && exportedVersion === replicaVersion(replica) && <label>
-        <input disabled={busy} type="checkbox" checked={exportAcknowledged} onChange={(event) => setExportAcknowledged(event.target.checked)} /> I saved this recovery file somewhere I can reopen it.
+        <input disabled={busy} name="exportAcknowledged" type="checkbox" checked={exportAcknowledged} onChange={(event) => setExportAcknowledged(event.target.checked)} /> I saved this recovery file somewhere I can reopen it.
       </label>}
     </section>
     <section>
@@ -751,7 +772,7 @@ export default function Recovery() {
           <span><b>{replica.outbox.length}</b>queued changes</span>
         </div>
         <label>Type <code>REAPPLY</code> to rebuild unresolved queued work on the server copy, or <code>RESET</code> to discard the device queue.
-          <input disabled={busy || !serverWriteAllowed} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} />
+          <input autoComplete="off" disabled={busy || !serverWriteAllowed} name="recoveryActionConfirmation" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} />
         </label>
         <div className="recovery-actions">
           <button disabled={!serverWriteAllowed || replica.outbox.length === 0 || busy || exportedVersion !== replicaVersion(replica) || !exportAcknowledged || confirmation !== "REAPPLY"} onClick={() => void reapply()}>Reapply queued work on server copy</button>
@@ -763,7 +784,7 @@ export default function Recovery() {
       <h2>Restore a portable JSON backup</h2>
       <p className="muted">Restoring the matching server workspace is owner-only and uses compare-and-swap protection. Opening a separate local copy creates a new workspace ID, works offline, and never erases another device workspace.</p>
       <label className="file">Choose JSON backup
-        <input disabled={busy} type="file" accept="application/json" onChange={(event) => {
+        <input disabled={busy} name="backupFile" type="file" accept="application/json" onChange={(event) => {
           const file = event.target.files?.[0];
           if (file) void choose(file);
         }} />
@@ -789,7 +810,7 @@ export default function Recovery() {
           );
         }}>Export current server backup</button>
         {serverExportedRevision === restoreServerBaseline.state.workspace.revision && <label>
-          <input disabled={busy} type="checkbox" checked={serverExportAcknowledged} onChange={(event) => setServerExportAcknowledged(event.target.checked)} /> I saved the current server backup somewhere I can reopen it.
+          <input disabled={busy} name="serverExportAcknowledged" type="checkbox" checked={serverExportAcknowledged} onChange={(event) => setServerExportAcknowledged(event.target.checked)} /> I saved the current server backup somewhere I can reopen it.
         </label>}
       </>}
       {preview && !restoreServerBaseline && <>
@@ -818,13 +839,13 @@ export default function Recovery() {
           );
         }}>Export matching-device recovery bundle</button>
         {targetExportedVersion === replicaVersion(restoreTarget) && <label>
-          <input disabled={busy} type="checkbox" checked={targetExportAcknowledged} onChange={(event) => setTargetExportAcknowledged(event.target.checked)} /> I saved this matching-device recovery file somewhere I can reopen it.
+          <input disabled={busy} name="targetExportAcknowledged" type="checkbox" checked={targetExportAcknowledged} onChange={(event) => setTargetExportAcknowledged(event.target.checked)} /> I saved this matching-device recovery file somewhere I can reopen it.
         </label>}
       </>}
       {preview?.issues.map((issue) => <p key={`${issue.code}-${issue.path}`} className={issue.severity}><strong>{issue.severity === "error" ? "Error" : "Warning"}:</strong> {issue.path}: {issue.message}</p>)}
       {preview?.valid && <>
         <label>
-          <input disabled={busy} type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} /> I reviewed the validation report and these counts.
+          <input disabled={busy} name="restoreConfirmed" type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} /> I reviewed the validation report and these counts.
         </label>
         <div className="recovery-actions">
           <button className="primary" disabled={!matchingRestoreReady} onClick={() => void restoreServer()}>Restore matching server & device</button>

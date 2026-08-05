@@ -82,16 +82,20 @@ function matchingItem(item: ItemRecord, query: string): boolean {
 
 function SearchField({
   label,
+  name,
   onChange,
   value,
 }: {
   label: string;
+  name: string;
   onChange: (value: string) => void;
   value: string;
 }) {
   return <label className={styles.search}>
     <span>{label}</span>
     <input
+      autoComplete="off"
+      name={name}
       onChange={(event) => onChange(event.currentTarget.value)}
       type="search"
       value={value}
@@ -162,6 +166,7 @@ function ReadOnlyCapture({
       <h2>Browse capture hierarchy</h2>
       <SearchField
         label="Search spaces and items"
+        name="captureQuery"
         onChange={setSearch}
         value={search}
       />
@@ -215,7 +220,12 @@ function ReadOnlySpaces({
   return <div className={`${styles.layout} content`}>
     <section className="panel">
       <h2>Spaces</h2>
-      <SearchField label="Search spaces" onChange={setSearch} value={search} />
+      <SearchField
+        label="Search spaces"
+        name="spaceQuery"
+        onChange={setSearch}
+        value={search}
+      />
       <LocationList
         locations={locations}
         onSelect={onLocationChange}
@@ -305,10 +315,16 @@ function ReadOnlyInventory({
   return <div className="content">
     <section className={`panel ${styles.fullPanel}`}>
       <div className={styles.inventoryTools}>
-        <SearchField label="Search inventory" onChange={setSearch} value={search} />
+        <SearchField
+          label="Search inventory"
+          name="inventoryQuery"
+          onChange={setSearch}
+          value={search}
+        />
         <label>
           <span>Location</span>
           <select
+            name="inventoryLocation"
             onChange={(event) =>
               onInventoryLocationChange(event.currentTarget.value)
             }

@@ -1,11 +1,10 @@
-const CACHE = "stowplan-shell-v11";
+const CACHE = "stowplan-shell-v13";
 const CACHE_PREFIX = "stowplan-shell-";
 const SHELL = [
   "/",
   "/demo",
   "/workspaces",
   "/docs",
-  "/docs/",
   "/labels",
   "/recovery",
   "/offline",
@@ -21,6 +20,14 @@ const STATIC_SHELL = new Set([
   "/icon-192.png",
   "/icon-512.png",
 ]);
+
+function canonicalPathname(pathname) {
+  if (pathname.length > 1 && pathname.endsWith("/")) {
+    const withoutTrailingSlash = pathname.slice(0, -1);
+    if (SHELL.includes(withoutTrailingSlash)) return withoutTrailingSlash;
+  }
+  return pathname;
+}
 
 async function installShell() {
   const cache = await caches.open(CACHE);
@@ -72,18 +79,19 @@ self.addEventListener("fetch", (event) => {
   ) return;
 
   const navigation = request.mode === "navigate";
+  const pathname = canonicalPathname(url.pathname);
   const appNavigation =
-    url.pathname === "/demo" ||
-    url.pathname === "/workspaces" ||
-    url.pathname.startsWith("/workspaces/");
+    pathname === "/demo" ||
+    pathname === "/workspaces" ||
+    pathname.startsWith("/workspaces/");
   const staticAsset =
-    STATIC_SHELL.has(url.pathname) ||
-    url.pathname.startsWith("/assets/") ||
-    url.pathname.startsWith("/_next/static/");
+    STATIC_SHELL.has(pathname) ||
+    pathname.startsWith("/assets/") ||
+    pathname.startsWith("/_next/static/");
   if (!navigation && !staticAsset) return;
 
-  const cacheKey = navigation ? url.pathname : request;
-  const cacheable = navigation ? SHELL.includes(url.pathname) : true;
+  const cacheKey = navigation ? pathname : request;
+  const cacheable = navigation ? SHELL.includes(pathname) : true;
   event.respondWith(
     fetch(request)
       .then((response) => {

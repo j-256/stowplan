@@ -188,9 +188,11 @@ export function ActivityHistory({ onCommand, state }: ActivityHistoryProps) {
           Changes
           <input
             aria-label="Batch history count"
+            autoComplete="off"
             disabled={busy}
             max={MAXIMUM_HISTORY_BATCH_COUNT}
             min="1"
+            name="historyCount"
             onChange={(event) =>
               setBatchCount(normalizeHistoryBatchCount(event.currentTarget.value))
             }
@@ -231,7 +233,7 @@ export function ActivityHistory({ onCommand, state }: ActivityHistoryProps) {
             <p className="eyebrow">Workspace timeline</p>
             <h2 id="activity-changes-heading">Meaningful changes</h2>
           </span>
-          <b>{countLabel(appliedCount, "applied")}</b>
+          <b>{countLabel(appliedCount, "applied change")}</b>
         </header>
         {activities.map((entry, index) => {
           const action = entry.status === "applied" ? "Undo" : "Reapply";
@@ -249,7 +251,6 @@ export function ActivityHistory({ onCommand, state }: ActivityHistoryProps) {
             <b>{entry.status}</b>
             {editable && <button
               aria-describedby={`activity-detail-${index}`}
-              aria-label={`${action} ${entry.label} from ${timestamp}`}
               disabled={busy}
               onClick={() => void run(
                 key,
@@ -262,6 +263,7 @@ export function ActivityHistory({ onCommand, state }: ActivityHistoryProps) {
               {pendingKey === key
                 ? `${action === "Undo" ? "Undoing" : "Reapplying"}...`
                 : action === "Undo" ? "Undo this" : "Reapply"}
+              <span className="sr-only">{entry.label} from {timestamp}</span>
             </button>}
           </div>;
         })}

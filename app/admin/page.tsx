@@ -566,6 +566,8 @@ export default function AdminPage() {
           <Search aria-hidden="true" />
           <input
             aria-label="Search server records"
+            autoComplete="off"
+            name="adminQuery"
             onChange={event => setDraftQuery(event.target.value)}
             placeholder="Email, workspace, action, or ID"
             type="search"
@@ -1148,6 +1150,7 @@ export default function AdminPage() {
                       { expectedAccountRevision: accountRevision },
                     );
                   }}
+                  name="userRole"
                   value={role}
                 >
                   <option value="user">user</option>
@@ -1159,7 +1162,7 @@ export default function AdminPage() {
                     : status === "banned"
                       ? `Lift enforcement ban for ${userLabel}`
                       : redactedAfterBan
-                        ? `Redacted account ${userLabel} cannot be enabled`
+                        ? `Redacted account cannot be enabled for ${userLabel}`
                         : `Enable ${userLabel}`}
                   className={status === "active" ? "danger" : undefined}
                   disabled={
@@ -1214,7 +1217,6 @@ export default function AdminPage() {
                         : "Enable"}
                 </button>}
                 {!deletedAt && status !== "banned" && <button
-                  aria-label={`Ban ${userLabel}`}
                   className="danger"
                   disabled={Boolean(pendingAction)}
                   onClick={() => {
@@ -1243,6 +1245,7 @@ export default function AdminPage() {
                   type="button"
                 >
                   Ban account
+                  <span className="sr-only">for {userLabel}</span>
                 </button>}
               </span>
             </div>;
@@ -1392,6 +1395,7 @@ export default function AdminPage() {
               <select
                 aria-label={`Workspace role for ${memberLabel} in ${workspaceName}`}
                 disabled={Boolean(pendingAction)}
+                name="workspaceMemberRole"
                 onChange={event =>
                   void mutate(
                     "member.role",
@@ -1548,9 +1552,6 @@ export default function AdminPage() {
               </span>
               <b data-status={status}>{status}</b>
               <button
-                aria-label={isCurrent
-                  ? `Revoke current session ${sessionId} for ${sessionUser} and sign out`
-                  : `Revoke session ${sessionId} for ${sessionUser}`}
                 className="danger"
                 disabled={Boolean(pendingAction) || status !== "active"}
                 onClick={() => {
@@ -1563,6 +1564,9 @@ export default function AdminPage() {
                 type="button"
               >
                 {isCurrent ? "Revoke and sign out" : "Revoke"}
+                <span className="sr-only">
+                  {isCurrent ? "current session" : "session"} {sessionId} for {sessionUser}
+                </span>
               </button>
             </div>;
           })}

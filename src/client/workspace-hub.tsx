@@ -227,6 +227,8 @@ export function WorkspaceHub({
     {!firstRun && <label>
       <span>Search workspaces</span>
       <input
+        autoComplete="off"
+        name="workspaceQuery"
         onChange={(event) => setQuery(event.currentTarget.value)}
         placeholder="Name, role, or status"
         type="search"
@@ -237,7 +239,9 @@ export function WorkspaceHub({
       <label>
         <span>{firstRun ? "Your workspace name" : "New workspace"}</span>
         <input
+          autoComplete="off"
           maxLength={80}
+          name="workspaceName"
           onChange={(event) => setWorkspaceName(event.currentTarget.value)}
           placeholder="Workspace name"
           required

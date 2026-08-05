@@ -10,7 +10,7 @@ A workspace already opened on this device remains available for browsing and, wh
 
 An online workspace that has never been downloaded to this device needs a connection once. Its card says **Open when online** until Stowplan can download and check the first local copy.
 
-Static parts of the app may also be available offline after a prior visit. Workspace data comes from the saved device copy, not from a cached server response.
+After an online app load installs offline support, the workspace hub, built-in quick guide, printable labels, Recovery, privacy page, and offline help remain available without separately visiting each page first. Account and administration pages require a connection and show the offline fallback instead. Workspace data comes from the saved device copy, not from a cached server response.
 
 ## Read the workspace status
 

@@ -180,16 +180,17 @@ test("passes the Sites D1 binding from the Worker environment to server routes",
 test("keeps private APIs out of the service-worker cache and ships install icons", () => {
   const worker = readFileSync(new URL("../public/sw.js", import.meta.url), "utf8");
   assert.match(worker, /url\.pathname\.startsWith\("\/api\/"\)/);
-  assert.match(worker, /url\.pathname\.startsWith\("\/assets\/"\)/);
+  assert.match(worker, /pathname\.startsWith\("\/assets\/"\)/);
   assert.match(worker, /request\.mode === "navigate"/);
-  assert.match(worker, /url\.pathname === "\/demo"/);
-  assert.match(worker, /url\.pathname\.startsWith\("\/workspaces\/"\)/);
+  assert.match(worker, /pathname === "\/demo"/);
+  assert.match(worker, /pathname\.startsWith\("\/workspaces\/"\)/);
   assert.match(worker, /caches\.match\("\/workspaces"\)/);
   assert.match(worker, /"\/workspaces"/);
   assert.match(worker, /event\.waitUntil\(installShell\(\)/);
   assert.match(worker, /cache\.put\(cacheKey, response\.clone\(\)\)/);
   assert.match(worker, /key\.startsWith\(CACHE_PREFIX\)/);
-  assert.match(worker, /"\/docs\/"/);
+  assert.match(worker, /pathname\.endsWith\("\/"\)/);
+  assert.match(worker, /SHELL\.includes\(withoutTrailingSlash\)/);
   assert.match(worker, /"\/demo"/);
   assert.match(worker, /"\/privacy"/);
   const manifest = JSON.parse(readFileSync(new URL("../public/manifest.webmanifest", import.meta.url), "utf8"));
@@ -199,6 +200,8 @@ test("keeps private APIs out of the service-worker cache and ships install icons
 test("does not mix App Router payloads with cached HTML or block responses on cache writes", async () => {
   const source = readFileSync(new URL("../public/sw.js", import.meta.url), "utf8");
   const listeners = {};
+  const cacheMatches = [];
+  let networkAvailable = true;
   let finishCacheWrite;
   const pendingCacheWrite = new Promise((resolve) => { finishCacheWrite = resolve; });
   const writes = [];
@@ -213,7 +216,20 @@ test("does not mix App Router payloads with cached HTML or block responses on ca
   const caches = {
     delete: async () => true,
     keys: async () => [],
-    match: async () => null,
+    match: async (key) => {
+      cacheMatches.push(key);
+      if (key === "/docs") return new Response("<html>cached docs</html>");
+      return [
+          "/demo",
+          "/labels",
+          "/offline",
+          "/privacy",
+          "/recovery",
+          "/workspaces",
+        ].includes(key)
+        ? new Response(`<html>cached ${key}</html>`)
+        : null;
+    },
     open: async () => cache,
   };
   const self = {
@@ -227,9 +243,12 @@ test("does not mix App Router payloads with cached HTML or block responses on ca
     Response,
     Set,
     caches,
-    fetch: async () => new Response("<html>shell</html>", {
-      headers: { "content-type": "text/html" },
-    }),
+    fetch: async () => {
+      if (!networkAvailable) throw new Error("offline");
+      return new Response("<html>shell</html>", {
+        headers: { "content-type": "text/html" },
+      });
+    },
     location: { origin: "https://stowplan.test" },
     self,
   });
@@ -263,6 +282,44 @@ test("does not mix App Router payloads with cached HTML or block responses on ca
   assert.equal(background.length, 1);
   finishCacheWrite();
   await Promise.all(background);
+
+  networkAvailable = false;
+  responsePromise = undefined;
+  listeners.fetch({
+    request: {
+      method: "GET",
+      mode: "navigate",
+      url: "https://stowplan.test/docs/",
+    },
+    respondWith(value) { responsePromise = value; },
+    waitUntil() {},
+  });
+  const offlineResponse = await responsePromise;
+  assert.equal(await offlineResponse.text(), "<html>cached docs</html>");
+  assert.equal(cacheMatches.at(-1), "/docs");
+
+  for (const [alias, canonical] of [
+    ["/demo/", "/demo"],
+    ["/labels/", "/labels"],
+    ["/offline/", "/offline"],
+    ["/privacy/", "/privacy"],
+    ["/recovery/", "/recovery"],
+    ["/workspaces/", "/workspaces"],
+  ]) {
+    responsePromise = undefined;
+    listeners.fetch({
+      request: {
+        method: "GET",
+        mode: "navigate",
+        url: `https://stowplan.test${alias}`,
+      },
+      respondWith(value) { responsePromise = value; },
+      waitUntil() {},
+    });
+    const aliasResponse = await responsePromise;
+    assert.equal(await aliasResponse.text(), `<html>cached ${canonical}</html>`);
+    assert.equal(cacheMatches.at(-1), canonical);
+  }
 });
 
 test("marks API responses as private across missing-configuration paths", async () => {
@@ -357,9 +414,13 @@ test("keeps hierarchy and touch drag affordances in the shipped organizer", () =
   assert.match(application, /<ActivityHistory/);
   assert.match(activityHistory, /Undo and reapply log/);
   assert.match(activityHistory, /if \(pending\) return false/);
-  assert.match(
+  assert.doesNotMatch(
     activityHistory,
     /aria-label=\{`\$\{action\} \$\{entry\.label\} from \$\{timestamp\}`\}/,
+  );
+  assert.match(
+    activityHistory,
+    /<span className="sr-only">\{entry\.label\} from \{timestamp\}<\/span>/,
   );
   assert.match(application, /key=\{current\.id\} className="quick"/);
   assert.match(application, /href=\{href\}/);

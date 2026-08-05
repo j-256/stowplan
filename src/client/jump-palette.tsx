@@ -295,6 +295,7 @@ export function JumpPalette({
           aria-expanded="true"
           aria-label="Search views, spaces, and items"
           autoComplete="off"
+          name="jumpQuery"
           placeholder="Find a view, space, or item"
           value={query}
           onChange={(event) => {

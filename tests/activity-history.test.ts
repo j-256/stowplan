@@ -148,6 +148,7 @@ describe("Activity history presentation", () => {
       expect(markup.indexOf("Change 2")).toBeLessThan(markup.indexOf("Change 1"));
       expect(markup.indexOf("Reapplied second"))
         .toBeLessThan(markup.indexOf("Undid first"));
+      expect(markup).toContain("2 applied changes");
       expect(markup).toContain("Undo and reapply log");
     }
     expect(readOnlyMarkup).not.toContain("Undo this");

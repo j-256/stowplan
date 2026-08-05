@@ -119,6 +119,7 @@ export default function AdminRecoveryPage() {
           <input
             autoComplete="off"
             disabled={pending}
+            name="recoveryToken"
             onChange={event => setToken(event.target.value)}
             required
             spellCheck={false}
