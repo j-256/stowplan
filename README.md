@@ -10,14 +10,34 @@ A mobile-first, local-first organizer for rooms, cabinets, drawers, boxes, bins,
 
 [Try the ready-made kitchen](https://stowplan.jklein.dev/demo) or read the [user guide](https://j-256.github.io/stowplan/guide/getting-started). The demo needs no account and does not replace another workspace already stored in the browser.
 
-![Capture: a nested space tree for the kitchen demo beside a container detail pane with a first-pass coverage bar, item entry, and counted items](screenshots/capture.png)
+<table>
+  <tr>
+    <td align="center" width="33%">
+      <img alt="Capture on a phone: the kitchen demo's nested space tree with most containers marked counted, above a first-pass coverage bar reading 9 of 11 checked" src="screenshots/capture-mobile.png" width="250"><br>
+      <b>Capture</b><br>
+      <sub>Walk a container at a time, counting as you go.</sub>
+    </td>
+    <td align="center" width="33%">
+      <img alt="Plan on a phone: a Next move card recommending a specific container move along its full location path, with a Mark moved action" src="screenshots/plan-mobile.png" width="250"><br>
+      <b>Plan</b><br>
+      <sub>Weighted priorities and an explainable move plan.</sub>
+    </td>
+    <td align="center" width="33%">
+      <img alt="Inventory on a phone: searchable item records across every container, each showing its quantity and location code" src="screenshots/inventory-mobile.png" width="250"><br>
+      <b>Inventory</b><br>
+      <sub>Search every space at once, not box by box.</sub>
+    </td>
+  </tr>
+</table>
 
 <details>
-<summary>More views: Plan, Inventory</summary>
+<summary>The same views on a desktop</summary>
 
-![Plan: explainable move recommendations with a planning-readiness summary and a Generate move plan action](screenshots/plan.png)
+![Capture on a desktop: a nested space tree for the kitchen demo beside a container detail pane with a first-pass coverage bar, item entry, and counted items](screenshots/capture.png)
 
-![Inventory: structured, searchable inventory across the demo's spaces](screenshots/inventory.png)
+![Plan on a desktop: a Next move card with its full route and Mark moved action, above the explainable-recommendations panel with its Plan priorities sliders](screenshots/plan.png)
+
+![Inventory on a desktop: structured, searchable inventory across the demo's spaces](screenshots/inventory.png)
 
 </details>
 

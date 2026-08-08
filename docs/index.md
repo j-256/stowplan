@@ -231,10 +231,7 @@ function onKeydown(e) {
       :style="slideStyle(i)"
       :aria-hidden="i === active ? 'false' : 'true'"
     >
-      <picture>
-        <source :srcset="shot.mobile" media="(max-width:640px)" />
-        <img :src="shot.src" :alt="shot.caption" draggable="false" loading="lazy" />
-      </picture>
+      <img :src="shot.mobile" :alt="shot.caption" draggable="false" loading="lazy" />
     </figure>
     <!-- Large invisible click targets: the left/right thirds of the stage
          advance the carousel (for discrete clicks; drags are handled as swipes
@@ -266,14 +263,18 @@ function onKeydown(e) {
          `active` so closing returns to the last-viewed image. -->
     <div class="sp-cf-zoom-track" ref="zoomTrack" @scroll.passive="onZoomScroll">
       <figure v-for="(shot, i) in zoomPages" :key="i" class="sp-cf-zoom-page" :aria-hidden="shot.clone ? 'true' : null">
-        <picture>
-          <source :srcset="shot.mobile" media="(max-width:640px)" />
-          <img :src="shot.src" :alt="shot.clone ? '' : shot.caption" draggable="false" />
-        </picture>
+        <img :src="shot.mobile" :alt="shot.clone ? '' : shot.caption" draggable="false" />
       </figure>
     </div>
   </dialog>
 </div>
+
+<section class="sp-desktop" aria-label="The same views on a desktop">
+  <p class="sp-desktop-label">On a bigger screen</p>
+  <figure v-for="shot in shots" :key="shot.src" class="sp-desktop-shot">
+    <img :src="shot.src" :alt="shot.caption" loading="lazy" />
+  </figure>
+</section>
 
 <style>
 /* Namespaced under .sp-cf: a <style> block in a VitePress markdown page is global. */
@@ -293,7 +294,14 @@ function onKeydown(e) {
 .sp-cf-stage{
   position:relative;
   width:100%;
-  height:min(58vw, 620px);
+  /* The carousel always shows the portrait mobile screenshots -- the mobile UI
+     is the headline on every device. The images are portrait (390x900, aspect
+     ~0.43). The active image is width-driven (height:auto), so its height =
+     width / 0.43. Capping the active width at 260px caps the height, which the
+     stage below always clears, so the image can't overflow (clipping its top or
+     bleeding over the dots). Below ~419px the 62% term wins, so narrow phones
+     still fill the stage. The click zones track the same variable. */
+  height:min(150vw, 640px);
   perspective:1600px;
   transform-style:preserve-3d;
   /* Let the browser own vertical panning (page scroll) but hand horizontal
@@ -302,7 +310,7 @@ function onKeydown(e) {
   touch-action:pan-y;
   /* Active image width; the click zones fill exactly the gap on either side of
      it, so no zone ever overlaps the active image. */
-  --sp-active-w:min(66%, 900px);
+  --sp-active-w:min(62%, 260px);
 }
 .sp-cf-slide{
   position:absolute;
@@ -381,16 +389,6 @@ function onKeydown(e) {
   background:rgba(255,255,255,.28);cursor:pointer;transition:background .2s,transform .2s;
 }
 .sp-cf-dot.is-active{ background:#fff; transform:scale(1.3); }
-@media (max-width:640px){
-  /* Mobile screenshots are portrait (390x900, aspect ~0.43). The active image is
-     width-driven (height:auto), so height = width / 0.43. Capping the width at
-     260px caps the height at ~600px, which the stage below always clears -- so
-     the image can't overflow the stage (clipping the top and bleeding over the
-     dots) as the viewport grows toward 640px. Below ~419px the 62% term wins, so
-     narrow phones still fill the stage. Zones track the same variable. */
-  .sp-cf-stage{ height:min(150vw, 640px); --sp-active-w:min(62%, 260px); }
-}
-
 /* Full-screen zoom: a native <dialog> (Escape + ::backdrop free) holding a
    horizontal scroll-snap gallery, so swiping is plain native paged scroll. */
 .sp-cf-zoom{
@@ -452,4 +450,33 @@ function onKeydown(e) {
   transition:background .2s;
 }
 .sp-cf-zoom-close:hover{ background:rgba(255,255,255,.28); }
+
+/* Secondary desktop strip below the mobile carousel. The carousel headlines the
+   phone UI on every device; these show the same views on a wider screen. Capped
+   near the VitePress content width so the landscape shots stay large and legible
+   rather than shrinking to thumbnails. */
+.sp-desktop{
+  margin:8px auto 0;
+  max-width:760px;
+  display:grid;
+  gap:20px;
+  justify-items:center;
+}
+.sp-desktop-label{
+  margin:0;
+  text-transform:uppercase;
+  letter-spacing:.08em;
+  font-size:13px;
+  font-weight:700;
+  color:var(--vp-c-text-2);
+}
+.sp-desktop-shot{ margin:0; width:100%; }
+.sp-desktop-shot img{
+  width:100%;
+  height:auto;
+  display:block;
+  border-radius:12px;
+  border:1px solid var(--vp-c-divider);
+  box-shadow:0 12px 30px rgba(0,0,0,.28);
+}
 </style>
