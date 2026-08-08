@@ -8,6 +8,10 @@ updates:
         dependency-type: production
       development:
         dependency-type: development
+        # Review Vinext separately because it bundles production runtime code
+        # and its transitive dependencies can fail the repository-wide audit
+        exclude-patterns:
+          - vinext
     # The Next lint config bundles plugins that pin their own toolchain peers, so
     # a major bump of either tool below breaks lint for the whole grouped update
     # while every other package in it is fine. Hold both back and drop the entry
