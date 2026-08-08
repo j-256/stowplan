@@ -2708,6 +2708,7 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
   const emptyingRef = useRef(false);
   const containerReviewDialog = useRef<HTMLElement | null>(null);
   const containerReviewTrigger = useRef<HTMLElement | null>(null);
+  const containerCreator = useRef<HTMLFormElement | null>(null);
   const restoreContainerReviewFocus = useRef(true);
   const editor = useRef<HTMLElement | null>(null);
   const live = state.locations.filter((location) => !location.archivedAt);
@@ -2882,6 +2883,19 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
       setCompactPanel("secondary");
       setEditorNavigationKey((value) => value + 1);
     }
+  };
+  const revealContainerCreator = () => {
+    setCompactPanel("primary");
+    requestAnimationFrame(() => {
+      const form = containerCreator.current;
+      const behavior = matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "auto"
+        : "smooth";
+      form?.scrollIntoView({ behavior, block: "center" });
+      form?.querySelector<HTMLInputElement>('[name="name"]')?.focus({
+        preventScroll: true,
+      });
+    });
   };
   const addContainer = async (data: FormData) => {
     const topLevel = data.get("topLevel") === "on";
@@ -3311,7 +3325,49 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
           </div>
         </div>
       </div>;
-    })}</div>{queueShown.length === 0 && <p className="muted queue-empty">{live.length === 0 ? "No containers yet. Add your first space below." : "No containers match this search."}</p>}{captureComplete ? <form key={`${current?.id ?? "root"}-top-level`} onSubmit={(event) => submitForm(event, addContainer)} className="nested"><h3>Add an unrelated top-level space</h3><LocationCreateFields defaultKind="room" existingCodes={live.map((location) => location.code)} kindLabel="Space type" namePlaceholder="Friendly name (e.g. garage)" /><input type="hidden" name="topLevel" value="on" /><button>Add top-level space</button></form> : <form key={current?.id ?? "root"} onSubmit={(event) => submitForm(event, addContainer)} className="nested"><LocationCreateFields defaultKind={current ? "box" : "room"} existingCodes={live.map((location) => location.code)} kindLabel="Container type" namePlaceholder={current ? "Friendly name (e.g. winter gear bin)" : "Friendly name (e.g. apartment)"} />{current && <label className="top-level"><input type="checkbox" name="topLevel" /> Add as another top-level space</label>}<button>{current ? `Add inside ${current.name}` : "Add first space"}</button></form>}</section>;
+    })}</div>
+    {queueShown.length === 0 && <p className="muted queue-empty">
+      {live.length === 0
+        ? "No containers yet. Add your first space below."
+        : "No containers match this search."}
+    </p>}
+    {captureComplete
+      ? <form
+          className="nested"
+          key={`${current?.id ?? "root"}-top-level`}
+          onSubmit={(event) => submitForm(event, addContainer)}
+          ref={containerCreator}
+        >
+          <h3>Add an unrelated top-level space</h3>
+          <LocationCreateFields
+            defaultKind="room"
+            existingCodes={live.map((location) => location.code)}
+            kindLabel="Space type"
+            namePlaceholder="Friendly name (e.g. garage)"
+          />
+          <input type="hidden" name="topLevel" value="on" />
+          <button>Add top-level space</button>
+        </form>
+      : <form
+          className="nested"
+          key={current?.id ?? "root"}
+          onSubmit={(event) => submitForm(event, addContainer)}
+          ref={containerCreator}
+        >
+          <LocationCreateFields
+            defaultKind={current ? "box" : "room"}
+            existingCodes={live.map((location) => location.code)}
+            kindLabel="Container type"
+            namePlaceholder={current
+              ? "Friendly name (e.g. winter gear bin)"
+              : "Friendly name (e.g. apartment)"}
+          />
+          {current && <label className="top-level">
+            <input type="checkbox" name="topLevel" /> Add as another top-level space
+          </label>}
+          <button>{current ? `Add inside ${current.name}` : "Add first space"}</button>
+        </form>}
+  </section>;
   const demoIntroPanel = demoIntro && !demoIntroDismissed
     ? <aside
         aria-label="Kitchen demo task"
@@ -3386,7 +3442,69 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
         </div>
       </details>
     : null;
-  const capturePanel = <section className="panel capture-card" ref={editor} tabIndex={-1} aria-label={current ? `Capture inside ${current.name}` : "Capture editor"}>{current ? <><nav className="breadcrumbs" aria-label="Current container path">{breadcrumbs.map((location, index) => <span key={location.id}>{index > 0 && <i aria-hidden>›</i>}<button onClick={() => selectCaptureLocation(location.id)}>{location.code}</button></span>)}</nav><div className="title"><div><p className="eyebrow">Inside this container</p><h2>{current.code} · {current.name}</h2></div><span className="tag capture-status" data-status={current.captureStatus}><CaptureStatusIcon /><span>{current.captureStatus.replace("_", " ")}</span></span></div>{demoIntroPanel}{nextUncounted && <button className="capture-next-location" type="button" onClick={() => selectCaptureLocation(nextUncounted.id)}><span>Next unfinished</span><strong>{nextUncounted.code} · {nextUncounted.name}</strong><span className="sr-only">Open without changing {current.name}</span></button>}{captureComplete ? <div className="capture-locked" role="status"><CheckCircle2 /><span><strong>Capture is complete</strong><small>Reopen this space before adding, editing, or reordering its contents.</small></span></div> : <form key={current.id} className="quick" onSubmit={(event) => submitForm(event, addItem, true, '[name="name"]')}>
+  const capturePanel = <section
+    aria-label={current ? `Capture inside ${current.name}` : "Capture editor"}
+    className="panel capture-card"
+    ref={editor}
+    tabIndex={-1}
+  >
+    {current ? <>
+      <nav className="breadcrumbs" aria-label="Current container path">
+        {breadcrumbs.map((location, index) => <span key={location.id}>
+          {index > 0 && <i aria-hidden>›</i>}
+          <button onClick={() => selectCaptureLocation(location.id)}>
+            {location.code}
+          </button>
+        </span>)}
+      </nav>
+      <div className="title">
+        <div>
+          <p className="eyebrow">Inside this container</p>
+          <h2>{current.code} · {current.name}</h2>
+        </div>
+        <span
+          className="tag capture-status"
+          data-status={current.captureStatus}
+        >
+          <CaptureStatusIcon />
+          <span>{current.captureStatus.replace("_", " ")}</span>
+        </span>
+      </div>
+      {demoIntroPanel}
+      {(!captureComplete || nextUncounted) && <div
+        className="capture-context-actions"
+        data-has-add={!captureComplete ? "true" : undefined}
+      >
+        {!captureComplete && <button
+          className="capture-add-inside"
+          onClick={revealContainerCreator}
+          type="button"
+        >
+          <Plus aria-hidden="true" />
+          <span>Add container inside {current.name}</span>
+        </button>}
+        {nextUncounted && <button
+          aria-label={captureComplete
+            ? `Continue count in ${nextUncounted.code} · ${nextUncounted.name}`
+            : `Skip ${current.name} for now and open ${nextUncounted.code} · ${nextUncounted.name}`}
+          className="capture-next-location"
+          onClick={() => selectCaptureLocation(nextUncounted.id)}
+          type="button"
+        >
+          <span>{captureComplete ? "Continue count" : "Skip for now"}</span>
+          <strong>{nextUncounted.code} · {nextUncounted.name}</strong>
+          <ChevronRight aria-hidden="true" />
+        </button>}
+      </div>}
+      {captureComplete
+        ? <div className="capture-locked" role="status">
+            <CheckCircle2 />
+            <span>
+              <strong>Capture is complete</strong>
+              <small>Reopen this space before adding, editing, or reordering its contents.</small>
+            </span>
+          </div>
+        : <form key={current.id} className="quick" onSubmit={(event) => submitForm(event, addItem, true, '[name="name"]')}>
       <div className="quick-primary">
         <label className="grow">What is it?<input required name="name" placeholder="e.g. winter gloves" /></label>
         <label>Qty<input required type="number" min="0.01" step="any" name="quantity" defaultValue={DEFAULT_ITEM_QUANTITY} /></label>
@@ -5491,6 +5609,7 @@ function Planner({ state, commit, openGuidanceTarget }: { state: WorkspaceState;
   const [name, setName] = useState("Suggested reset");
   const [message, setMessage] = useState("");
   const [nextMoveFocusRequest, setNextMoveFocusRequest] = useState(0);
+  const nextMoveAction = useRef<HTMLButtonElement | null>(null);
   const nextMoveCard = useRef<HTMLElement | null>(null);
   const generate = async () => {
     const plan = buildMovePlan(state, { name, weights });
@@ -5570,14 +5689,35 @@ function Planner({ state, commit, openGuidanceTarget }: { state: WorkspaceState;
       cancelAnimationFrame(focusFrame);
     };
   }, [nextMoveFocusRequest, nextStepId]);
+  const keepNextActionVisible = (
+    event: React.SyntheticEvent<HTMLDetailsElement>,
+  ) => {
+    if (!event.currentTarget.open) return;
+    nextMoveAction.current?.scrollIntoView({
+      block: "center",
+      inline: "nearest",
+    });
+  };
   const nextSubject = nextStep ? subjectForStep(nextStep) : null;
   const nextItemId = nextSubject?.item?.id ?? null;
   const nextContainerId = nextSubject?.container?.id ?? null;
-  return <div className="content">
-    <section className="panel hero planner-hero">
-      <div>
+  const plannerHero = <section className="panel hero planner-hero">
+      <div className="planner-overview">
         <p className="eyebrow">Explainable recommendations</p>
         <h2>Fewer moves, better homes.</h2>
+        <div className="plan-actions">
+          <button className="primary" onClick={() => void generate()}>
+            {active ? "Replace with fresh plan" : "Generate move plan"}
+          </button>
+          {active && !hasConflictingPlans && <button onClick={() => void perform(
+            commit,
+            { type: "plan.status", planId: active.id, status: "discarded" },
+            () => setMessage(""),
+          )}>
+            Discard current plan
+          </button>}
+        </div>
+        {message && <output className="form-message">{message}</output>}
         <p>Balance suitability, access, grouping, capacity, and move effort, including moving a whole nested box when that is simpler. Marking a step moved updates Inventory immediately; Activity can undo it.</p>
       </div>
       <details className="plan-settings">
@@ -5600,12 +5740,8 @@ function Planner({ state, commit, openGuidanceTarget }: { state: WorkspaceState;
         })}
       </details>
       <PlanningReadinessPanel readiness={readiness} state={state} openGuidanceTarget={openGuidanceTarget} />
-      <div className="plan-actions">
-        <button className="primary" onClick={() => void generate()}>{active ? "Replace with fresh plan" : "Generate move plan"}</button>
-        {active && !hasConflictingPlans && <button onClick={() => void perform(commit, { type: "plan.status", planId: active.id, status: "discarded" }, () => setMessage(""))}>Discard current plan</button>}
-      </div>
-      {message && <output className="form-message">{message}</output>}
-    </section>
+    </section>;
+  return <div className="content">
     {hasConflictingPlans && <section className="panel form-message" role="alert"><h3>Resolve overlapping active plans</h3><p>This older workspace contains {activePlans.length} active plans. Generate a fresh plan to replace all of them, or discard plans until one remains before executing a move.</p>{activePlans.map((plan) => <button key={plan.id} onClick={() => void perform(commit, { type: "plan.status", planId: plan.id, status: "discarded" })}>Discard {plan.name}</button>)}</section>}
     {active && !hasConflictingPlans && nextStep && nextSubject ? <>
       <div className="plan-progress"><strong>{active.name}</strong><span>{complete} of {active.steps.length} complete</span></div>
@@ -5628,10 +5764,14 @@ function Planner({ state, commit, openGuidanceTarget }: { state: WorkspaceState;
           className="primary plan-next-action"
           data-step-state="ready"
           onClick={() => void completeStep(nextStep)}
+          ref={nextMoveAction}
         >
           Mark moved
         </button>
-        <details className="plan-step-support">
+        <details
+          className="plan-step-support"
+          onToggle={keepNextActionVisible}
+        >
           <summary>Why this move and review details</summary>
           <div>
             {capacityIsUnverified(nextStep) && <em className="plan-confidence">Capacity unverified</em>}
@@ -5664,7 +5804,9 @@ function Planner({ state, commit, openGuidanceTarget }: { state: WorkspaceState;
           </li>;
         })}</ol>
       </details>
-    </> : <Empty title="No active plan" text={readiness.canGenerateUsefulPlan ? "There is enough evidence to try a plan. Review the readiness guidance, then generate when you are comfortable with the gaps." : emptyPlanGuidance(readiness)} />}
+    </> : null}
+    {plannerHero}
+    {(!active || hasConflictingPlans || !nextStep || !nextSubject) && <Empty title="No active plan" text={readiness.canGenerateUsefulPlan ? "There is enough evidence to try a plan. Review the readiness guidance, then generate when you are comfortable with the gaps." : emptyPlanGuidance(readiness)} />}
   </div>;
 }
 function History({ state, commit }: { state: WorkspaceState; commit: Commit }) {

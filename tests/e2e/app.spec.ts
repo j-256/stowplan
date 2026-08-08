@@ -21,6 +21,7 @@ const EXPANDED_SIDEBAR_WIDTH = 248;
 const MAX_COMPACT_INVENTORY_ROW_HEIGHT = 72;
 const MAX_GOOD_CUMULATIVE_LAYOUT_SHIFT = 0.1;
 const MAX_LAYOUT_GEOMETRY_DRIFT = 1;
+const NARROW_PHONE_VIEWPORT = Object.freeze({ height: 568, width: 320 });
 const NO_CSS_TRANSITION_DURATION = "0s";
 const COLOR_CONTRAST_RULE = "color-contrast";
 const LABEL_CONTENT_NAME_RULE = "label-content-name-mismatch";
@@ -1711,6 +1712,178 @@ test("opens a selected Capture container in one tap on mobile", async ({
   })).toBeVisible();
 });
 
+test("keeps compact Capture actions clear and exposes nested containers", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "mobile-chromium",
+    "The Chromium phone project covers the compact Capture action order",
+  );
+  await page.setViewportSize(NARROW_PHONE_VIEWPORT);
+  await page.getByLabel("Your workspace name").fill("Garage organizer");
+  await page.getByRole("button", { exact: true, name: "Create" }).click();
+  await page.getByLabel("Friendly name").fill("Garage");
+  await page.getByRole("button", { name: "Add first space" }).click();
+
+  const addContainer = page.getByRole("button", {
+    name: "Add container inside Garage",
+  });
+  await expect(addContainer).toBeVisible();
+  const compactLayout = await page.locator(".capture-card").evaluate((card) => {
+    const captured = card.querySelector<HTMLElement>(".captured");
+    const finish = card.querySelector<HTMLElement>(".finish");
+    const capturedBounds = captured?.getBoundingClientRect();
+    const finishBounds = finish?.getBoundingClientRect();
+    return {
+      finishAfterContents: Boolean(
+        capturedBounds &&
+        finishBounds &&
+        finishBounds.top >= capturedBounds.bottom - 1,
+      ),
+      finishPosition: finish ? getComputedStyle(finish).position : "missing",
+      horizontalOverflow:
+        document.documentElement.scrollWidth >
+        document.documentElement.clientWidth,
+    };
+  });
+  expect(compactLayout).toEqual({
+    finishAfterContents: true,
+    finishPosition: "static",
+    horizontalOverflow: false,
+  });
+
+  await addContainer.click();
+  const creatorName = page.getByLabel("Friendly name");
+  await expect(page.getByRole("button", {
+    name: "capture queue",
+  })).toHaveAttribute("aria-pressed", "true");
+  await expect(creatorName).toBeVisible();
+  await expect(creatorName).toBeFocused();
+  await creatorName.fill("Tool shelf");
+  await page.getByRole("button", { name: "Add inside Garage" }).click();
+  await expect(page.locator(".capture-location-row", {
+    hasText: "Tool shelf",
+  })).toBeVisible();
+
+  await showCapturePanel(page, "current container");
+  const beforeSkip = await localReplica(page) as {
+    state: { locations: { captureStatus: string; name: string }[] };
+  };
+  await page.getByRole("button", {
+    name: /^Skip Garage for now and open .+ · Tool shelf$/,
+  }).click();
+  await expect(page.getByRole("heading", {
+    name: /.+ · Tool shelf/,
+  })).toBeVisible();
+  const afterSkip = await localReplica(page) as typeof beforeSkip;
+  for (const locationName of ["Garage", "Tool shelf"]) {
+    expect(afterSkip.state.locations.find(
+      (location) => location.name === locationName,
+    )?.captureStatus).toBe(beforeSkip.state.locations.find(
+      (location) => location.name === locationName,
+    )?.captureStatus);
+  }
+
+  await showCapturePanel(page, "capture queue");
+  await page.locator(".capture-location-row", {
+    hasText: "Garage",
+  }).locator(".queue-row").click();
+  await page.getByRole("button", { name: "Counted & next" }).click();
+  await expect(page.getByRole("heading", {
+    name: /.+ · Tool shelf/,
+  })).toBeVisible();
+  await showCapturePanel(page, "capture queue");
+  await page.locator(".capture-location-row", {
+    hasText: "Garage",
+  }).locator(".queue-row").click();
+  await expect(page.getByRole("button", {
+    name: /^Continue count in .+ · Tool shelf$/,
+  })).toBeVisible();
+});
+
+test("puts the next Plan action before setup on a narrow phone", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "mobile-chromium",
+    "The Chromium phone project covers the narrow Plan action order",
+  );
+  await page.setViewportSize(NARROW_PHONE_VIEWPORT);
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
+  await page.locator(".nav:visible", { hasText: "Plan" }).click();
+  await page.locator(".app-shell > main").evaluate((main) => {
+    main.scrollTop = 0;
+  });
+
+  const generate = page.getByRole("button", { name: "Generate move plan" });
+  await expect(generate).toBeVisible();
+  const initialAction = await page.locator(".planner-hero").evaluate((hero) => {
+    const button = hero.querySelector<HTMLButtonElement>(
+      ".plan-actions .primary",
+    );
+    const main = hero.closest("main");
+    const readiness = hero.querySelector<HTMLElement>(".plan-readiness");
+    const buttonBounds = button?.getBoundingClientRect();
+    const mainBounds = main?.getBoundingClientRect();
+    return {
+      actionBeforeReadiness: Boolean(
+        button &&
+        readiness &&
+        button.compareDocumentPosition(readiness) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ),
+      actionInMainViewport: Boolean(
+        buttonBounds &&
+        mainBounds &&
+        buttonBounds.top >= mainBounds.top &&
+        buttonBounds.bottom <= mainBounds.bottom,
+      ),
+    };
+  });
+  expect(initialAction).toEqual({
+    actionBeforeReadiness: true,
+    actionInMainViewport: true,
+  });
+
+  await generate.click();
+  const nextMove = page.getByRole("region", { name: "Next move" });
+  await expect(nextMove).toBeFocused();
+  await page.locator(".nav:visible", { hasText: "Inventory" }).click();
+  await page.locator(".nav:visible", { hasText: "Plan" }).click();
+  await page.locator(".app-shell > main").evaluate((main) => {
+    main.scrollTop = 0;
+  });
+
+  await expect(nextMove).toBeVisible();
+  const activeAction = await page.locator(".content").evaluate((content) => {
+    const hero = content.querySelector<HTMLElement>(".planner-hero");
+    const main = content.closest("main");
+    const markMoved = content.querySelector<HTMLButtonElement>(
+      ".plan-next-action",
+    );
+    const next = content.querySelector<HTMLElement>(".plan-next-move");
+    const mainBounds = main?.getBoundingClientRect();
+    const moveBounds = markMoved?.getBoundingClientRect();
+    return {
+      actionInMainViewport: Boolean(
+        mainBounds &&
+        moveBounds &&
+        moveBounds.top >= mainBounds.top &&
+        moveBounds.bottom <= mainBounds.bottom,
+      ),
+      nextMoveBeforeSetup: Boolean(
+        hero &&
+        next &&
+        next.compareDocumentPosition(hero) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ),
+    };
+  });
+  expect(activeAction).toEqual({
+    actionInMainViewport: true,
+    nextMoveBeforeSetup: true,
+  });
+});
+
 test("keeps the focused workspace header reachable on a narrow phone", async ({
   page,
 }, testInfo) => {
@@ -1718,7 +1891,7 @@ test("keeps the focused workspace header reachable on a narrow phone", async ({
     testInfo.project.name !== "mobile-chromium",
     "The Chromium phone project covers the narrow header boundary",
   );
-  await page.setViewportSize({ width: 320, height: 568 });
+  await page.setViewportSize(NARROW_PHONE_VIEWPORT);
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await page.locator(".app-shell > main").evaluate((main) => {
     main.scrollTop = 0;
@@ -1789,7 +1962,7 @@ test("prioritizes phone workspace navigation and groups secondary actions in Mor
     testInfo.project.name !== "mobile-chromium",
     "The Chromium phone project covers the persistent phone navigation",
   );
-  await page.setViewportSize({ width: 320, height: 568 });
+  await page.setViewportSize(NARROW_PHONE_VIEWPORT);
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
 
   const navigation = page.getByRole("navigation", {
@@ -2363,7 +2536,7 @@ test("keeps Plan sliders large enough for direct pointer input", async ({
     testInfo.project.name !== "desktop-chromium",
     "One desktop project covers slider target geometry",
   );
-  await page.setViewportSize({ height: 568, width: 320 });
+  await page.setViewportSize(NARROW_PHONE_VIEWPORT);
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await page.locator(".nav:visible", { hasText: "Plan" }).click();
   const sliders = page.locator('.plan-priority > input[type="range"]');
@@ -4587,7 +4760,7 @@ test("guides incomplete evidence into a reviewable plan", async ({ page }) => {
     state: { locations: { captureStatus: string; id: string }[] };
   };
   await page.getByRole("button", {
-    name: "Next unfinished BX-09 · Appliance parts Open without changing Corner cabinet",
+    name: "Skip Corner cabinet for now and open BX-09 · Appliance parts",
   }).click();
   await expect(page.getByRole("heading", { name: "BX-09 · Appliance parts" })).toBeVisible();
   const afterAdvance = await localReplica(page) as typeof beforeAdvance;

@@ -9,20 +9,20 @@ Capture is designed for a phone in one hand while the other hand opens boxes and
 3. Expand **Add description or unit** when a searchable description or a unit other than `each` will help.
 4. Choose **Save & add next**.
 5. Repeat until the loose items in that space are represented.
-6. Add any nested boxes, bins, drawers, or shelves before moving on.
+6. Add any nested boxes, bins, drawers, or shelves before moving on. On a phone, choose **Add container inside [name]** from **Current container** to open and focus the matching form in **Capture queue**.
 7. Choose **Counted & next**.
 
 Each accepted row is saved in this browser before Stowplan tries online backup. You can close the tab or lose service after the save completes without losing that accepted row.
 
-Use **Next unfinished** when you only want to navigate. It does not change the current space. **Counted & next** records that the current space is accurate enough and advances through the full hierarchy, including branches that are collapsed or hidden by a filter.
+Use **Skip for now** when you want to continue in the named next space without changing either space's capture status. After the current space is complete, the same shortcut reads **Continue count**. **Counted & next** records that the current space is accurate enough and advances through the full hierarchy, including branches that are collapsed or hidden by a filter.
 
-On a phone, **Capture queue** and **Current container** switch between the hierarchy and the focused form without discarding unfinished form input. Every queue row keeps **Move** available as a separate action when you need to change its exact parent or position.
+On a phone, **Capture queue** and **Current container** switch between the hierarchy and the focused form without discarding unfinished form input. Completion controls follow the captured contents in the page rather than covering them. Every queue row keeps **Move** available as a separate action when you need to change its exact parent or position.
 
 At compact desktop widths, the workspace navigation becomes an icon rail automatically so the Capture queue and current container can remain side by side. Wider windows restore the text navigation according to your saved sidebar preference.
 
 ## Add a container inside another
 
-Select the parent and use **Add inside [name]**. Stowplan suggests a short ID from the friendly name, but you can replace it with the code on your physical label.
+Select the parent. On a phone, choose **Add container inside [name]** from **Current container**; Stowplan switches to **Capture queue** and focuses the **Add inside [name]** form. In a side-by-side layout, use that form directly in the queue. Stowplan suggests a short ID from the friendly name, but you can replace it with the code on your physical label.
 
 Use **Add as another top-level space** for a separate room, garage, storage unit, or other root rather than a container inside the selected space.
 

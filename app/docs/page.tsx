@@ -26,7 +26,7 @@ export default function InAppDocs() {
     </header>
     <section>
       <h2>Capture one space at a time</h2>
-      <p>Give a room, cabinet, drawer, box, or bin the same short ID as its physical label. Enter each distinct item by name, adjusting the default quantity only when needed. Description and unit are optional details. Add nested containers while you are looking at them, then choose <strong>Counted & next</strong> when the records are accurate enough to organize.</p>
+      <p>Give a room, cabinet, drawer, box, or bin the same short ID as its physical label. Enter each distinct item by name, adjusting the default quantity only when needed. Description and unit are optional details. On a phone, use <strong>Add container inside</strong> from the current container to open the matching queue form. Choose <strong>Skip for now</strong> to navigate without changing capture status, or <strong>Counted & next</strong> when the records are accurate enough to organize.</p>
     </section>
     <section>
       <h2>Keep working without service</h2>
@@ -38,7 +38,7 @@ export default function InAppDocs() {
     </section>
     <section>
       <h2>Follow the next move</h2>
-      <p>Generating a plan focuses its compact <strong>Next move</strong> card. Keep the route and <strong>Mark moved</strong> action in view while working, expand the supporting details only when needed, and let the card advance after each completed move.</p>
+      <p>With no active plan, <strong>Generate move plan</strong> appears before setup and readiness guidance. Generating focuses the compact <strong>Next move</strong> card, and returning to Plan puts that physical action first. Keep the route and <strong>Mark moved</strong> action in view while working, expand the supporting details only when needed, and let the card advance after each completed move.</p>
     </section>
     <section>
       <h2>Correct a mistake</h2>

@@ -4,7 +4,7 @@ A move plan turns your captured layout into a sequence of practical physical cha
 
 ## Check readiness
 
-Open **Plan** after the relevant spaces are mostly counted. The readiness panel separates information required to make a useful plan from details that would only improve confidence.
+Open **Plan** after the relevant spaces are mostly counted. When there is no active plan, **Generate move plan** appears before the explanation, priorities, and readiness guidance so you can act immediately when the evidence is already sufficient. The readiness panel separates information required to make a useful plan from details that would only improve confidence.
 
 It may ask you to:
 
@@ -17,7 +17,7 @@ Each prompt opens the relevant Capture, Inventory, or Spaces editor. Measurement
 
 ## Generate and review
 
-Generate a plan to move directly to a focused **Next move** card. Its source, destination, amount, and **Mark moved** action stay visible. Expand **Why this move and review details** when you need the reasoning or links to the underlying records, and expand **Review full plan** when you want the complete route.
+Generate a plan to move directly to a focused **Next move** card. When you return to **Plan**, the active plan's next physical move appears before plan priorities and readiness guidance. Its source, destination, amount, and **Mark moved** action stay visible. Expand **Why this move and review details** when you need the reasoning or links to the underlying records, and expand **Review full plan** when you want the complete route.
 
 Stowplan considers:
 
