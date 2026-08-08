@@ -75,7 +75,7 @@
     "tailwindcss": "4.3.3",
     "tsx": "^4.23.1",
     "typescript": "^6.0.3",
-    "vinext": "0.0.50",
+    "vinext": "0.0.45",
     "vite": "8.1.5",
     "vitepress": "^1.6.4",
     "vitest": "^4.1.10",
