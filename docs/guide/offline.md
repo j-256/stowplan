@@ -46,6 +46,6 @@ On a shared browser, saved server permission belongs to the account that receive
 
 ## Before clearing browser data
 
-Open **Settings → Review sync issues or restore a backup** if anything is waiting or refused, then export the full recovery bundle. For a clean workspace, **Settings → Export JSON backup** creates a portable snapshot.
+Open **Settings → Backup & recovery → Review sync issues or restore a backup** if anything is waiting or refused, then export the full recovery bundle. For a clean workspace, **Settings → Backup & recovery → Export JSON backup** creates a portable snapshot.
 
 Save the file somewhere outside this browser's site data. See [Backup and recovery](/guide/recovery) for restore choices.

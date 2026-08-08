@@ -17,7 +17,7 @@ Each prompt opens the relevant Capture, Inventory, or Spaces editor. Measurement
 
 ## Generate and review
 
-Generate a plan to move directly to a focused **Next move** card. When you return to **Plan**, the active plan's next physical move appears before plan priorities and readiness guidance. Its source, destination, amount, and **Mark moved** action stay visible. Expand **Why this move and review details** when you need the reasoning or links to the underlying records, and expand **Review full plan** when you want the complete route.
+Generate a plan to move directly to a focused **Next move** card. When you return to **Plan**, the active plan's next physical move appears before plan priorities and readiness guidance. Its source, destination, amount, and **Mark moved** action stay visible. On a phone, open **Plan options** only when you need priorities, readiness, replacement, or discard controls. Expand **Why this move and review details** when you need the reasoning or links to the underlying records, and expand **Review full plan** when you want the complete route.
 
 Stowplan considers:
 

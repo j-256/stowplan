@@ -301,8 +301,27 @@
 }
 
 @media (max-width: 760px) {
+  .hub {
+    padding:
+      max(0.75rem, env(safe-area-inset-top))
+      max(0.75rem, env(safe-area-inset-right))
+      max(1rem, env(safe-area-inset-bottom))
+      max(0.75rem, env(safe-area-inset-left));
+  }
+
   .hub > header {
     flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .hub > header :global(.eyebrow),
+  .hub > header p:not(:global(.eyebrow)) {
+    display: none;
+  }
+
+  .hub > header h1 {
+    font-size: 1.65rem;
+    margin: 0;
   }
 
   .headerActions {
@@ -326,7 +345,10 @@
   }
 
   .toolbar {
+    gap: 0.6rem;
     grid-template-columns: minmax(0, 1fr);
+    margin: 0.8rem 0;
+    padding: 0.75rem;
   }
 
   .toolbar form {
@@ -336,6 +358,21 @@
   .trial {
     align-items: stretch;
     flex-direction: column;
+    gap: 0.75rem;
+    margin: 0.8rem 0;
+    padding: 0.8rem;
+  }
+
+  .trial p:last-child {
+    display: none;
+  }
+
+  .cards {
+    gap: 0.65rem;
+  }
+
+  .card {
+    padding: 0.8rem;
   }
 
   .dialogActions {

@@ -62,18 +62,18 @@ const VIEWS = [
     // The demo lands on the current-container form, which carries a demo-only
     // "Try one change" coaching banner. That banner plus the empty input crowd
     // out the actual content, and the space tree -- the counted-progress
-    // showcase -- lives on the other compact panel.
-    //   - mobile: switch to the Capture queue panel. The tree with "Counted"
-    //     badges becomes the shot, and the banner stays behind in the now-hidden
-    //     container panel, so no dismissal is needed.
+    // showcase -- lives on the other compact panel
+    //   - mobile: dismiss the demo banner, then switch to Capture queue so the
+    //     tree with "Counted" badges becomes the shot
     //   - desktop: both panels already show side by side, so there is no panel
-    //     toggle; dismiss the banner directly instead.
+    //     toggle; dismiss the banner directly instead
     prepare: async (page, profile) => {
       if (profile.key === 'mobile') {
         const navigation = page.getByRole('group', { name: 'Capture panels navigation' });
-        if (await navigation.isVisible()) {
-          await navigation.getByRole('button', { name: 'capture queue' }).click();
-        }
+        await navigation.waitFor();
+        await dismissDemoBanner(page);
+        await navigation.getByRole('button', { name: 'capture queue' }).click();
+        await page.locator('.capture > .queue').waitFor();
       } else {
         await dismissDemoBanner(page);
       }

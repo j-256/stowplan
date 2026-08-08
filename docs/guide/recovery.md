@@ -4,15 +4,15 @@ Use backups for device loss, browser cleanup, major workspace changes, and refus
 
 ## Choose the right export
 
-**Settings → Export JSON backup** saves a portable workspace snapshot, including its spaces, items, plans, and available history. It does not contain an app session or sign-in secret.
+**Settings → Backup & recovery → Export JSON backup** saves a portable workspace snapshot, including its spaces, items, plans, and available history. It does not contain an app session or sign-in secret.
 
-**Settings → Review sync issues or restore a backup → Export full recovery bundle** also includes changes waiting for upload, refused changes, and their errors. Use this version whenever the device and online copy disagree.
+**Settings → Backup & recovery → Review sync issues or restore a backup → Export full recovery bundle** also includes changes waiting for upload, refused changes, and their errors. Use this version whenever the device and online copy disagree.
 
 Save either file somewhere outside the browser or device whose data you are protecting.
 
 ## Recover refused or conflicting changes
 
-Open **Settings → Review sync issues or restore a backup**. The screen lists waiting and refused changes with the time and server message.
+Open **Settings → Backup & recovery → Review sync issues or restore a backup**. The screen lists waiting and refused changes with the time and server message.
 
 If the browser refuses to open site storage, Recovery shows a blocking alert and does not offer export, reset, or restore actions. Do not clear site data as a troubleshooting step. Correct the browser or private-browsing restriction and reload Recovery so Stowplan can read the device copy before offering any action.
 
@@ -44,7 +44,7 @@ An exported file is a copy you control. It is not a server undelete service and 
 
 ## Open a backup without replacing anything
 
-1. Open **Settings → Review sync issues or restore a backup**.
+1. Open **Settings → Backup & recovery → Review sync issues or restore a backup**.
 2. Choose the JSON file.
 3. Review the validation report and the incoming workspace summary.
 4. Choose **Open as separate local copy**.

@@ -69,12 +69,6 @@
   margin-top: clamp(24px, 6vw, 56px);
 }
 
-@media (max-width: 620px) {
-  .values {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
 .value {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -101,4 +95,66 @@
   justify-content: center;
   margin-top: clamp(40px, 8vw, 80px);
   padding-top: 18px;
+}
+
+@media (max-width: 620px) {
+  .page {
+    padding: 14px;
+  }
+
+  .hero {
+    padding: 22px 0 12px;
+    text-align: left;
+  }
+
+  .hero :global(.eyebrow),
+  .supporting {
+    display: none;
+  }
+
+  .hero h1 {
+    font-size: 2.35rem;
+    margin: 0;
+  }
+
+  .subhead {
+    font-size: 1.05rem;
+    margin: 8px 0 0;
+  }
+
+  .actions {
+    display: grid;
+    gap: 8px;
+    margin-top: 18px;
+  }
+
+  .actions a {
+    min-width: 0;
+    padding: 9px 14px;
+  }
+
+  .values {
+    gap: 8px;
+    grid-template-columns: minmax(0, 1fr);
+    margin-top: 16px;
+  }
+
+  .value {
+    border-radius: 11px;
+    padding: 13px;
+  }
+
+  .value h2 {
+    margin-bottom: 5px;
+  }
+
+  .value p {
+    font-size: 0.9rem;
+    line-height: 1.45;
+  }
+
+  .footer {
+    justify-content: flex-start;
+    margin-top: 24px;
+  }
 }

@@ -34,11 +34,11 @@ export default function InAppDocs() {
     </section>
     <section>
       <h2>Find and move things</h2>
-      <p>Use <strong>Spaces</strong> when you know the place and <strong>Inventory</strong> when you know the item. On a phone, each compact result shows the item, quantity, and nearest space; tap it for the full path and details. For an item in a counted space, review and reopen it in the item dialog, make the change, then choose <strong>Mark counted again</strong> there.</p>
+      <p>Use <strong>Spaces</strong> when you know the place and <strong>Inventory</strong> when you know the item. On a phone, each compact result shows the item, quantity, and nearest space; tap it for the full path and details. Choose <strong>Filter and sort</strong> beside search when you need its secondary controls. For an item in a counted space, review and reopen it in the item dialog, make the change, then choose <strong>Mark counted again</strong> there.</p>
     </section>
     <section>
       <h2>Follow the next move</h2>
-      <p>With no active plan, <strong>Generate move plan</strong> appears before setup and readiness guidance. Generating focuses the compact <strong>Next move</strong> card, and returning to Plan puts that physical action first. Keep the route and <strong>Mark moved</strong> action in view while working, expand the supporting details only when needed, and let the card advance after each completed move.</p>
+      <p>With no active plan, <strong>Generate move plan</strong> appears before setup and readiness guidance. Generating focuses the compact <strong>Next move</strong> card, and returning to Plan puts that physical action first. On a phone, priorities, readiness, replacement, and discard actions move under <strong>Plan options</strong> while a plan is active. Keep the route and <strong>Mark moved</strong> action in view while working, expand the supporting details only when needed, and let the card advance after each completed move.</p>
     </section>
     <section>
       <h2>Correct a mistake</h2>

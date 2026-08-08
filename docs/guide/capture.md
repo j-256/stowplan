@@ -16,7 +16,7 @@ Each accepted row is saved in this browser before Stowplan tries online backup. 
 
 Use **Skip for now** when you want to continue in the named next space without changing either space's capture status. After the current space is complete, the same shortcut reads **Continue count**. **Counted & next** records that the current space is accurate enough and advances through the full hierarchy, including branches that are collapsed or hidden by a filter.
 
-On a phone, **Capture queue** and **Current container** switch between the hierarchy and the focused form without discarding unfinished form input. Completion controls follow the captured contents in the page rather than covering them. Every queue row keeps **Move** available as a separate action when you need to change its exact parent or position.
+On a phone, **Capture queue** and **Current container** switch between the hierarchy and the focused form without discarding unfinished form input. The queue keeps its space-creation form collapsed until you choose its **Add** action, except when the workspace still needs its first space. Completion controls follow the captured contents in the page rather than covering them. Every queue row keeps **Move** available as a separate action when you need to change its exact parent or position.
 
 At compact desktop widths, the workspace navigation becomes an icon rail automatically so the Capture queue and current container can remain side by side. Wider windows restore the text navigation according to your saved sidebar preference.
 
@@ -54,4 +54,4 @@ Reorder handles change the visible order inside one container. Arrow controls pr
 
 ## Print labels
 
-Open **Settings → Print text and QR labels**. A plain text code is enough for everyday use; QR labels are optional shortcuts into the matching Stowplan view.
+Open **Settings → Backup & recovery → Print text and QR labels**. A plain text code is enough for everyday use; QR labels are optional shortcuts into the matching Stowplan view.

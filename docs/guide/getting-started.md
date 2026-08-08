@@ -19,7 +19,7 @@ Anything you change in the demo is real enough to explore Activity, undo, search
 
 ## Move around on a phone
 
-The bottom bar keeps the four frequent workspace tasks one tap away: **Capture**, **Spaces**, **Inventory**, and **Plan**. Choose **More** for **Activity**, **Settings**, **Workspaces and backup status**, sharing the exact view, and changing the theme. Search and the account menu stay in the workspace header.
+The bottom bar keeps the four frequent workspace tasks one tap away: **Capture**, **Spaces**, **Inventory**, and **Plan**. Choose **More** for **Activity**, **Settings**, **Workspaces and backup status**, sharing the exact view, and changing the theme. In phone Settings, open **Backup & recovery** or **Help & source** only when you need those secondary tools. Search and the account menu stay in the workspace header.
 
 ## Start your own workspace
 

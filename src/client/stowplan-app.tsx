@@ -38,6 +38,7 @@ import {
   Settings,
   Share2,
   ShieldCheck,
+  SlidersHorizontal,
   Sun,
   Trash2,
   WifiOff,
@@ -2365,6 +2366,9 @@ function Application({
       </header>
       {!showBackupMessage && <a
         className="mobile-sync-status"
+        data-attention={syncStatus.state === "blocked" || syncStatus.offline
+          ? "true"
+          : undefined}
         href={backupReviewPath}
         onClick={backupReviewPath === WORKSPACE_LIST_PATH
           ? (event) => followAppLink(event, openWorkspaceMenu)
@@ -2534,7 +2538,6 @@ function Application({
       state={state}
     />}
     <ModalDialog
-      description={<p>Open occasional workspace destinations and utilities.</p>}
       onClose={() => setMobileMoreOpen(false)}
       open={mobileMoreOpen}
       returnFocusRef={mobileMoreTrigger}
@@ -2700,6 +2703,7 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
   const [emptying, setEmptying] = useState(false);
   const [containerReview, setContainerReview] = useState<ContainerReview | null>(null);
   const [containerReviewNotice, setContainerReviewNotice] = useState("");
+  const [containerCreatorOpen, setContainerCreatorOpen] = useState(false);
   const [editorNavigationKey, setEditorNavigationKey] = useState(0);
   const [hierarchyDragging, setHierarchyDragging] = useState(false);
   const [nativeReorderCue, setNativeReorderCue] = useState<DropTarget | null>(null);
@@ -2875,6 +2879,7 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
       for (const ancestorId of ancestorIds) next.delete(ancestorId);
       return next;
     });
+    setContainerCreatorOpen(false);
     select(id);
     if (
       focusEditorOnTouch &&
@@ -2886,6 +2891,7 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
   };
   const revealContainerCreator = () => {
     setCompactPanel("primary");
+    setContainerCreatorOpen(true);
     requestAnimationFrame(() => {
       const form = containerCreator.current;
       const behavior = matchMedia("(prefers-reduced-motion: reduce)").matches
@@ -2905,7 +2911,9 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
     }
     const parentId = topLevel ? null : current?.id ?? null;
     const siblings = live.filter((location) => location.parentId === parentId);
-    return perform(commit, { type: "location.create", location: createLocation({ code: String(data.get("code")), name: String(data.get("name")), kind: String(data.get("kind")) as LocationKind, parentId, order: nextOrder(siblings) }) });
+    const created = await perform(commit, { type: "location.create", location: createLocation({ code: String(data.get("code")), name: String(data.get("name")), kind: String(data.get("kind")) as LocationKind, parentId, order: nextOrder(siblings) }) });
+    if (created) setContainerCreatorOpen(false);
+    return created;
   };
   const addItem = async (data: FormData): Promise<boolean> => {
     if (!current) return false;
@@ -3331,42 +3339,60 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
         ? "No containers yet. Add your first space below."
         : "No containers match this search."}
     </p>}
-    {captureComplete
-      ? <form
-          className="nested"
-          key={`${current?.id ?? "root"}-top-level`}
-          onSubmit={(event) => submitForm(event, addContainer)}
-          ref={containerCreator}
-        >
-          <h3>Add an unrelated top-level space</h3>
-          <LocationCreateFields
-            defaultKind="room"
-            existingCodes={live.map((location) => location.code)}
-            kindLabel="Space type"
-            namePlaceholder="Friendly name (e.g. garage)"
-          />
-          <input type="hidden" name="topLevel" value="on" />
-          <button>Add top-level space</button>
-        </form>
-      : <form
-          className="nested"
-          key={current?.id ?? "root"}
-          onSubmit={(event) => submitForm(event, addContainer)}
-          ref={containerCreator}
-        >
-          <LocationCreateFields
-            defaultKind={current ? "box" : "room"}
-            existingCodes={live.map((location) => location.code)}
-            kindLabel="Container type"
-            namePlaceholder={current
-              ? "Friendly name (e.g. winter gear bin)"
-              : "Friendly name (e.g. apartment)"}
-          />
-          {current && <label className="top-level">
-            <input type="checkbox" name="topLevel" /> Add as another top-level space
-          </label>}
-          <button>{current ? `Add inside ${current.name}` : "Add first space"}</button>
-        </form>}
+    <div
+      className="capture-space-creator"
+      data-open={!current || containerCreatorOpen ? "true" : undefined}
+      data-required={!current ? "true" : undefined}
+      key={`${current?.id ?? "root"}-${captureComplete ? "complete" : "open"}`}
+    >
+      <button
+        aria-expanded={!current || containerCreatorOpen}
+        className="creator-trigger"
+        onClick={() => setContainerCreatorOpen((open) => !open)}
+        type="button"
+      >
+        <Plus aria-hidden="true" />
+        <span>{current
+          ? captureComplete
+            ? "Add an unrelated space"
+            : `Add a space inside ${current.name}`
+          : "Add your first space"}</span>
+        <ChevronDown aria-hidden="true" />
+      </button>
+      {captureComplete
+        ? <form
+            className="nested"
+            onSubmit={(event) => submitForm(event, addContainer)}
+            ref={containerCreator}
+          >
+            <LocationCreateFields
+              defaultKind="room"
+              existingCodes={live.map((location) => location.code)}
+              kindLabel="Space type"
+              namePlaceholder="Friendly name (e.g. garage)"
+            />
+            <input type="hidden" name="topLevel" value="on" />
+            <button>Add top-level space</button>
+          </form>
+        : <form
+            className="nested"
+            onSubmit={(event) => submitForm(event, addContainer)}
+            ref={containerCreator}
+          >
+            <LocationCreateFields
+              defaultKind={current ? "box" : "room"}
+              existingCodes={live.map((location) => location.code)}
+              kindLabel="Container type"
+              namePlaceholder={current
+                ? "Friendly name (e.g. winter gear bin)"
+                : "Friendly name (e.g. apartment)"}
+            />
+            {current && <label className="top-level">
+              <input type="checkbox" name="topLevel" /> Add as another top-level space
+            </label>}
+            <button>{current ? `Add inside ${current.name}` : "Add first space"}</button>
+          </form>}
+    </div>
   </section>;
   const demoIntroPanel = demoIntro && !demoIntroDismissed
     ? <aside
@@ -3484,14 +3510,11 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
           <span>Add container inside {current.name}</span>
         </button>}
         {nextUncounted && <button
-          aria-label={captureComplete
-            ? `Continue count in ${nextUncounted.code} · ${nextUncounted.name}`
-            : `Skip ${current.name} for now and open ${nextUncounted.code} · ${nextUncounted.name}`}
           className="capture-next-location"
           onClick={() => selectCaptureLocation(nextUncounted.id)}
           type="button"
         >
-          <span>{captureComplete ? "Continue count" : "Skip for now"}</span>
+          <span>{captureComplete ? "Continue count" : "Skip for now"}{" "}</span>
           <strong>{nextUncounted.code} · {nextUncounted.name}</strong>
           <ChevronRight aria-hidden="true" />
         </button>}
@@ -4367,6 +4390,7 @@ function LocationMoveDialog({
 }
 
 function LocationEditor({ state, location, commit, select, reorder, remove, editItem, moveByDrop, requestHierarchyChange, setDragging, startNativeDrag, endNativeDrag }: { state: WorkspaceState; location: Location; commit: Commit; select: (id: string) => void; reorder: (location: Location, direction: -1 | 1) => void; remove: () => void; editItem: (id: string) => void; moveByDrop: (payload: DragPayload, target: DropTarget) => void; requestHierarchyChange: (command: LocationHierarchyCommand, trigger?: HTMLElement | null) => Promise<boolean>; setDragging: (dragging: boolean) => void; startNativeDrag: (event: React.DragEvent, payload: DragPayload) => void; endNativeDrag: () => void }) {
+  const [childCreatorOpen, setChildCreatorOpen] = useState(false);
   const hierarchyChangeTrigger = useRef<HTMLElement | null>(null);
   const editorForm = useRef<HTMLFormElement | null>(null);
   const formBaseline = useRef(locationFormValues(location));
@@ -4415,7 +4439,9 @@ function LocationEditor({ state, location, commit, select, reorder, remove, edit
   const addChild = async (data: FormData) => {
     const children = state.locations.filter((candidate) => candidate.parentId === location.id && !candidate.archivedAt);
     const child = createLocation({ code: String(data.get("code")), name: String(data.get("name")), kind: String(data.get("kind")) as LocationKind, parentId: location.id, order: nextOrder(children) });
-    return perform(commit, { type: "location.create", location: child });
+    const created = await perform(commit, { type: "location.create", location: child });
+    if (created) setChildCreatorOpen(false);
+    return created;
   };
   const captureComplete = COMPLETE_CAPTURE_STATUSES.has(location.captureStatus);
   const reopenCapture = () => perform(commit, {
@@ -4492,11 +4518,26 @@ function LocationEditor({ state, location, commit, select, reorder, remove, edit
       <span><strong>Contents are read-only</strong><small>Reopen capture before adding, editing, moving, or reordering direct contents.</small></span>
       <button type="button" onClick={() => void reopenCapture()}><RotateCcw /> Reopen capture</button>
     </div>}
-    {!captureComplete && <form key={location.id} className="nested inline-add" onSubmit={(event) => submitForm(event, addChild)}>
-      <h3>Add inside {location.name}</h3>
-      <LocationCreateFields defaultKind="box" existingCodes={state.locations.filter((candidate) => !candidate.archivedAt).map((candidate) => candidate.code)} kindLabel="Space type" namePlaceholder="Friendly name" />
-      <button>Add nested space</button>
-    </form>}
+    {!captureComplete && <div
+      className="space-child-creator"
+      data-open={childCreatorOpen ? "true" : undefined}
+      key={location.id}
+    >
+      <button
+        aria-expanded={childCreatorOpen}
+        className="creator-trigger"
+        onClick={() => setChildCreatorOpen((open) => !open)}
+        type="button"
+      >
+        <Plus aria-hidden="true" />
+        <span>Add inside {location.name}</span>
+        <ChevronDown aria-hidden="true" />
+      </button>
+      <form className="nested inline-add" onSubmit={(event) => submitForm(event, addChild)}>
+        <LocationCreateFields defaultKind="box" existingCodes={state.locations.filter((candidate) => !candidate.archivedAt).map((candidate) => candidate.code)} kindLabel="Space type" namePlaceholder="Friendly name" />
+        <button>Add nested space</button>
+      </form>
+    </div>}
     <div className="location-contents">
       <h3>Direct contents <small>{contents.length} records</small></h3>
       {contents.map((item) => <div
@@ -4516,6 +4557,7 @@ function LocationEditor({ state, location, commit, select, reorder, remove, edit
 }
 
 function Inventory({ state, commit, editing, editFocus, locationFilter, onEditingChange, onLocationFilterChange, onOpenLocation }: { state: WorkspaceState; commit: Commit; editing: string | null; editFocus?: GuidanceFocus; locationFilter: string; onEditingChange: (id: string | null) => void; onLocationFilterChange: (id: string) => void; onOpenLocation: (id: string) => void }) {
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [sortBy, setSortBy] = useState<"location" | "name" | "quantity">("name");
   const [selected, setSelected] = useState<string[]>([]);
@@ -4858,16 +4900,39 @@ function Inventory({ state, commit, editing, editFocus, locationFilter, onEditin
       <b>{shown.length} records</b>
     </div>
     <div className="toolbar inventory-tools">
-      <label className="search"><Search /><input aria-label="Search inventory" autoComplete="off" name="inventoryQuery" value={query} onChange={(event) => { setQuery(event.target.value); setSelected([]); setMoveDestinationId(""); }} placeholder="Search names, descriptions, categories, tags, and requirements" /></label>
-      <select aria-label="Filter by location" name="inventoryLocation" value={locationFilter} onChange={(event) => { onLocationFilterChange(event.target.value); setSelected([]); setMoveDestinationId(""); }}>
-        <option value="">Every container</option>
-        {locationOptions.map(({ depth, location }) => <option key={location.id} value={location.id}>{`${"  ".repeat(depth)}${depth ? "↳ " : ""}${location.code} · ${location.name}`}</option>)}
-      </select>
-      <select aria-label="Sort inventory" name="inventorySort" value={sortBy} onChange={(event) => setSortBy(event.target.value as typeof sortBy)} disabled={canReorder}>
-        <option value="name">Sort: name</option>
-        <option value="location">Sort: location</option>
-        <option value="quantity">Sort: quantity</option>
-      </select>
+      <label className="search"><Search /><input aria-label="Search inventory" autoComplete="off" name="inventoryQuery" value={query} onChange={(event) => { setQuery(event.target.value); setSelected([]); setMoveDestinationId(""); }} placeholder="Search inventory" /></label>
+      <div
+        className="inventory-filters"
+        data-filtered={filteredLocation ? "true" : undefined}
+        data-open={filtersOpen ? "true" : undefined}
+      >
+        <button
+          aria-expanded={filtersOpen}
+          aria-label="Filter and sort inventory"
+          className="inventory-filter-trigger"
+          onClick={() => setFiltersOpen((open) => !open)}
+          title="Filter and sort inventory"
+          type="button"
+        >
+          <span>Filter and sort</span>
+          <small>{filteredLocation
+            ? `${filteredLocation.code} · ${filteredLocation.name}`
+            : "Every container"}</small>
+          <SlidersHorizontal aria-hidden="true" />
+        </button>
+        <div className="inventory-filter-controls">
+          <select aria-label="Filter by location" name="inventoryLocation" value={locationFilter} onChange={(event) => { onLocationFilterChange(event.target.value); setSelected([]); setMoveDestinationId(""); }}>
+            <option value="">Every container</option>
+            {locationOptions.map(({ depth, location }) => <option key={location.id} value={location.id}>{`${"  ".repeat(depth)}${depth ? "↳ " : ""}${location.code} · ${location.name}`}</option>)}
+          </select>
+          <select aria-label="Sort inventory" name="inventorySort" value={sortBy} onChange={(event) => setSortBy(event.target.value as typeof sortBy)} disabled={canReorder}>
+            <option value="name">Sort: name</option>
+            <option value="location">Sort: location</option>
+            <option value="quantity">Sort: quantity</option>
+          </select>
+          <button className="inventory-filter-done" onClick={() => setFiltersOpen(false)} type="button">Done</button>
+        </div>
+      </div>
     </div>
     {filteredCaptureComplete && filteredLocation && <div className="capture-locked capture-locked-action" role="status">
       <CheckCircle2 />
@@ -5609,6 +5674,7 @@ function Planner({ state, commit, openGuidanceTarget }: { state: WorkspaceState;
   const [name, setName] = useState("Suggested reset");
   const [message, setMessage] = useState("");
   const [nextMoveFocusRequest, setNextMoveFocusRequest] = useState(0);
+  const [planOptionsOpen, setPlanOptionsOpen] = useState(false);
   const nextMoveAction = useRef<HTMLButtonElement | null>(null);
   const nextMoveCard = useRef<HTMLElement | null>(null);
   const generate = async () => {
@@ -5621,6 +5687,7 @@ function Planner({ state, commit, openGuidanceTarget }: { state: WorkspaceState;
       await commit({ type: "plan.create", plan });
       setMessage(`${plan.steps.length} explainable ${plan.steps.length === 1 ? "move" : "moves"} added to the new plan.`);
       setNextMoveFocusRequest((request) => request + 1);
+      setPlanOptionsOpen(false);
     } catch (error) { setMessage(error instanceof Error ? error.message : "Could not create the plan"); }
   };
   const updateWeight = (key: keyof PlanWeights, value: number) => setWeights((current) => ({ ...current, [key]: value }));
@@ -5701,7 +5768,26 @@ function Planner({ state, commit, openGuidanceTarget }: { state: WorkspaceState;
   const nextSubject = nextStep ? subjectForStep(nextStep) : null;
   const nextItemId = nextSubject?.item?.id ?? null;
   const nextContainerId = nextSubject?.container?.id ?? null;
-  const plannerHero = <section className="panel hero planner-hero">
+  const plannerHero = <section
+    className="panel planner-hero"
+    data-has-active={active ? "true" : undefined}
+    data-open={!active || planOptionsOpen ? "true" : undefined}
+  >
+    <button
+      aria-expanded={planOptionsOpen}
+      className="planner-options-summary"
+      onClick={() => setPlanOptionsOpen((open) => !open)}
+      type="button"
+    >
+      <span>
+        <strong>{active ? "Plan options" : "Create a move plan"}</strong>
+        <small>{active
+          ? "Priorities, readiness, replace, or discard"
+          : "Generate now or review the available evidence"}</small>
+      </span>
+      <ChevronDown aria-hidden="true" />
+    </button>
+    <div className="planner-hero-body">
       <div className="planner-overview">
         <p className="eyebrow">Explainable recommendations</p>
         <h2>Fewer moves, better homes.</h2>
@@ -5740,7 +5826,8 @@ function Planner({ state, commit, openGuidanceTarget }: { state: WorkspaceState;
         })}
       </details>
       <PlanningReadinessPanel readiness={readiness} state={state} openGuidanceTarget={openGuidanceTarget} />
-    </section>;
+    </div>
+  </section>;
   return <div className="content">
     {hasConflictingPlans && <section className="panel form-message" role="alert"><h3>Resolve overlapping active plans</h3><p>This older workspace contains {activePlans.length} active plans. Generate a fresh plan to replace all of them, or discard plans until one remains before executing a move.</p>{activePlans.map((plan) => <button key={plan.id} onClick={() => void perform(commit, { type: "plan.status", planId: plan.id, status: "discarded" })}>Discard {plan.name}</button>)}</section>}
     {active && !hasConflictingPlans && nextStep && nextSubject ? <>
@@ -5816,6 +5903,8 @@ function History({ state, commit }: { state: WorkspaceState; commit: Commit }) {
   />;
 }
 function Preferences({ state, commit, theme, setTheme, openMenu, returnTo, serverBacked }: { state: WorkspaceState; commit: Commit; theme: ThemePreference; setTheme: (theme: ThemePreference) => void; openMenu: () => void; returnTo: string; serverBacked: boolean }) {
+  const [backupToolsOpen, setBackupToolsOpen] = useState(false);
+  const [helpToolsOpen, setHelpToolsOpen] = useState(false);
   const workspaceNameBaseline = useRef({
     id: state.workspace.id,
     name: state.workspace.name,
@@ -5858,7 +5947,60 @@ function Preferences({ state, commit, theme, setTheme, openMenu, returnTo, serve
       if (url) URL.revokeObjectURL(url);
     }
   };
-  return <div className="content settings"><section className="panel"><h2>Workspace</h2><form className="workspace-rename" onSubmit={(event) => submitForm(event, (data) => perform(commit, { type: "workspace.rename", name: String(data.get("workspaceName")) }), false)}><label>Workspace name<input required maxLength={80} name="workspaceName" value={workspaceNameDraft} onChange={(event) => setWorkspaceNameDraft(event.currentTarget.value)} /></label><button>Rename workspace</button></form><p className="muted">Switch workspaces, inspect backup status, or manage device copies.</p><a className="settings-workspaces-link" href={WORKSPACE_LIST_PATH} onClick={(event) => followAppLink(event, openMenu)}><Home /> Workspaces and backup status</a>{serverBacked && <a href={workspacePath({ view: "access", workspaceId: state.workspace.id, workspaceLabel: state.workspace.name })}>Workspace access</a>}<h2>Appearance</h2><div className="segments">{(["system", "light", "dark"] as const).map((entry) => <button aria-pressed={theme === entry} data-active={theme === entry} key={entry} onClick={() => setTheme(entry)}>{entry}</button>)}</div><h2>Backup & recovery</h2><p className="muted">Export a complete portable snapshot. Imports are validated and previewed before replacement.</p><button onClick={download}>Export JSON backup</button><a href="/recovery">Review sync issues or restore a backup</a><a href="/labels">Print text and QR labels</a></section><section className="panel"><h2>Account & server backup</h2><a href={`/account?workspace=${encodeURIComponent(state.workspace.id)}&returnTo=${encodeURIComponent(returnTo)}`}>Sign in or review this account</a><h2>Help & source</h2><a target="_blank" rel="noreferrer" href={USER_GUIDE_URL}>Open full user guide</a><a href="/docs/">Read the offline quick guide</a><a target="_blank" rel="noreferrer" href={SOURCE_REPOSITORY_URL}>View source repository</a><p className="license">A Strange Lasers project<br />AGPL-3.0-only<br />Copyright © 2026 James Klein (j-256)</p></section></div>;
+  return <div className="content settings">
+    <section className="panel">
+      <h2>Workspace</h2>
+      <form className="workspace-rename" onSubmit={(event) => submitForm(event, (data) => perform(commit, { type: "workspace.rename", name: String(data.get("workspaceName")) }), false)}>
+        <label>Workspace name<input required maxLength={80} name="workspaceName" value={workspaceNameDraft} onChange={(event) => setWorkspaceNameDraft(event.currentTarget.value)} /></label>
+        <button>Rename workspace</button>
+      </form>
+      <p className="muted settings-workspace-help">Switch workspaces, inspect backup status, or manage device copies.</p>
+      <a className="settings-workspaces-link" href={WORKSPACE_LIST_PATH} onClick={(event) => followAppLink(event, openMenu)}><Home /> Workspaces and backup status</a>
+      {serverBacked && <a href={workspacePath({ view: "access", workspaceId: state.workspace.id, workspaceLabel: state.workspace.name })}>Workspace access</a>}
+      <h2>Appearance</h2>
+      <div className="segments">{(["system", "light", "dark"] as const).map((entry) => <button aria-pressed={theme === entry} data-active={theme === entry} key={entry} onClick={() => setTheme(entry)}>{entry}</button>)}</div>
+      <div className="settings-disclosure" data-open={backupToolsOpen ? "true" : undefined}>
+        <button
+          aria-expanded={backupToolsOpen}
+          className="settings-disclosure-trigger"
+          onClick={() => setBackupToolsOpen((open) => !open)}
+          type="button"
+        >
+          <span><strong>Backup & recovery</strong><small>Export, restore, and print labels</small></span>
+          <ChevronDown aria-hidden="true" />
+        </button>
+        <div className="settings-disclosure-body">
+          <h2>Backup & recovery</h2>
+          <p className="muted">Export a complete portable snapshot. Imports are validated and previewed before replacement.</p>
+          <button onClick={download}>Export JSON backup</button>
+          <a href="/recovery">Review sync issues or restore a backup</a>
+          <a href="/labels">Print text and QR labels</a>
+        </div>
+      </div>
+    </section>
+    <section className="panel">
+      <h2>Account & server backup</h2>
+      <a href={`/account?workspace=${encodeURIComponent(state.workspace.id)}&returnTo=${encodeURIComponent(returnTo)}`}>Sign in or review this account</a>
+      <div className="settings-disclosure" data-open={helpToolsOpen ? "true" : undefined}>
+        <button
+          aria-expanded={helpToolsOpen}
+          className="settings-disclosure-trigger"
+          onClick={() => setHelpToolsOpen((open) => !open)}
+          type="button"
+        >
+          <span><strong>Help & source</strong><small>Guides, repository, and license</small></span>
+          <ChevronDown aria-hidden="true" />
+        </button>
+        <div className="settings-disclosure-body">
+          <h2>Help & source</h2>
+          <a target="_blank" rel="noreferrer" href={USER_GUIDE_URL}>Open full user guide</a>
+          <a href="/docs/">Read the offline quick guide</a>
+          <a target="_blank" rel="noreferrer" href={SOURCE_REPOSITORY_URL}>View source repository</a>
+          <p className="license">A Strange Lasers project<br />AGPL-3.0-only<br />Copyright © 2026 James Klein (j-256)</p>
+        </div>
+      </div>
+    </section>
+  </div>;
 }
 function Empty({ title, text }: { title: string; text: string }) {
   return <div className="empty"><b>□</b><h3>{title}</h3><p>{text}</p></div>;

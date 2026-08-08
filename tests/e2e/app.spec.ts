@@ -18,6 +18,7 @@ const MIN_RESIZE_TARGET = 32;
 const AUTO_COMPACT_SIDEBAR_MAX_WIDTH = 1160;
 const COMPACT_SIDEBAR_WIDTH = 80;
 const EXPANDED_SIDEBAR_WIDTH = 248;
+const MAX_COMPACT_ACTIVITY_ROW_HEIGHT = 145;
 const MAX_COMPACT_INVENTORY_ROW_HEIGHT = 72;
 const MAX_GOOD_CUMULATIVE_LAYOUT_SHIFT = 0.1;
 const MAX_LAYOUT_GEOMETRY_DRIFT = 1;
@@ -334,6 +335,46 @@ async function showCapturePanel(
   }
 }
 
+async function openCaptureSpaceCreator(page: Page): Promise<void> {
+  const creator = page.locator(".capture-space-creator");
+  const form = creator.locator("form");
+  if (!(await form.isVisible())) {
+    const trigger = creator.locator(".creator-trigger");
+    if (await trigger.isVisible()) await trigger.click();
+  }
+  await expect(form).toBeVisible();
+}
+
+async function openInventoryFilters(page: Page): Promise<void> {
+  const locationFilter = page.getByLabel("Filter by location");
+  if (!(await locationFilter.isVisible())) {
+    await page.getByRole("button", {
+      name: "Filter and sort inventory",
+    }).click();
+  }
+  await expect(locationFilter).toBeVisible();
+}
+
+async function filterInventoryByLocation(
+  page: Page,
+  locationId: string,
+): Promise<void> {
+  await openInventoryFilters(page);
+  await page.getByLabel("Filter by location").selectOption(locationId);
+}
+
+async function openSpaceChildCreator(scope: Locator): Promise<void> {
+  const creator = scope.locator(".space-child-creator");
+  await expect(creator).toBeVisible();
+  const form = scope.locator(".space-child-creator form");
+  if (!(await form.isVisible())) {
+    const trigger = scope.locator(".space-child-creator .creator-trigger");
+    await expect(trigger).toBeVisible();
+    await trigger.click();
+  }
+  await expect(form).toBeVisible();
+}
+
 async function showSelectedSpaceDetails(
   page: Page,
   locationName: string,
@@ -468,7 +509,12 @@ test("names a new workspace during first run", async ({ page }) => {
   await create.click();
 
   await expect(page.getByRole("heading", { name: "Capture" })).toBeVisible();
-  await expect(page.getByText("Jamie's apartment", { exact: true })).toBeVisible();
+  const workspaceName = page.getByText("Jamie's apartment", { exact: true });
+  if ((page.viewportSize()?.width ?? 0) <= 760) {
+    await expect(workspaceName).toBeHidden();
+  } else {
+    await expect(workspaceName).toBeVisible();
+  }
   await expect(page.getByText(
     "No containers yet. Add your first space below.",
   )).toBeVisible();
@@ -855,7 +901,7 @@ test("gives tabs, spaces, filters, and item editors restorable URLs", async ({ p
   );
 
   await page.locator(".nav:visible", { hasText: "Inventory" }).click();
-  await page.getByLabel("Filter by location").selectOption("loc_bin");
+  await filterInventoryByLocation(page, "loc_bin");
   await expect(page).toHaveURL(
     new RegExp(`${workspacePrefix}/inventory/locations/b-17-baking-bin@loc_bin$`),
   );
@@ -1770,7 +1816,7 @@ test("keeps compact Capture actions clear and exposes nested containers", async 
     state: { locations: { captureStatus: string; name: string }[] };
   };
   await page.getByRole("button", {
-    name: /^Skip Garage for now and open .+ · Tool shelf$/,
+    name: /^Skip for now .+ · Tool shelf$/,
   }).click();
   await expect(page.getByRole("heading", {
     name: /.+ · Tool shelf/,
@@ -1797,7 +1843,7 @@ test("keeps compact Capture actions clear and exposes nested containers", async 
     hasText: "Garage",
   }).locator(".queue-row").click();
   await expect(page.getByRole("button", {
-    name: /^Continue count in .+ · Tool shelf$/,
+    name: /^Continue count .+ · Tool shelf$/,
   })).toBeVisible();
 });
 
@@ -1848,6 +1894,10 @@ test("puts the next Plan action before setup on a narrow phone", async ({
   await generate.click();
   const nextMove = page.getByRole("region", { name: "Next move" });
   await expect(nextMove).toBeFocused();
+  const planOptions = page.getByRole("button", { name: /Plan options/ });
+  await expect(planOptions).toBeVisible();
+  await expect(planOptions).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator(".planner-hero-body")).toBeHidden();
   await page.locator(".nav:visible", { hasText: "Inventory" }).click();
   await page.locator(".nav:visible", { hasText: "Plan" }).click();
   await page.locator(".app-shell > main").evaluate((main) => {
@@ -1882,6 +1932,9 @@ test("puts the next Plan action before setup on a narrow phone", async ({
     actionInMainViewport: true,
     nextMoveBeforeSetup: true,
   });
+  await planOptions.click();
+  await expect(planOptions).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator(".planner-hero-body")).toBeVisible();
 });
 
 test("keeps the focused workspace header reachable on a narrow phone", async ({
@@ -2020,6 +2073,11 @@ test("prioritizes phone workspace navigation and groups secondary actions in Mor
   await expect(dialog.getByRole("button", {
     name: /theme active\. Switch to/,
   })).toBeVisible();
+  const moreBounds = await dialog.boundingBox();
+  expect(moreBounds).not.toBeNull();
+  expect((moreBounds?.y ?? 0) + (moreBounds?.height ?? 0)).toBeLessThanOrEqual(
+    NARROW_PHONE_VIEWPORT.height,
+  );
   const accessibility = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa"])
     .analyze();
@@ -2044,6 +2102,39 @@ test("prioritizes phone workspace navigation and groups secondary actions in Mor
     name: "Settings",
   })).toBeVisible();
   await expect(more).toHaveAttribute("data-active", "true");
+  const backupTools = page.getByRole("button", {
+    name: /Backup & recovery/,
+  });
+  const helpTools = page.getByRole("button", {
+    name: /Help & source/,
+  });
+  await expect(backupTools).toHaveAttribute("aria-expanded", "false");
+  await expect(helpTools).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByRole("button", {
+    name: "Export JSON backup",
+  })).toBeHidden();
+  await backupTools.click();
+  await expect(backupTools).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByRole("button", {
+    name: "Export JSON backup",
+  })).toBeVisible();
+  await expect(page.getByRole("link", {
+    name: "Open full user guide",
+  })).toBeHidden();
+  await helpTools.click();
+  await expect(helpTools).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByRole("link", {
+    name: "Open full user guide",
+  })).toBeVisible();
+  expect(await page.evaluate(
+    () => document.documentElement.scrollWidth <= window.innerWidth,
+  )).toBe(true);
+  const settingsAccessibility = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa"])
+    .analyze();
+  expect(settingsAccessibility.violations.filter((violation) =>
+    violation.impact === "critical" || violation.impact === "serious"
+  )).toEqual([]);
 });
 
 test("keeps the Spaces tree and editor dense at compact desktop widths", async ({
@@ -2591,7 +2682,8 @@ test("navigates every active surface with arrow keys while preserving native con
   await inventorySearch.focus();
   await page.keyboard.press("ArrowDown");
   await expect(inventorySearch).toBeFocused();
-  const inventorySort = page.getByLabel("Sort inventory");
+  await openInventoryFilters(page);
+  const inventorySort = page.getByLabel("Sort inventory", { exact: true });
   await inventorySort.focus();
   await page.keyboard.press("ArrowDown");
   await expect(inventorySort).toBeFocused();
@@ -2800,6 +2892,7 @@ test("keeps known empty separate from an undoable empty-container action", async
   await expect(page.getByRole("button", { name: "Add inside Baking bin" }))
     .toHaveCount(0);
   await showCapturePanel(page, "capture queue");
+  await openCaptureSpaceCreator(page);
   await expect(page.getByRole("button", { name: "Add top-level space" }))
     .toBeVisible();
   await showCapturePanel(page, "current container");
@@ -2978,13 +3071,14 @@ test("requires Reopen before completed contents change from Spaces or Inventory"
   await expect(spaceEditor.getByRole("button", { name: "Edit All-purpose flour" }))
     .toHaveCount(0);
   await spaceEditor.getByRole("button", { name: "Reopen capture" }).click();
+  await openSpaceChildCreator(spaceEditor);
   await expect(spaceEditor.getByRole("button", { name: "Add nested space" }))
     .toBeVisible();
   await expect(spaceEditor.getByRole("button", { name: "Edit All-purpose flour" }))
     .toBeVisible();
 
   await page.locator(".nav:visible", { hasText: "Inventory" }).click();
-  await page.getByLabel("Filter by location").selectOption("loc_warm");
+  await filterInventoryByLocation(page, "loc_warm");
   await expect(page.getByText("Cabinet above oven is read-only")).toBeVisible();
   await expect(page.locator('.inventory-row[data-item-id="item_pasta"] .drag-handle'))
     .toHaveCount(0);
@@ -3195,12 +3289,23 @@ test("onboards, captures, edits, searches, plans, rolls back, and persists local
   await page.reload();
   await expect(page.getByText("Test tea towels", { exact: true })).toBeVisible();
   await page.locator(".nav:visible", { hasText: "Inventory" }).click();
-  await expect(page.getByRole("heading", { name: "All item records" })).toBeVisible();
-  await expect(page.getByText("Showing all inventory.")).toBeVisible();
+  const inventoryHeading = page.getByRole("heading", {
+    name: "All item records",
+  });
+  const inventoryHint = page.getByText("Showing all inventory.");
+  if ((page.viewportSize()?.width ?? 0) <= 760) {
+    await expect(inventoryHeading).toBeHidden();
+    await expect(inventoryHint).toBeHidden();
+  } else {
+    await expect(inventoryHeading).toBeVisible();
+    await expect(inventoryHint).toBeVisible();
+  }
   await expect(page.locator('.inventory-row .drag-handle[title="Drag Test tea towels to reorder"]')).toHaveCount(0);
-  await page.getByPlaceholder("Search names, descriptions, categories, tags, and requirements").fill("washable");
+  await page.getByLabel("Search inventory").fill("washable");
   await expect(page.getByText("Test tea towels", { exact: true })).toBeVisible();
   await page.locator(".nav:visible", { hasText: "Plan" }).click();
+  const planOptions = page.getByRole("button", { name: /Plan options/ });
+  if (await planOptions.isVisible()) await planOptions.click();
   await page.getByText("Plan priorities", { exact: true }).click();
   await page.getByRole("button", { name: "How accessibility affects a plan" }).focus();
   await expect(page.getByRole("tooltip", { name: /Score bonus = max/ })).toBeVisible();
@@ -3702,7 +3807,7 @@ test("previews desktop hierarchy destinations and confirms completed-parent chan
   await page.getByRole("button", { name: "Dismiss message" }).click();
 
   await page.locator(".nav:visible", { hasText: "Inventory" }).click();
-  await page.getByLabel("Filter by location").selectOption("loc_bin");
+  await filterInventoryByLocation(page, "loc_bin");
   const inventoryFlour = page.locator('.inventory-row[data-item-id="item_flour"]');
   const inventorySugar = page.locator('.inventory-row[data-item-id="item_sugar"]');
   await holdNativeDrag(page, inventoryFlour.locator(".drag-handle"), inventorySugar, 0.2);
@@ -4121,7 +4226,7 @@ test("keeps touch reordering available on draggable handles", async ({ page }, t
 
   await reopenCaptureLocation(page, "loc_bin");
   await page.locator(".nav:visible", { hasText: "Inventory" }).click();
-  await page.getByLabel("Filter by location").selectOption("loc_bin");
+  await filterInventoryByLocation(page, "loc_bin");
   const inventoryHandle = page.locator(
     '.inventory-row[data-item-id="item_sugar"] .drag-handle',
   );
@@ -4760,7 +4865,7 @@ test("guides incomplete evidence into a reviewable plan", async ({ page }) => {
     state: { locations: { captureStatus: string; id: string }[] };
   };
   await page.getByRole("button", {
-    name: "Skip Corner cabinet for now and open BX-09 · Appliance parts",
+    name: "Skip for now BX-09 · Appliance parts",
   }).click();
   await expect(page.getByRole("heading", { name: "BX-09 · Appliance parts" })).toBeVisible();
   const afterAdvance = await localReplica(page) as typeof beforeAdvance;
@@ -4783,7 +4888,14 @@ test("guides incomplete evidence into a reviewable plan", async ({ page }) => {
 
   await page.locator(".nav:visible", { hasText: "Plan" }).click();
   await page.getByRole("button", { name: "Generate move plan" }).click();
-  await expect(page.getByText(/explainable moves added to the new plan/)).toBeVisible();
+  const generatedMessage = page.getByText(
+    /explainable moves added to the new plan/,
+  );
+  if ((page.viewportSize()?.width ?? 0) <= 760) {
+    await expect(generatedMessage).toBeHidden();
+  } else {
+    await expect(generatedMessage).toBeVisible();
+  }
   const nextMove = page.getByRole("region", { name: "Next move" });
   await expect(nextMove).toBeFocused();
   await expect(nextMove).toBeInViewport();
@@ -4895,6 +5007,7 @@ test("suggests unique location codes without replacing a manual code", async ({ 
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await reopenCurrentCapture(page);
   await showCapturePanel(page, "capture queue");
+  await openCaptureSpaceCreator(page);
 
   const code = page.getByLabel("Short ID");
   const name = page.getByLabel("Friendly name");
@@ -4904,6 +5017,7 @@ test("suggests unique location codes without replacing a manual code", async ({ 
   await expect(page.locator(".capture-location-row", { hasText: "Priority bin" }))
     .toBeVisible();
 
+  await openCaptureSpaceCreator(page);
   await name.fill("Priority bin");
   await expect(code).toHaveValue("PB-2");
   await code.fill("MANUAL");
@@ -4936,6 +5050,7 @@ test("preserves a failed creation draft and avoids narrow-screen overflow", asyn
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await reopenCurrentCapture(page);
   await showCapturePanel(page, "capture queue");
+  await openCaptureSpaceCreator(page);
 
   await page.getByLabel("Short ID").fill("C-01");
   await page.getByLabel("Friendly name").fill("Keep this draft");
@@ -5261,6 +5376,11 @@ test("keeps Inventory rows compact and scannable on phones", async ({
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await page.locator(".nav:visible", { hasText: "Inventory" }).click();
 
+  await expect(page.getByRole("heading", { name: "All item records" }))
+    .toBeHidden();
+  await expect(page.getByText("Showing all inventory.")).toBeHidden();
+  await expect(page.locator(".mobile-sync-status")).toBeHidden();
+
   const rows = page.locator(
     '.inventory-row[data-reorderable="false"]',
   );
@@ -5312,6 +5432,20 @@ test("keeps Inventory rows compact and scannable on phones", async ({
   expect(density.narrowCheckboxTargets).toBe(0);
   expect(density.narrowDetailTargets).toBe(0);
   expect(density.rowOverflow).toEqual([]);
+
+  const filterTrigger = page.getByRole("button", {
+    name: "Filter and sort inventory",
+  });
+  await expect(filterTrigger).toBeVisible();
+  await expect(filterTrigger).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByLabel("Filter by location")).toBeHidden();
+  await filterTrigger.click();
+  await expect(page.getByLabel("Filter by location")).toBeVisible();
+  await page.getByLabel("Filter by location").selectOption("loc_bin");
+  await expect(page.getByLabel("Sort inventory", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Done" }).click();
+  await expect(filterTrigger).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByLabel("Filter by location")).toBeHidden();
 
   await flour.locator(".item-name").click();
   const itemReview = page.getByRole("dialog", { name: "Review item" });
@@ -5421,6 +5555,28 @@ test("plucks an older same-item edit and records each history action", async ({
   expect(await page.evaluate(
     () => document.documentElement.scrollWidth <= window.innerWidth,
   )).toBe(true);
+  if (testInfo.project.name === "mobile-chromium") {
+    const density = await rows.evaluateAll((activityRows) => ({
+      maxRowHeight: Math.max(...activityRows.map((row) =>
+        row.getBoundingClientRect().height
+      )),
+      misalignedActions: activityRows.filter((row) => {
+        const status = row.querySelector(":scope > b");
+        const action = row.querySelector(":scope > button");
+        if (!status || !action) return true;
+        const statusBounds = status.getBoundingClientRect();
+        const actionBounds = action.getBoundingClientRect();
+        const statusCenter = statusBounds.top + statusBounds.height / 2;
+        const actionCenter = actionBounds.top + actionBounds.height / 2;
+        return Math.abs(statusCenter - actionCenter) > 1 ||
+          actionBounds.height < 44 || actionBounds.width < 44;
+      }).length,
+    }));
+    expect(density.maxRowHeight).toBeLessThanOrEqual(
+      MAX_COMPACT_ACTIVITY_ROW_HEIGHT,
+    );
+    expect(density.misalignedActions).toBe(0);
+  }
   const accessibility = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa"])
     .analyze();
@@ -5540,7 +5696,7 @@ test("supports drag organization and the partial-move fallback", async ({ page }
 
   await page.locator(".nav:visible", { hasText: "Inventory" }).click();
   await expect(page.locator('.inventory-row[data-item-id="item_sugar"] .drag-handle[title="Drag Brown sugar to reorder"]')).toHaveCount(0);
-  await page.getByLabel("Filter by location").selectOption("loc_bin");
+  await filterInventoryByLocation(page, "loc_bin");
   await expect(page.locator('.inventory-row[data-item-id="item_sugar"] .drag-handle[title="Drag Brown sugar to reorder"]')).toBeVisible();
   await expect(page.getByRole("button", { name: "Move Brown sugar, 2 bags up" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Move Brown sugar, 2 bags down" })).toBeVisible();
@@ -5563,7 +5719,7 @@ test("supports drag organization and the partial-move fallback", async ({ page }
     return sugar < flour;
   }).toBe(true);
 
-  await page.getByLabel("Filter by location").selectOption("");
+  await filterInventoryByLocation(page, "");
   await page.locator('[data-item-id="item_pasta"] .item-name').click();
   await page.getByLabel("Quantity", { exact: true }).fill("6");
   await page.getByRole("button", { name: "Save item" }).click();
@@ -5732,11 +5888,16 @@ test("shows workspace backup state and removes only the device copy", async ({ p
     }
   ).outbox.filter((entry) => entry.status === "pending").length;
   expect(pending).toBeGreaterThan(0);
-  const statusLink = page.locator(
-    ".sync:visible, .mobile-sync-status:visible, .sync-error-banner a:visible",
-  ).first();
-  await expect(statusLink).toBeVisible();
-  await statusLink.click();
+  if ((page.viewportSize()?.width ?? 0) <= 760) {
+    await expect(page.locator(".mobile-sync-status")).toBeHidden();
+    await openWorkspaceHub(page);
+  } else {
+    const statusLink = page.locator(
+      ".sync:visible, .mobile-sync-status:visible, .sync-error-banner a:visible",
+    ).first();
+    await expect(statusLink).toBeVisible();
+    await statusLink.click();
+  }
   await expect(page).toHaveURL(/\/workspaces$/);
   await expect(page).toHaveTitle("Workspaces · Stowplan");
   await expect(page.getByRole("heading", {
@@ -7048,8 +7209,14 @@ test("includes visible labels in names of core controls", async ({
   await expectVisibleLabelsInAccessibleNames(page);
 
   await page.locator(".nav:visible", { hasText: "Inventory" }).click();
-  await expect(page.getByRole("heading", { name: "All item records" }))
-    .toBeVisible();
+  const inventoryHeading = page.getByRole("heading", {
+    name: "All item records",
+  });
+  if (testInfo.project.name === "mobile-chromium") {
+    await expect(inventoryHeading).toBeHidden();
+  } else {
+    await expect(inventoryHeading).toBeVisible();
+  }
   await expectVisibleLabelsInAccessibleNames(page);
 
   if (testInfo.project.name === "mobile-chromium") return;
