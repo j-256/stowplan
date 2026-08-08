@@ -51,22 +51,61 @@ const PROFILES = [
 ];
 
 // The demo lands on Capture; Plan and Inventory are the other primary surfaces,
-// reachable from the seeded workspace URL prefix. An optional prepare(page) runs
-// after the view loads, for view-specific setup before the shot.
+// reachable from the seeded workspace URL prefix. An optional prepare(page,
+// profile) runs after the view loads, for view-specific setup before the shot.
+// Each shot should show the app doing useful work, not demo-only coaching or an
+// empty pre-generation state, so the prepare steps below branch by profile.
 const VIEWS = [
-  { name: 'capture', suffix: null }, // where /demo already is
+  {
+    name: 'capture',
+    suffix: null, // where /demo already is
+    // The demo lands on the current-container form, which carries a demo-only
+    // "Try one change" coaching banner. That banner plus the empty input crowd
+    // out the actual content, and the space tree -- the counted-progress
+    // showcase -- lives on the other compact panel.
+    //   - mobile: switch to the Capture queue panel. The tree with "Counted"
+    //     badges becomes the shot, and the banner stays behind in the now-hidden
+    //     container panel, so no dismissal is needed.
+    //   - desktop: both panels already show side by side, so there is no panel
+    //     toggle; dismiss the banner directly instead.
+    prepare: async (page, profile) => {
+      if (profile.key === 'mobile') {
+        const navigation = page.getByRole('group', { name: 'Capture panels navigation' });
+        if (await navigation.isVisible()) {
+          await navigation.getByRole('button', { name: 'capture queue' }).click();
+        }
+      } else {
+        await dismissDemoBanner(page);
+      }
+    },
+  },
   {
     name: 'plan',
     suffix: '/plan',
-    // "Plan priorities" is a collapsed <details> by default, so it reads as an
-    // empty box in a static shot. Expand it so the priority sliders are visible.
-    prepare: async (page) => {
-      const summary = page.locator('.plan-settings > summary');
-      if (await summary.count()) await summary.click();
+    // A fresh demo generates a small plan, so click Generate and wait for the
+    // next-move card: the shot then shows a real explainable recommendation
+    // (route + "Mark moved") rather than an empty intro. On desktop there is
+    // room to also expand "Plan priorities" below the card as a showcase; on
+    // mobile the next-move card alone is the headline.
+    prepare: async (page, profile) => {
+      await page.getByRole('button', { name: 'Generate move plan' }).click();
+      await page.getByRole('region', { name: 'Next move' }).waitFor();
+      if (profile.key === 'desktop') {
+        const summary = page.locator('.plan-settings > summary');
+        if (await summary.count()) await summary.click();
+      }
     },
   },
   { name: 'inventory', suffix: '/inventory' },
 ];
+
+// Dismiss the demo-only "Try one change" coaching banner if present. It only
+// renders on the /demo workspace, so the control is absent otherwise; the count
+// guard keeps this a no-op rather than a wait in that case.
+async function dismissDemoBanner(page) {
+  const dismiss = page.getByRole('button', { name: 'Dismiss demo task' });
+  if (await dismiss.count()) await dismiss.click();
+}
 
 // Mirror the env the Playwright config passes to the same server command.
 function serverEnv(dbPath) {
@@ -158,7 +197,7 @@ async function main() {
           const heading = view.suffix.replace('/', '').replace(/^\w/, (c) => c.toUpperCase());
           await page.getByRole('heading', { name: heading, exact: true }).waitFor();
         }
-        if (view.prepare) await view.prepare(page);
+        if (view.prepare) await view.prepare(page, profile);
         // Let the pane settle (list virtualization / layout) before the shot.
         await page.waitForTimeout(400);
         // The demo programmatically focuses a row in the container detail pane,
