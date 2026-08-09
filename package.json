@@ -32,7 +32,7 @@
     "test:coverage": "vitest run --coverage",
     "typecheck": "tsc --noEmit",
     "validate:artifact": "bash scripts/validate-artifact.sh",
-    "lint": "bash scripts/sites-env.sh -- eslint . --ignore-pattern dist --ignore-pattern coverage --ignore-pattern .next --ignore-pattern .open-next --ignore-pattern .sites-runtime --ignore-pattern docs/.vitepress/dist",
+    "lint": "bash scripts/sites-env.sh -- eslint . --max-warnings 0 --ignore-pattern dist --ignore-pattern coverage --ignore-pattern .next --ignore-pattern .open-next --ignore-pattern .sites-runtime --ignore-pattern docs/.vitepress/dist",
     "db:generate": "bash scripts/sites-env.sh -- drizzle-kit generate",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",

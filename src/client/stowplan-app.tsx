@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import {
   useCallback,
   useEffect,
@@ -1341,6 +1342,7 @@ export function StowplanApp({
 function Application({
   directDemo,
 }: Required<StowplanAppProps>) {
+  const router = useRouter();
   const {
     account,
     accountId,
@@ -1621,7 +1623,7 @@ function Application({
       if (routeRequest.current !== request) return;
       if (error instanceof WorkspaceOpenError && error.status === 401) {
         const returnTo = `${location.pathname}${location.search}${location.hash}`;
-        location.assign(`/account?returnTo=${encodeURIComponent(returnTo)}`);
+        router.push(`/account?returnTo=${encodeURIComponent(returnTo)}`);
         return;
       }
       setShowWelcome(true);
@@ -1636,6 +1638,7 @@ function Application({
     cancelWorkspaceOpen,
     finishWorkspaceOpen,
     openWorkspace,
+    router,
   ]);
   const applyBrowserRouteRef = useRef(applyBrowserRoute);
   useLayoutEffect(() => {
@@ -1864,7 +1867,7 @@ function Application({
   };
   const reviewWorkspaceRecovery = async (workspaceId: string) => {
     await chooseWorkspace(workspaceId);
-    location.assign("/recovery");
+    router.push("/recovery");
   };
   const removeLocalWorkspace = async (workspaceId: string, expectedUpdatedAt?: string) => {
     await removeWorkspace(workspaceId, expectedUpdatedAt);

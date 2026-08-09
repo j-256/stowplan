@@ -2,6 +2,7 @@
 
 import { RefreshCw, Search } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   type FormEvent,
   useCallback,
@@ -266,6 +267,7 @@ function focusAdminFragment(): boolean {
 }
 
 export default function AdminPage() {
+  const router = useRouter();
   const [data, setData] = useState<Overview | null>(null);
   const [draftQuery, setDraftQuery] = useState("");
   const [query, setQuery] = useState("");
@@ -407,7 +409,7 @@ export default function AdminPage() {
         );
       }
       if (body?.currentSessionRevoked) {
-        window.location.assign("/account?returnTo=/admin");
+        router.push("/account?returnTo=/admin");
         return true;
       }
       const refreshed = await load(query);
