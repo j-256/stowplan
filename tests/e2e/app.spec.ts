@@ -1325,6 +1325,32 @@ test("keeps short touch landscape navigation fully visible", async ({ page }, te
     name: "Space panels navigation",
   })).toBeVisible();
   await expect(spaces.locator(":scope > .panel-layout-toolbar")).toBeHidden();
+
+  const compactHeader = await page.locator(".app-shell > main > header")
+    .evaluate((header) => Math.round(header.getBoundingClientRect().height));
+  expect(compactHeader).toBeLessThanOrEqual(60);
+
+  await sidebar.locator(".nav", { hasText: "Inventory" }).click();
+  await expect(page.getByRole("heading", { name: "All item records" }))
+    .toBeHidden();
+  await expect(page.getByRole("button", {
+    name: "Filter and sort inventory",
+  })).toBeVisible();
+  expect(await page.evaluate(() => {
+    const shell = document.querySelector<HTMLElement>(".app-shell");
+    const main = document.querySelector<HTMLElement>(".app-shell > main");
+    return {
+      mainOwnsOverflow: Boolean(
+        main && main.scrollHeight > main.clientHeight
+      ),
+      shellHeight: Math.round(shell?.getBoundingClientRect().height ?? 0),
+      viewportHeight: innerHeight,
+    };
+  })).toEqual({
+    mainOwnsOverflow: true,
+    shellHeight: 360,
+    viewportHeight: 360,
+  });
 });
 
 test("uses the automatic compact icon rail at its responsive boundaries", async ({ page }, testInfo) => {
@@ -1549,6 +1575,38 @@ test("keeps mobile Capture stable while responsive state settles", async ({
   expect(cumulativeLayoutShift).toBeLessThanOrEqual(
     MAX_GOOD_CUMULATIVE_LAYOUT_SHIFT,
   );
+});
+
+test("uses the available phone height for the Capture queue", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "mobile-chromium",
+    "The portrait phone project measures Capture viewport use",
+  );
+  await page.setViewportSize({ height: 844, width: 390 });
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
+  await showCapturePanel(page, "capture queue");
+  await page.locator(".app-shell > main").evaluate((main) => {
+    main.scrollTop = 0;
+  });
+
+  const layout = await page.locator(".capture > .queue").evaluate((queue) => {
+    const main = queue.closest("main");
+    const tree = queue.querySelector<HTMLElement>(".capture-tree");
+    const mainBounds = main?.getBoundingClientRect();
+    const queueBounds = queue.getBoundingClientRect();
+    return {
+      queueBottomGap: mainBounds
+        ? Math.round(mainBounds.bottom - queueBounds.bottom)
+        : Number.POSITIVE_INFINITY,
+      treeOwnsOverflow: Boolean(
+        tree && tree.scrollHeight > tree.clientHeight
+      ),
+    };
+  });
+  expect(layout.queueBottomGap).toBeLessThanOrEqual(10);
+  expect(layout.treeOwnsOverflow).toBe(true);
 });
 
 test("identifies non-personal organizer fields for browser autofill", async ({
