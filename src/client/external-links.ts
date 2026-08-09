@@ -1,5 +1,5 @@
 const DEFAULT_DOCUMENTATION_URL =
-  "https://j-256.github.io/stowplan/";
+  "https://docs.stowplan.lasers.app/";
 const DEFAULT_PRIVACY_POLICY_URL =
   "https://stowplan.jklein.dev/privacy";
 const DEFAULT_REPOSITORY_URL =

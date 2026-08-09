@@ -1,14 +1,14 @@
 # Stowplan
 
 [![CI](https://github.com/j-256/stowplan/actions/workflows/ci.yml/badge.svg)](https://github.com/j-256/stowplan/actions/workflows/ci.yml)
-[![Documentation](https://github.com/j-256/stowplan/actions/workflows/docs.yml/badge.svg)](https://j-256.github.io/stowplan/)
+[![Documentation](https://github.com/j-256/stowplan/actions/workflows/docs.yml/badge.svg)](https://docs.stowplan.lasers.app/)
 [![Release](https://img.shields.io/github/v/release/j-256/stowplan)](https://github.com/j-256/stowplan/releases)
 [![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](LICENSE)
 [![Node 24 LTS or 26](https://img.shields.io/badge/node-24_LTS%20%7C%2026-5fa04e.svg)](.nvmrc)
 
 A mobile-first, local-first organizer for rooms, cabinets, drawers, boxes, bins, and every container inside them. Label physical spaces, perform a fast first-pass count, search structured inventory, generate explainable move plans, and keep working through connectivity or server failures.
 
-[Try the ready-made kitchen](https://stowplan.jklein.dev/demo) or read the [user guide](https://j-256.github.io/stowplan/guide/getting-started). The demo needs no account and does not replace another workspace already stored in the browser.
+[Try the ready-made kitchen](https://stowplan.jklein.dev/demo) or read the [user guide](https://docs.stowplan.lasers.app/guide/getting-started). The demo needs no account and does not replace another workspace already stored in the browser.
 
 <table>
   <tr>
@@ -78,7 +78,7 @@ AUTH_IDENTITY_DIGEST_KEY=stowplan-local-identity-digest-key-not-for-production \
 npm run start:node
 ```
 
-See the [getting-started guide](https://j-256.github.io/stowplan/guide/getting-started) and [deployment matrix](https://j-256.github.io/stowplan/deploy/).
+See the [getting-started guide](https://docs.stowplan.lasers.app/guide/getting-started) and [deployment matrix](https://docs.stowplan.lasers.app/deploy/).
 
 ## Repository map
 
@@ -111,7 +111,7 @@ bash scripts/release-artifacts.sh
 
 Both need no credentials and reach no network, so they run on every push rather than first executing when a tag is already published.
 
-The GitHub Pages workflow deliberately builds and link-checks the docs under `/stowplan/`; root-hosted docs receive the same validation. The application production deployment is Sites, while GitHub Pages is the canonical documentation host. The [Cloudflare runbook](https://j-256.github.io/stowplan/deploy/cloudflare) separates reproducible Sites artifact preparation and connector handoff from direct Cloudflare bootstrap, Access, WAF, rate-limit, migration, secret, deploy, backup, and recovery commands.
+The GitHub Pages workflow derives the deployment base from the Pages site metadata; the release gate validates both the project subpath and domain root. The application production deployment is Sites, while GitHub Pages serves the canonical documentation at `docs.stowplan.lasers.app`. The [Cloudflare runbook](https://docs.stowplan.lasers.app/deploy/cloudflare) separates reproducible Sites artifact preparation and connector handoff from direct Cloudflare bootstrap, Access, WAF, rate-limit, migration, secret, deploy, backup, and recovery commands.
 
 ## Security and privacy
 

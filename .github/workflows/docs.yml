@@ -20,12 +20,13 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
-      - uses: actions/configure-pages@v6
+      - id: pages
+        uses: actions/configure-pages@v6
       - run: npm ci
       - run: npm run docs:build && npm run docs:check
         env:
           DOCS_APPLICATION_URL: ${{ vars.DOCS_APPLICATION_URL }}
-          DOCS_BASE: /${{ github.event.repository.name }}/
+          DOCS_BASE: ${{ steps.pages.outputs.base_path }}/
           DOCS_PRIVACY_POLICY_URL: ${{ vars.DOCS_PRIVACY_POLICY_URL }}
           DOCS_TERMS_OF_SERVICE_URL: ${{ vars.DOCS_TERMS_OF_SERVICE_URL }}
           DOCS_REPOSITORY_URL: ${{ github.server_url }}/${{ github.repository }}

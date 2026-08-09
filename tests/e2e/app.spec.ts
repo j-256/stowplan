@@ -726,7 +726,7 @@ test("opens the kitchen demo directly without replacing another workspace", asyn
     name: "Open the step-by-step demo guide",
   })).toHaveAttribute(
     "href",
-    "https://j-256.github.io/stowplan/guide/getting-started",
+    "https://docs.stowplan.lasers.app/guide/getting-started",
   );
 
   await page.goto("/workspaces");
