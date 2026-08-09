@@ -19,12 +19,14 @@ const AUTO_COMPACT_SIDEBAR_MAX_WIDTH = 1160;
 const COMPACT_SIDEBAR_WIDTH = 80;
 const EXPANDED_SIDEBAR_WIDTH = 248;
 const MAX_COMPACT_ACTIVITY_ROW_HEIGHT = 145;
+const MAX_COMPACT_CONTENT_TOP_GAP = 16;
 const MAX_COMPACT_INVENTORY_ROW_HEIGHT = 72;
 const MAX_COMPACT_SHEET_EDGE_GAP = 10;
 const MAX_COMPACT_SPACE_ACTION_BAR_HEIGHT = 62;
 const MAX_GOOD_CUMULATIVE_LAYOUT_SHIFT = 0.1;
 const MAX_LAYOUT_GEOMETRY_DRIFT = 1;
 const NARROW_PHONE_VIEWPORT = Object.freeze({ height: 568, width: 320 });
+const TALL_PHONE_VIEWPORT = Object.freeze({ height: 900, width: 390 });
 const NO_CSS_TRANSITION_DURATION = "0s";
 const COLOR_CONTRAST_RULE = "color-contrast";
 const LABEL_CONTENT_NAME_RULE = "label-content-name-mismatch";
@@ -2063,6 +2065,40 @@ test("opens secondary Plan details in focused phone sheets", async ({
   })).toBeVisible();
   await readinessSheet.getByRole("button", { name: "Close" }).click();
   await expect(optionsTrigger).toBeFocused();
+});
+
+test("top-aligns short compact workspace pages below the header", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "mobile-chromium",
+    "The Chromium phone project covers compact content alignment",
+  );
+  await page.setViewportSize(TALL_PHONE_VIEWPORT);
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
+  const contentTopGap = (selector: string) => page.locator(selector).evaluate(
+    (content) => {
+      const header = document.querySelector<HTMLElement>(
+        ".app-shell > main > header",
+      );
+      if (!header) throw new Error("The workspace header is missing");
+      return Math.round(
+        content.getBoundingClientRect().top -
+        header.getBoundingClientRect().bottom,
+      );
+    },
+  );
+
+  await page.locator(".nav:visible", { hasText: "Inventory" }).click();
+  expect(await contentTopGap(".content.inventory-page")).toBeLessThanOrEqual(
+    MAX_COMPACT_CONTENT_TOP_GAP,
+  );
+
+  await page.locator(".nav:visible", { hasText: "Plan" }).click();
+  await page.getByRole("button", { name: "Generate move plan" }).click();
+  expect(await contentTopGap("main > .content")).toBeLessThanOrEqual(
+    MAX_COMPACT_CONTENT_TOP_GAP,
+  );
 });
 
 test("keeps the focused workspace header reachable on a narrow phone", async ({
