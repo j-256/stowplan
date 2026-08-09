@@ -2874,7 +2874,7 @@ test("searches and jumps with Control or Command K", async ({ page }, testInfo) 
   await expect(palette).toBeHidden();
 });
 
-test("keeps known empty separate from an undoable empty-container action", async ({ page }) => {
+test("confirms an undoable empty-container action separately from known empty", async ({ page }) => {
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await showCapturePanel(page, "capture queue");
   await page.locator(
@@ -2899,76 +2899,55 @@ test("keeps known empty separate from an undoable empty-container action", async
   await page.getByRole("button", { name: "Reopen capture" }).click();
   await expect(page.locator(".feedback-toast")).toBeHidden();
   await expect(page.getByRole("button", { name: "Counted & next" })).toBeVisible();
-  const emptySpaceActions = page.getByText("Contents no longer match?", {
-    exact: true,
-  });
-  await expect(emptySpaceActions).toBeVisible();
   await expect(page.getByRole("button", {
-    name: "Empty container",
-    exact: true,
-  })).toBeHidden();
-  await expect(page.getByRole("button", {
-    name: "Known empty & next",
-  })).toBeHidden();
-  await emptySpaceActions.click();
-  const emptyContainer = page.getByRole("button", {
-    name: "Empty container",
-    exact: true,
-  });
-  const counted = page.getByRole("button", { name: "Counted & next" });
-  await expect(emptyContainer).toBeInViewport();
-  await expect(page.getByRole("button", {
-    name: "Known empty & next",
-  })).toBeInViewport();
-  const [emptyContainerBox, countedBox] = await Promise.all([
-    emptyContainer.boundingBox(),
-    counted.boundingBox(),
-  ]);
-  expect(emptyContainerBox).not.toBeNull();
-  expect(countedBox).not.toBeNull();
-  expect(emptyContainerBox!.y + emptyContainerBox!.height)
-    .toBeLessThanOrEqual(countedBox!.y);
-
-  await page.getByRole("button", { name: "Known empty & next" }).click();
-  await expect(page.locator(".feedback-toast")).toBeHidden();
-  const knownEmptyReview = page.getByRole("dialog", {
-    name: "Known empty is unavailable",
-  });
-  await expect(knownEmptyReview).toContainText(
-    "Known empty records an observation. It never removes item records.",
-  );
-  await expect(knownEmptyReview).toContainText("All-purpose flour");
-  await expect(knownEmptyReview).toContainText("Brown sugar");
-  await expect(knownEmptyReview.getByRole("button", {
-    name: "Empty container",
+    name: "Checked empty & next",
+  })).toHaveCount(0);
+  await expect(page.getByText("Contents no longer match?", {
     exact: true,
   })).toHaveCount(0);
-  const keepCounting = knownEmptyReview.getByRole("button", {
-    name: "Keep counting",
+  const emptyContainer = page.getByRole("button", {
+    name: /Container is now empty/,
   });
-  await expect(keepCounting).toBeFocused();
+  await expect(emptyContainer).toBeVisible();
+
+  await emptyContainer.click();
+  const emptyContainerReview = page.getByRole("dialog", {
+    name: "Empty container?",
+  });
+  await expect(emptyContainerReview).toContainText(
+    "marks the space known empty as one undoable change",
+  );
+  await expect(emptyContainerReview).toContainText("All-purpose flour");
+  await expect(emptyContainerReview).toContainText("Brown sugar");
+  const keepRecords = emptyContainerReview.getByRole("button", {
+    name: "Keep records",
+  });
+  const confirmEmpty = emptyContainerReview.getByRole("button", {
+    name: "Empty container",
+    exact: true,
+  });
+  const closeReview = emptyContainerReview.getByRole("button", {
+    name: "Close empty container review",
+  });
+  await expect(keepRecords).toBeFocused();
   await page.keyboard.press("Shift+Tab");
-  await expect(knownEmptyReview.getByRole("button", {
-    name: "Close known-empty review",
-  })).toBeFocused();
+  await expect(closeReview).toBeFocused();
   await page.keyboard.press("Shift+Tab");
-  await expect(keepCounting).toBeFocused();
+  await expect(confirmEmpty).toBeFocused();
   await page.keyboard.press("Tab");
-  await expect(knownEmptyReview.getByRole("button", {
-    name: "Close known-empty review",
-  })).toBeFocused();
+  await expect(closeReview).toBeFocused();
   await page.keyboard.press("Control+KeyK");
   await expect(page.getByRole("dialog", { name: "Search and jump" }))
     .toHaveCount(0);
-  await expect(knownEmptyReview.getByRole("status")).toContainText(
+  await expect(emptyContainerReview.getByRole("status")).toContainText(
     "Close this review before searching",
   );
-  await knownEmptyReview.locator(".container-review-list b").first().evaluate(
+  await emptyContainerReview.locator(".container-review-list b").first().evaluate(
     (amount) => {
       amount.textContent = `1 ${"verylongunit".repeat(16)}`;
     },
   );
-  expect(await knownEmptyReview.evaluate((dialog) => {
+  expect(await emptyContainerReview.evaluate((dialog) => {
     const bounds = dialog.getBoundingClientRect();
     const list = dialog.querySelector(".container-review-list");
     return {
@@ -3006,19 +2985,11 @@ test("keeps known empty separate from an undoable empty-container action", async
     itemIds: ["item_flour", "item_sugar"],
     status: "in_progress",
   });
-  await keepCounting.click();
-  await expect(knownEmptyReview).toBeHidden();
+  await keepRecords.click();
+  await expect(emptyContainerReview).toBeHidden();
   await expect(page.locator(".feedback-toast")).toHaveCount(0);
 
   await emptyContainer.click();
-  const emptyContainerReview = page.getByRole("dialog", {
-    name: "Empty container?",
-  });
-  await expect(emptyContainerReview).toContainText(
-    "marks the space known empty as one undoable change",
-  );
-  await expect(emptyContainerReview).toContainText("All-purpose flour");
-  await expect(emptyContainerReview).toContainText("Brown sugar");
   await emptyContainerReview.getByRole("button", {
     name: "Empty container",
     exact: true,
@@ -3218,6 +3189,30 @@ test("visibly refuses unchanged item and space saves", async ({ page }) => {
     .toBe(before.state.items.find((item) => item.id === "item_pasta")?.version);
 });
 
+test("marks a checked empty space and advances to the next unfinished space", async ({ page }) => {
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
+  await showCapturePanel(page, "capture queue");
+  await page.locator(
+    '.capture-location-row[data-location-id="loc_counter"] .queue-row',
+  ).click();
+  await showCapturePanel(page, "current container");
+  await page.getByRole("button", { name: "Reopen capture" }).click();
+  await page.getByRole("button", { name: "Checked empty & next" }).click();
+  await expect(page.locator(".feedback-toast")).toContainText(
+    "Counter is marked known empty",
+  );
+  await expect(page.getByRole("heading", {
+    name: "C-04 · Corner cabinet",
+  })).toBeVisible();
+  await expect.poll(async () => {
+    const replica = await localReplica(page) as {
+      state: { locations: { captureStatus: string; id: string }[] };
+    };
+    return replica.state.locations
+      .find((location) => location.id === "loc_counter")?.captureStatus;
+  }).toBe("known_empty");
+});
+
 test("does not offer known-empty capture while nested spaces remain", async ({ page }) => {
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await showCapturePanel(page, "capture queue");
@@ -3231,7 +3226,7 @@ test("does not offer known-empty capture while nested spaces remain", async ({ p
     "1 nested space is already recorded here. Add a direct item, or mark this space counted.",
   )).toBeVisible();
   await expect(page.getByRole("button", {
-    name: "Known empty & next",
+    name: "Checked empty & next",
   })).toHaveCount(0);
   const replica = await localReplica(page) as {
     state: { locations: { captureStatus: string; id: string }[] };

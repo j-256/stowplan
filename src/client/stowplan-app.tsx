@@ -173,10 +173,6 @@ type PendingItemBulkMove = {
 type LocationPlacementResult =
   | { command: LocationPlacementCommand; destinationParentId: string | null }
   | { error: string };
-const CONTAINER_REVIEW_KIND = Object.freeze({
-  EMPTY: "empty",
-  KNOWN_EMPTY: "known-empty",
-} as const);
 type ContainerReview = {
   items: {
     id: string;
@@ -184,7 +180,6 @@ type ContainerReview = {
     quantity: number;
     unit: string;
   }[];
-  kind: typeof CONTAINER_REVIEW_KIND[keyof typeof CONTAINER_REVIEW_KIND];
   locationId: string;
   locationName: string;
 };
@@ -2950,11 +2945,7 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
       if (next) selectCaptureLocation(next.id);
     });
   };
-  const openContainerReview = (
-    kind: ContainerReview["kind"],
-    location: Location,
-    trigger: HTMLElement,
-  ) => {
+  const openContainerReview = (location: Location, trigger: HTMLElement) => {
     dismissFeedback();
     setContainerReviewNotice("");
     restoreContainerReviewFocus.current = true;
@@ -2966,7 +2957,6 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
         quantity: item.quantity,
         unit: item.unit,
       })),
-      kind,
       locationId: location.id,
       locationName: location.name,
     });
@@ -2984,14 +2974,14 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
     }
     if (!items.length) {
       showFeedback(
-        `${current.name} has no recorded items. Use Known empty & next to record that observation.`,
+        `${current.name} has no recorded items. Use Checked empty & next to record that observation.`,
         "info",
       );
       return;
     }
-    openContainerReview(CONTAINER_REVIEW_KIND.EMPTY, current, trigger);
+    openContainerReview(current, trigger);
   };
-  const markKnownEmpty = async (trigger: HTMLElement) => {
+  const markKnownEmpty = async () => {
     if (!current) {
       showFeedback("Select a container before marking it known empty");
       return;
@@ -3003,7 +2993,9 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
       return;
     }
     if (items.length) {
-      openContainerReview(CONTAINER_REVIEW_KIND.KNOWN_EMPTY, current, trigger);
+      showFeedback(
+        `${current.name} still has recorded items. Move or remove them first; no records were removed.`,
+      );
       return;
     }
     await finish("known_empty");
@@ -3017,11 +3009,8 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
     setContainerReview(null);
   };
   const emptyContainer = async () => {
-    if (
-      !containerReview ||
-      containerReview.kind !== CONTAINER_REVIEW_KIND.EMPTY
-    ) {
-      showFeedback("Use the separate Empty container action before removing records");
+    if (!containerReview) {
+      showFeedback("Review this container before removing its records");
       return;
     }
     if (emptyingRef.current) {
@@ -3422,54 +3411,20 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
         </button>
       </aside>
     : null;
-  const emptySpaceActions = !captureComplete &&
+  const emptyContainerAction = !captureComplete &&
       items.length > 0 &&
       !hasNestedSpaces
-    ? <details
-        className="capture-empty-actions"
-        onToggle={(event) => {
-          const disclosure = event.currentTarget;
-          if (
-            !disclosure.open ||
-            !matchMedia(STACKED_TOUCH_LAYOUT_QUERY).matches
-          ) return;
-          requestAnimationFrame(() => disclosure.scrollIntoView({
-            behavior: matchMedia("(prefers-reduced-motion: reduce)").matches
-              ? "auto"
-              : "smooth",
-            block: "end",
-          }));
-        }}
+    ? <button
+        className="empty-container-action"
+        onClick={(event) => reviewEmptyContainer(event.currentTarget)}
+        type="button"
       >
-        <summary>
-          <PackageX aria-hidden="true" />
-          <span>
-            <strong>Contents no longer match?</strong>
-            <small>Review empty-space actions</small>
-          </span>
-        </summary>
-        <div className="capture-empty-actions-body">
-          <p>Known empty records an observation and never removes item records. Empty container removes the listed records after confirmation when the physical contents are gone.</p>
-          <div>
-            <button
-              className="known-empty-action"
-              onClick={(event) => void markKnownEmpty(event.currentTarget)}
-              type="button"
-            >
-              <PackageX />
-              <span>Known empty & next</span>
-            </button>
-            <button
-              className="danger"
-              onClick={(event) => reviewEmptyContainer(event.currentTarget)}
-              type="button"
-            >
-              <Trash2 />
-              <span>Empty container</span>
-            </button>
-          </div>
-        </div>
-      </details>
+        <PackageX aria-hidden="true" />
+        <span>
+          <strong>Container is now empty...</strong>
+          <small>Review removing all recorded contents</small>
+        </span>
+      </button>
     : null;
   const capturePanel = <section
     aria-label={current ? `Capture inside ${current.name}` : "Capture editor"}
@@ -3578,7 +3533,7 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
           <span className="reorder-drop-copy" aria-hidden>{cue === "before" ? "Place before" : cue === "after" ? "Place after" : ""}</span>
           {!captureComplete && <div className="row-actions"><button className="icon small" aria-label={`Move ${item.name} up`} disabled={index === 0} onClick={() => reorder(item.id, -1)}><ArrowUp /></button><button className="icon small" aria-label={`Move ${item.name} down`} disabled={index === items.length - 1} onClick={() => reorder(item.id, 1)}><ArrowDown /></button><button className="icon small" aria-label={`Edit ${item.name}`} onClick={() => setEditing(item.id)}><Edit3 /></button></div>}
         </div>;
-      })}{!items.length && <Empty title={emptyItemsTitle} text={emptyItemsText} />}</div>{emptySpaceActions}<div className="finish">{captureComplete ? <button className="reopen-capture" onClick={() => void reopenCapture()}><RotateCcw /><span>Reopen capture</span></button> : <>{!hasNestedSpaces && items.length === 0 && <button className="known-empty-action" onClick={(event) => void markKnownEmpty(event.currentTarget)}><PackageX /><span>Known empty & next</span></button>}<button className="primary" onClick={() => void finish("counted")}><CheckCircle2 /><span>Counted & next</span></button></>}</div></> : <Empty title="Add your first space" text="Give a room, cabinet, box, or drawer the same code as its physical label." />}</section>;
+      })}{!items.length && <Empty title={emptyItemsTitle} text={emptyItemsText} />}</div>{emptyContainerAction}<div className="finish">{captureComplete ? <button className="reopen-capture" onClick={() => void reopenCapture()}><RotateCcw /><span>Reopen capture</span></button> : <>{!hasNestedSpaces && items.length === 0 && <button className="known-empty-action" onClick={() => void markKnownEmpty()}><PackageX /><span>Checked empty & next</span></button>}<button className="primary" onClick={() => void finish("counted")}><CheckCircle2 /><span>Counted & next</span></button></>}</div></> : <Empty title="Add your first space" text="Give a room, cabinet, box, or drawer the same code as its physical label." />}</section>;
   return <>
     <ResizablePanels
       activeCompactPanel={activeCompactPanel}
@@ -3635,21 +3590,11 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
       >
         <header>
           <div>
-            <p className="eyebrow">
-              {containerReview.kind === CONTAINER_REVIEW_KIND.EMPTY
-                ? "Destructive inventory action"
-                : "Observation only"}
-            </p>
-            <h2 id="container-review-title">
-              {containerReview.kind === CONTAINER_REVIEW_KIND.EMPTY
-                ? "Empty container?"
-                : "Known empty is unavailable"}
-            </h2>
+            <p className="eyebrow">Destructive inventory action</p>
+            <h2 id="container-review-title">Empty container?</h2>
           </div>
           <button
-            aria-label={containerReview.kind === CONTAINER_REVIEW_KIND.EMPTY
-              ? "Close empty container review"
-              : "Close known-empty review"}
+            aria-label="Close empty container review"
             className="icon"
             disabled={emptying}
             onClick={dismissContainerReview}
@@ -3665,14 +3610,7 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
           <span>{containerReviewNotice}</span>
         </output>}
         <p id="container-review-description">
-          {containerReview.kind === CONTAINER_REVIEW_KIND.EMPTY
-            ? <>
-              This action removes the item records below from <strong>{containerReview.locationName}</strong> and marks the space known empty as one undoable change. Use it only after the physical contents are gone.
-            </>
-            : <>
-              <strong>Known empty records an observation. It never removes item records.</strong>{" "}
-              {containerReview.locationName} still has the records below, so nothing has changed. Move or remove them before recording the space as known empty. If their physical contents are already gone, close this review and use the separate Empty container action.
-            </>}
+          This action removes the item records below from <strong>{containerReview.locationName}</strong> and marks the space known empty as one undoable change. Use it only after the physical contents are gone.
         </p>
         <ul className="container-review-list">
           {containerReview.items.map((item) => <li key={item.id}>
@@ -3686,18 +3624,16 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
             disabled={emptying}
             onClick={dismissContainerReview}
           >
-            {containerReview.kind === CONTAINER_REVIEW_KIND.EMPTY
-              ? "Keep records"
-              : "Keep counting"}
+            Keep records
           </button>
-          {containerReview.kind === CONTAINER_REVIEW_KIND.EMPTY && <button
+          <button
             className="danger"
             disabled={emptying}
             onClick={() => void emptyContainer()}
           >
             <Trash2 />
             {emptying ? "Emptying..." : "Empty container"}
-          </button>}
+          </button>
         </footer>
       </section>
     </div>}

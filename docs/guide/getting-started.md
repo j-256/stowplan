@@ -52,7 +52,7 @@ The useful standard is "accurate enough to find and move," not "cataloged like a
 
 An unopened box is not known empty. That distinction keeps Stowplan from treating unknown capacity as available space.
 
-**Known empty & next** records an observation; it does not erase items. If records remain, Stowplan shows them and changes nothing. Use the separately confirmed **Empty container** action only after the physical contents are gone. You can undo that action from **Activity**.
+**Checked empty & next** appears when no items or nested spaces are recorded. It marks the space known empty; it does not erase items. If records remain after the physical contents are gone, choose **Container is now empty...** and review them before confirming **Empty container**. You can undo that action from **Activity**.
 
 A counted or known-empty space is read-only so later edits cannot silently make its status untrustworthy. Choose **Reopen capture** before changing what it contains.
 
