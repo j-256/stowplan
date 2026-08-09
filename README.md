@@ -18,7 +18,7 @@ A mobile-first, local-first organizer for rooms, cabinets, drawers, boxes, bins,
       <sub>Walk a container at a time, counting as you go.</sub>
     </td>
     <td align="center" width="33%">
-      <img alt="Plan on a phone: a Next move card recommending a specific container move along its full location path, with a Mark moved action" src="screenshots/plan-mobile.png" width="250"><br>
+      <img alt="Plan on a phone: a compact Next move card naming the source and destination endpoints with a Mark moved action" src="screenshots/plan-mobile.png" width="250"><br>
       <b>Plan</b><br>
       <sub>Weighted priorities and an explainable move plan.</sub>
     </td>
@@ -35,7 +35,7 @@ A mobile-first, local-first organizer for rooms, cabinets, drawers, boxes, bins,
 
 ![Capture on a desktop: a nested space tree for the kitchen demo beside a container detail pane with a first-pass coverage bar, item entry, and counted items](screenshots/capture.png)
 
-![Plan on a desktop: a Next move card with its full route and Mark moved action, above the explainable-recommendations panel with its Plan priorities sliders](screenshots/plan.png)
+![Plan on a desktop: a Next move card with its source and destination route and Mark moved action, above the explainable-recommendations panel with its Plan priorities sliders](screenshots/plan.png)
 
 ![Inventory on a desktop: structured, searchable inventory across the demo's spaces](screenshots/inventory.png)
 

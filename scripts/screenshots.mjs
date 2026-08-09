@@ -85,16 +85,14 @@ const VIEWS = [
     // A fresh demo generates a small plan, so click Generate and wait for the
     // next-move card: the shot then shows a real explainable recommendation
     // (route + "Mark moved") rather than an empty intro. On desktop there is
-    // room to also expand "Plan priorities" below the card as a showcase; on
-    // mobile there is room to show the supporting Plan options too
+    // room to also expand "Plan priorities" below the card as a showcase;
+    // mobile keeps the compact route and primary move action unobstructed
     prepare: async (page, profile) => {
       await page.getByRole('button', { name: 'Generate move plan' }).click();
       await page.getByRole('region', { name: 'Next move' }).waitFor();
       if (profile.key === 'desktop') {
         const summary = page.locator('.plan-settings > summary');
         if (await summary.count()) await summary.click();
-      } else {
-        await page.getByRole('button', { name: /Plan options/ }).click();
       }
     },
   },

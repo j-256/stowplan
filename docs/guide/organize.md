@@ -24,7 +24,7 @@ Select several records to move them to one destination together. Records already
 
 Open **Spaces** to follow rooms, zones, cabinets, shelves, boxes, bins, and containers. A hierarchy can be as simple or as deep as the physical layout requires.
 
-Select a space to inspect its details and direct contents. On a phone, the selected row exposes **Earlier**, **Later**, **Edit details**, and **Move**. Choose **Edit details** to switch from the hierarchy to the focused editor, then use **Back to hierarchy** when you are done. Choose **Add inside [name]** only when you need the nested-space form. Switching panels preserves unfinished editor input. The move dialog lets you choose the new parent and exact position without dragging.
+Select a space to inspect its details and direct contents. On a phone, the selected row keeps **Edit details** and **More actions** in one compact toolbar. **More actions** opens a bottom sheet for earlier/later ordering, moving, archiving, or deleting. Choose **Edit details** to switch to the focused editor, then use the **Space hierarchy** panel control to return. Choose **Add inside [name]** only when you need the nested-space form. Switching panels preserves unfinished editor input. The move dialog lets you choose the new parent and exact position without dragging.
 
 At compact desktop widths, the automatic icon navigation rail leaves the hierarchy and editor side by side. The stacked layout remains available when you choose it or when the content area is genuinely too narrow.
 
