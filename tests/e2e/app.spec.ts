@@ -79,6 +79,13 @@ const OFFLINE_UTILITY_ROUTES = Object.freeze([
   },
 ]);
 
+async function usesStackedTouchLayout(page: Page): Promise<boolean> {
+  return page.evaluate(
+    (query) => matchMedia(query).matches,
+    STACKED_TOUCH_LAYOUT_QUERY,
+  );
+}
+
 function mockOwnerSyncResponse(
   state: {
     workspace: {
@@ -516,7 +523,7 @@ test("names a new workspace during first run", async ({ page }) => {
 
   await expect(page.getByRole("heading", { name: "Capture" })).toBeVisible();
   const workspaceName = page.getByText("Jamie's apartment", { exact: true });
-  if ((page.viewportSize()?.width ?? 0) <= 760) {
+  if (await usesStackedTouchLayout(page)) {
     await expect(workspaceName).toBeHidden();
   } else {
     await expect(workspaceName).toBeVisible();
@@ -2859,7 +2866,7 @@ test("navigates every active surface with arrow keys while preserving native con
   await expect(rowCheckbox).toBeFocused();
   await rowName.focus();
   await page.keyboard.press("ArrowDown");
-  if ((page.viewportSize()?.width ?? 0) <= 760) {
+  if (await usesStackedTouchLayout(page)) {
     await expect(page.locator(".inventory-row").nth(1).getByRole("checkbox"))
       .toBeFocused();
   } else {
@@ -3194,12 +3201,34 @@ test("confirms an undoable empty-container action separately from known empty", 
 test("requires Reopen before completed contents change from Spaces or Inventory", async ({ page }) => {
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await page.locator(".nav:visible", { hasText: "Spaces" }).click();
+  const compactLayout = await usesStackedTouchLayout(page);
   await page.locator('[data-location-id="loc_bin"] .tree-select').click();
+  if (compactLayout) {
+    const moreActions = page.getByRole("button", {
+      name: "More actions for Baking bin",
+    });
+    await moreActions.click();
+    const actionSheet = page.getByRole("dialog", {
+      name: "Baking bin actions",
+    });
+    await expect(actionSheet.getByRole("button", {
+      name: "Earlier Baking bin",
+    })).toBeDisabled();
+    await expect(actionSheet.getByRole("button", {
+      name: "Later Baking bin",
+    })).toBeDisabled();
+    await actionSheet.getByRole("button", { name: "Close" }).click();
+    await expect(moreActions).toBeFocused();
+  }
   await showSelectedSpaceDetails(page, "Baking bin");
 
   const spaceEditor = page.getByRole("region", { name: "Edit Baking bin" });
-  await expect(spaceEditor.getByRole("button", { name: "Earlier" })).toBeDisabled();
-  await expect(spaceEditor.getByRole("button", { name: "Later" })).toBeDisabled();
+  if (!compactLayout) {
+    await expect(spaceEditor.getByRole("button", { name: "Earlier" }))
+      .toBeDisabled();
+    await expect(spaceEditor.getByRole("button", { name: "Later" }))
+      .toBeDisabled();
+  }
   await expect(spaceEditor.getByText("Contents are read-only")).toBeVisible();
   await expect(spaceEditor.getByRole("button", { name: "Add nested space" }))
     .toHaveCount(0);
@@ -3452,7 +3481,7 @@ test("onboards, captures, edits, searches, plans, rolls back, and persists local
     name: "All item records",
   });
   const inventoryHint = page.getByText("Showing all inventory.");
-  if ((page.viewportSize()?.width ?? 0) <= 760) {
+  if (await usesStackedTouchLayout(page)) {
     await expect(inventoryHeading).toBeHidden();
     await expect(inventoryHint).toBeHidden();
   } else {
@@ -5379,7 +5408,7 @@ test("distinguishes duplicate inventory actions by quantity and unit", async ({ 
     const editAction = page.getByRole("button", {
       name: `Edit / move for Batteries, ${amount} in Kitchen`,
     });
-    if ((page.viewportSize()?.width ?? 0) <= 760) {
+    if (await usesStackedTouchLayout(page)) {
       await expect(editAction).toBeHidden();
     } else {
       await expect(editAction).toBeVisible();

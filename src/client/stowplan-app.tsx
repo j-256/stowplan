@@ -535,7 +535,15 @@ function TouchDragHandle({
       autoScrollFrame.current = null;
       return;
     }
-    if (scrollAtEdge(current.clientY)) {
+    const start = touchStart.current;
+    const movedBeyondTap = Boolean(
+      start &&
+      Math.hypot(
+        current.clientX - start.clientX,
+        current.clientY - start.clientY,
+      ) > TOUCH_TAP_DISTANCE_PX,
+    );
+    if (movedBeyondTap && scrollAtEdge(current.clientY)) {
       highlight(current.clientX, current.clientY);
     }
     autoScrollFrame.current = requestAnimationFrame(autoScroll);
@@ -609,14 +617,12 @@ function TouchDragHandle({
       const target = displayedTarget.current ??
         targetAt(event.clientX, event.clientY);
       clear();
-      if (tapped) {
-        suppressTapClick.current = true;
-        onTap?.();
-        setTimeout(() => {
-          suppressTapClick.current = false;
-        }, 0);
-      }
-      else if (target) onDrop(target);
+      if (tapped) return;
+      suppressTapClick.current = true;
+      setTimeout(() => {
+        suppressTapClick.current = false;
+      }, 0);
+      if (target) onDrop(target);
       else onInvalidDrop?.();
   };
   const handlePointerCancel = (event: React.PointerEvent<HTMLElement>) => {
