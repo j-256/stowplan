@@ -78,6 +78,24 @@
   }
 }
 
+@media (max-width: 760px), (max-height: 520px) and (pointer: coarse) and (min-width: 761px) {
+  .backdrop[data-mobile-sheet="true"] {
+    align-items: end;
+    padding:
+      max(0.5rem, env(safe-area-inset-top))
+      max(0.5rem, env(safe-area-inset-right))
+      max(0.5rem, env(safe-area-inset-bottom))
+      max(0.5rem, env(safe-area-inset-left));
+  }
+
+  .dialog[data-mobile-sheet="true"] {
+    border-radius: 1rem 1rem 0.5rem 0.5rem;
+    height: calc(100dvh - 1rem);
+    max-height: calc(100dvh - 1rem);
+    max-width: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .backdrop,
   .dialog {

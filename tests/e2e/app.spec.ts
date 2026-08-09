@@ -20,6 +20,7 @@ const COMPACT_SIDEBAR_WIDTH = 80;
 const EXPANDED_SIDEBAR_WIDTH = 248;
 const MAX_COMPACT_ACTIVITY_ROW_HEIGHT = 145;
 const MAX_COMPACT_INVENTORY_ROW_HEIGHT = 72;
+const MAX_COMPACT_SHEET_EDGE_GAP = 10;
 const MAX_GOOD_CUMULATIVE_LAYOUT_SHIFT = 0.1;
 const MAX_LAYOUT_GEOMETRY_DRIFT = 1;
 const NARROW_PHONE_VIEWPORT = Object.freeze({ height: 568, width: 320 });
@@ -45,6 +46,8 @@ const STANDALONE_PAGE_TITLES = Object.freeze({
   "/offline": "Offline",
   "/recovery": "Recovery",
 });
+const STACKED_TOUCH_LAYOUT_QUERY =
+  "(max-width: 760px), (max-height: 520px) and (pointer: coarse) and (min-width: 761px)";
 const OFFLINE_UTILITY_ROUTES = Object.freeze([
   {
     cachePath: "/docs",
@@ -1993,6 +1996,72 @@ test("puts the next Plan action before setup on a narrow phone", async ({
   await planOptions.click();
   await expect(planOptions).toHaveAttribute("aria-expanded", "true");
   await expect(page.locator(".planner-hero-body")).toBeVisible();
+});
+
+test("opens secondary Plan details in focused phone sheets", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "mobile-chromium",
+    "The Chromium phone project covers compact Plan sheets",
+  );
+  await page.setViewportSize(NARROW_PHONE_VIEWPORT);
+  await page.getByRole("button", { name: "Open kitchen demo" }).click();
+  await page.locator(".nav:visible", { hasText: "Plan" }).click();
+  await page.getByRole("button", { name: "Generate move plan" }).click();
+
+  const route = page.locator(".plan-route");
+  await expect(route.locator(".plan-route-endpoint")).toHaveText([
+    "C-03 · Lower cabinet",
+    "C-01 · Food cabinet",
+  ]);
+  const routeContext = route.locator(".plan-route-context");
+  await expect(routeContext).toHaveCount(2);
+  await expect(routeContext.first()).toBeHidden();
+
+  const supportTrigger = page.getByRole("button", {
+    name: "Why this move and review details",
+  });
+  await supportTrigger.click();
+  const supportSheet = page.getByRole("dialog", { name: "Why this move" });
+  await expect(supportSheet).toContainText("KIT · Kitchen");
+  await supportSheet.getByRole("button", { name: "Close" }).click();
+  await expect(supportTrigger).toBeFocused();
+
+  const itineraryTrigger = page.getByRole("button", {
+    name: /Review full plan/,
+  });
+  await itineraryTrigger.click();
+  const itinerarySheet = page.getByRole("dialog", { name: "Full plan" });
+  await expect(itinerarySheet.getByRole("listitem")).toHaveCount(3);
+  await itinerarySheet.getByRole("button", { name: "Close" }).click();
+  await expect(itineraryTrigger).toBeFocused();
+
+  const optionsTrigger = page.getByRole("button", { name: /Plan options/ });
+  await optionsTrigger.click();
+  const optionsSheet = page.getByRole("dialog", { name: "Plan options" });
+  const optionsSheetBox = await optionsSheet.boundingBox();
+  expect(optionsSheetBox).not.toBeNull();
+  expect(optionsSheetBox?.y).toBeLessThanOrEqual(MAX_COMPACT_SHEET_EDGE_GAP);
+  expect(
+    (optionsSheetBox?.y ?? 0) + (optionsSheetBox?.height ?? 0),
+  ).toBeGreaterThanOrEqual(
+    NARROW_PHONE_VIEWPORT.height - MAX_COMPACT_SHEET_EDGE_GAP,
+  );
+  await expect(optionsSheet.getByRole("button", {
+    name: /Review planning readiness/,
+  })).toBeVisible();
+  await optionsSheet.getByRole("button", {
+    name: /Review planning readiness/,
+  }).click();
+  const readinessSheet = page.getByRole("dialog", {
+    name: "Planning readiness",
+  });
+  await expect(readinessSheet.getByRole("region", {
+    name: "Planning readiness",
+  })).toBeVisible();
+  await readinessSheet.getByRole("button", { name: "Close" }).click();
+  await expect(optionsTrigger).toBeFocused();
 });
 
 test("keeps the focused workspace header reachable on a narrow phone", async ({
@@ -4941,10 +5010,14 @@ test("guides incomplete evidence into a reviewable plan", async ({ page }) => {
 
   await page.locator(".nav:visible", { hasText: "Plan" }).click();
   await page.getByRole("button", { name: "Generate move plan" }).click();
+  const compactPlanLayout = await page.evaluate(
+    (query) => matchMedia(query).matches,
+    STACKED_TOUCH_LAYOUT_QUERY,
+  );
   const generatedMessage = page.getByText(
     /explainable moves added to the new plan/,
   );
-  if ((page.viewportSize()?.width ?? 0) <= 760) {
+  if (compactPlanLayout) {
     await expect(generatedMessage).toBeHidden();
   } else {
     await expect(generatedMessage).toBeVisible();
@@ -4960,15 +5033,24 @@ test("guides incomplete evidence into a reviewable plan", async ({ page }) => {
     Math.round(card.getBoundingClientRect().height)
   );
   expect(closedCardHeight).toBeLessThan(320);
-  const support = nextMove.locator(".plan-step-support");
-  await expect(support).not.toHaveAttribute("open", "");
-  await expect(nextMove.getByRole("button", { name: "Review destination" }))
-    .toBeHidden();
-  await support.getByText("Why this move and review details", {
-    exact: true,
-  }).click();
-  await expect(nextMove.getByText("Capacity unverified")).toBeVisible();
-  await expect(nextMove.getByRole("button", { name: "Review destination" }))
+  const support = compactPlanLayout
+    ? page.getByRole("dialog", { name: "Why this move" })
+    : nextMove.locator(".plan-step-support");
+  if (compactPlanLayout) {
+    await expect(support).toBeHidden();
+    await nextMove.getByRole("button", {
+      name: "Why this move and review details",
+    }).click();
+  } else {
+    await expect(support).not.toHaveAttribute("open", "");
+    await expect(nextMove.getByRole("button", { name: "Review destination" }))
+      .toBeHidden();
+    await support.getByText("Why this move and review details", {
+      exact: true,
+    }).click();
+  }
+  await expect(support.getByText("Capacity unverified")).toBeVisible();
+  await expect(support.getByRole("button", { name: "Review destination" }))
     .toBeVisible();
   const planLayout = await nextMove.evaluate((card) => {
     const markMoved = card.querySelector<HTMLButtonElement>(
@@ -5022,7 +5104,7 @@ test("guides incomplete evidence into a reviewable plan", async ({ page }) => {
       (item) => item.id === firstStep.itemId,
     );
     expect(reviewedItem).toBeTruthy();
-    await nextMove.getByRole("button", { name: "Review item" }).click();
+    await support.getByRole("button", { name: "Review item" }).click();
     const itemEditor = page.getByRole("dialog", { name: "Review item" });
     await expect(itemEditor.getByText(reviewedItem?.name ?? "", { exact: true }))
       .toBeVisible();
@@ -5032,7 +5114,7 @@ test("guides incomplete evidence into a reviewable plan", async ({ page }) => {
       (location) => location.id === firstStep?.locationId,
     );
     expect(reviewedContainer).toBeTruthy();
-    await nextMove.getByRole("button", { name: "Review container" }).click();
+    await support.getByRole("button", { name: "Review container" }).click();
     await expect(page.getByRole("region", {
       name: `Edit ${reviewedContainer?.name ?? ""}`,
     })).toBeFocused();

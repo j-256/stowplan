@@ -8,6 +8,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import {
   Activity,
@@ -267,6 +268,16 @@ const ITEM_MODAL_HISTORY_STATE = Object.freeze({
   ...BROWSER_HISTORY_STATE,
   itemModal: true,
 });
+
+function useMediaQuery(query: string): boolean {
+  const subscribe = useCallback((notify: () => void) => {
+    const media = matchMedia(query);
+    media.addEventListener("change", notify);
+    return () => media.removeEventListener("change", notify);
+  }, [query]);
+  const snapshot = useCallback(() => matchMedia(query).matches, [query]);
+  return useSyncExternalStore(subscribe, snapshot, () => false);
+}
 const DISMISS_FEEDBACK_EVENT = "stowplan:feedback-dismiss";
 const DEMO_ENTRY_FOCUS_DELAY_MS = 100;
 const FEEDBACK_EVENT = "stowplan:feedback";
@@ -5460,12 +5471,16 @@ function emptyPlanGuidance(readiness: PlanReadiness): string {
 }
 
 function PlanningReadinessPanel({
+  onOpenDetails,
   readiness,
   state,
+  summaryOnly = false,
   openGuidanceTarget,
 }: {
+  onOpenDetails?: () => void;
   readiness: PlanReadiness;
   state: WorkspaceState;
+  summaryOnly?: boolean;
   openGuidanceTarget: (
     view: GuidanceTarget["view"],
     id: string,
@@ -5583,6 +5598,22 @@ function PlanningReadinessPanel({
     <span><strong>{issue.title}</strong><small>{issue.detail}</small></span>
     {issue.action && issue.actionLabel && <button onClick={issue.action}>{issue.actionLabel}</button>}
   </li>;
+  if (summaryOnly && onOpenDetails) {
+    return <button
+      aria-haspopup="dialog"
+      aria-label={`Review planning readiness: ${headline}`}
+      className="plan-readiness-summary"
+      onClick={onOpenDetails}
+      type="button"
+    >
+      <span>
+        <small>Planning readiness</small>
+        <strong>{headline}</strong>
+        <small>{countLabel(issues.length, "confidence check")}</small>
+      </span>
+      <ChevronRight aria-hidden="true" />
+    </button>;
+  }
   return <section className="plan-readiness" aria-label="Planning readiness">
     <header>
       <div>
@@ -5608,14 +5639,21 @@ function Planner({ state, commit, openGuidanceTarget }: { state: WorkspaceState;
   const activePlans = state.plans.filter((plan) => plan.status === "active");
   const active = activePlans[0];
   const hasConflictingPlans = activePlans.length > 1;
+  const compactLayout = useMediaQuery(STACKED_TOUCH_LAYOUT_QUERY);
   const readiness = useMemo(() => assessPlanReadiness(state), [state]);
   const [weights, setWeights] = useState<PlanWeights>({ ...DEFAULT_PLAN_WEIGHTS });
   const [name, setName] = useState("Suggested reset");
   const [message, setMessage] = useState("");
   const [nextMoveFocusRequest, setNextMoveFocusRequest] = useState(0);
   const [planOptionsOpen, setPlanOptionsOpen] = useState(false);
+  const [readinessOpen, setReadinessOpen] = useState(false);
+  const [stepSupportOpen, setStepSupportOpen] = useState(false);
+  const [itineraryOpen, setItineraryOpen] = useState(false);
   const nextMoveAction = useRef<HTMLButtonElement | null>(null);
   const nextMoveCard = useRef<HTMLElement | null>(null);
+  const itineraryTrigger = useRef<HTMLButtonElement | null>(null);
+  const planOptionsTrigger = useRef<HTMLButtonElement | null>(null);
+  const stepSupportTrigger = useRef<HTMLButtonElement | null>(null);
   const generate = async () => {
     const plan = buildMovePlan(state, { name, weights });
     if (!plan.steps.length) {
@@ -5636,9 +5674,43 @@ function Planner({ state, commit, openGuidanceTarget }: { state: WorkspaceState;
     ? active?.steps[nextStepIndex] ?? null
     : null;
   const nextStepId = nextStep?.id ?? null;
-  const placeLabel = (locationId: string) => {
-    const path = locationPath(state.locations, locationId);
-    return path.length ? path.map((location) => `${location.code} · ${location.name}`).join(" › ") : "Unknown space";
+  const pathLabel = (path: Location[]) => path.length
+    ? path.map((location) => `${location.code} · ${location.name}`).join(" › ")
+    : "Unknown space";
+  const placeLabel = (locationId: string) => pathLabel(
+    locationPath(state.locations, locationId),
+  );
+  const routePresentation = (sourceId: string, destinationId: string) => {
+    const sourcePath = locationPath(state.locations, sourceId);
+    const destinationPath = locationPath(state.locations, destinationId);
+    const maxSharedDepth = Math.max(
+      0,
+      Math.min(sourcePath.length, destinationPath.length) - 1,
+    );
+    let sharedDepth = 0;
+    while (
+      sharedDepth < maxSharedDepth &&
+      sourcePath[sharedDepth]?.id === destinationPath[sharedDepth]?.id
+    ) {
+      sharedDepth += 1;
+    }
+    const describe = (path: Location[]) => {
+      const visible = path.slice(sharedDepth);
+      const endpoint = visible.at(-1) ?? path.at(-1);
+      return {
+        context: visible.slice(0, -1)
+          .map((location) => `${location.code} · ${location.name}`)
+          .join(" › "),
+        endpoint: endpoint
+          ? `${endpoint.code} · ${endpoint.name}`
+          : "Unknown space",
+        full: pathLabel(path),
+      };
+    };
+    return {
+      destination: describe(destinationPath),
+      source: describe(sourcePath),
+    };
   };
   const subjectForStep = (step: PlanStep) => {
     const item = step.itemId
@@ -5707,69 +5779,138 @@ function Planner({ state, commit, openGuidanceTarget }: { state: WorkspaceState;
   const nextSubject = nextStep ? subjectForStep(nextStep) : null;
   const nextItemId = nextSubject?.item?.id ?? null;
   const nextContainerId = nextSubject?.container?.id ?? null;
-  const plannerHero = <section
-    className="panel planner-hero"
-    data-has-active={active ? "true" : undefined}
-    data-open={!active || planOptionsOpen ? "true" : undefined}
-  >
-    <button
-      aria-expanded={planOptionsOpen}
-      className="planner-options-summary"
-      onClick={() => setPlanOptionsOpen((open) => !open)}
-      type="button"
-    >
-      <span>
-        <strong>{active ? "Plan options" : "Create a move plan"}</strong>
-        <small>{active
-          ? "Priorities, readiness, replace, or discard"
-          : "Generate now or review the available evidence"}</small>
-      </span>
-      <ChevronDown aria-hidden="true" />
-    </button>
-    <div className="planner-hero-body">
-      <div className="planner-overview">
-        <p className="eyebrow">Explainable recommendations</p>
-        <h2>Fewer moves, better homes.</h2>
-        <div className="plan-actions">
-          <button className="primary" onClick={() => void generate()}>
-            {active ? "Replace with fresh plan" : "Generate move plan"}
-          </button>
-          {active && !hasConflictingPlans && <button onClick={() => void perform(
-            commit,
-            { type: "plan.status", planId: active.id, status: "discarded" },
-            () => setMessage(""),
-          )}>
-            Discard current plan
-          </button>}
-        </div>
-        {message && <output className="form-message">{message}</output>}
-        <p>Balance suitability, access, grouping, capacity, and move effort, including moving a whole nested box when that is simpler. Marking a step moved updates Inventory immediately; Activity can undo it.</p>
+  const nextRoute = nextStep
+    ? routePresentation(nextStep.sourceId, nextStep.destinationId)
+    : null;
+  const readinessPanel = <PlanningReadinessPanel
+    openGuidanceTarget={openGuidanceTarget}
+    readiness={readiness}
+    state={state}
+  />;
+  const plannerBody = <div className="planner-hero-body">
+    <div className="planner-overview">
+      <p className="eyebrow">Explainable recommendations</p>
+      <h2>Fewer moves, better homes.</h2>
+      <div className="plan-actions">
+        <button className="primary" onClick={() => void generate()}>
+          {active ? "Replace with fresh plan" : "Generate move plan"}
+        </button>
+        {active && !hasConflictingPlans && <button onClick={() => void perform(
+          commit,
+          { type: "plan.status", planId: active.id, status: "discarded" },
+          () => {
+            setMessage("");
+            setPlanOptionsOpen(false);
+          },
+        )}>
+          Discard current plan
+        </button>}
       </div>
-      <details className="plan-settings">
-        <summary>Plan priorities</summary>
-        <label>Plan name<input autoComplete="off" name="planName" value={name} onChange={(event) => setName(event.target.value)} /></label>
-        {(Object.keys(weights) as (keyof PlanWeights)[]).map((key) => {
-          const help = planPriorityHelp[key];
-          const tooltipId = `priority-${key}-help`;
-          return <div className="plan-priority" key={key}>
-            <div className="plan-priority-label">
-              <label htmlFor={`priority-${key}`}>{help.label}</label>
-              <span className="info-tip">
-                <button type="button" aria-label={`How ${help.label.toLowerCase()} affects a plan`} aria-describedby={tooltipId}><Info /></button>
-                <span id={tooltipId} role="tooltip">{help.description}</span>
-              </span>
-              <output htmlFor={`priority-${key}`}>{weights[key]}</output>
-            </div>
-            <input id={`priority-${key}`} aria-label={`${help.label} weight`} type="range" min="0" max="10" step="1" value={weights[key]} onChange={(event) => updateWeight(key, Number(event.target.value))} />
-          </div>;
-        })}
-      </details>
-      <PlanningReadinessPanel readiness={readiness} state={state} openGuidanceTarget={openGuidanceTarget} />
+      {message && <output className="form-message">{message}</output>}
+      <p>Balance suitability, access, grouping, capacity, and move effort, including moving a whole nested box when that is simpler. Marking a step moved updates Inventory immediately; Activity can undo it.</p>
     </div>
-  </section>;
+    <details className="plan-settings">
+      <summary>Plan priorities</summary>
+      <label>Plan name<input autoComplete="off" name="planName" value={name} onChange={(event) => setName(event.target.value)} /></label>
+      {(Object.keys(weights) as (keyof PlanWeights)[]).map((key) => {
+        const help = planPriorityHelp[key];
+        const tooltipId = `priority-${key}-help`;
+        return <div className="plan-priority" key={key}>
+          <div className="plan-priority-label">
+            <label htmlFor={`priority-${key}`}>{help.label}</label>
+            <span className="info-tip">
+              <button type="button" aria-label={`How ${help.label.toLowerCase()} affects a plan`} aria-describedby={tooltipId}><Info /></button>
+              <span id={tooltipId} role="tooltip">{help.description}</span>
+            </span>
+            <output htmlFor={`priority-${key}`}>{weights[key]}</output>
+          </div>
+          <input id={`priority-${key}`} aria-label={`${help.label} weight`} type="range" min="0" max="10" step="1" value={weights[key]} onChange={(event) => updateWeight(key, Number(event.target.value))} />
+        </div>;
+      })}
+    </details>
+    {compactLayout && active
+      ? <PlanningReadinessPanel
+        onOpenDetails={() => {
+          setPlanOptionsOpen(false);
+          setReadinessOpen(true);
+        }}
+        openGuidanceTarget={openGuidanceTarget}
+        readiness={readiness}
+        state={state}
+        summaryOnly
+      />
+      : readinessPanel}
+  </div>;
+  const plannerHero = <>
+    <section
+      className="panel planner-hero"
+      data-has-active={active ? "true" : undefined}
+      data-open={!active || (!compactLayout && planOptionsOpen) ? "true" : undefined}
+    >
+      <button
+        aria-expanded={planOptionsOpen}
+        aria-haspopup={compactLayout && active ? "dialog" : undefined}
+        className="planner-options-summary"
+        onClick={() => setPlanOptionsOpen((open) => !open)}
+        ref={planOptionsTrigger}
+        type="button"
+      >
+        <span>
+          <strong>{active ? "Plan options" : "Create a move plan"}</strong>
+          <small>{active
+            ? "Priorities, readiness, replace, or discard"
+            : "Generate now or review the available evidence"}</small>
+        </span>
+        {compactLayout && active
+          ? <ChevronRight aria-hidden="true" />
+          : <ChevronDown aria-hidden="true" />}
+      </button>
+      {(!compactLayout || !active) && plannerBody}
+    </section>
+    {compactLayout && active && <ModalDialog
+      mobileSheet
+      onClose={() => setPlanOptionsOpen(false)}
+      open={planOptionsOpen}
+      returnFocusRef={planOptionsTrigger}
+      title="Plan options"
+    >
+      <div className="planner-sheet">{plannerBody}</div>
+      <button className="planner-sheet-close" onClick={() => setPlanOptionsOpen(false)} type="button">Close</button>
+    </ModalDialog>}
+  </>;
+  const stepSupportBody = nextStep && nextRoute ? <div className="plan-step-support-body">
+    <div className="plan-review-route">
+      <span><strong>From</strong><small>{nextRoute.source.full}</small></span>
+      <span><strong>To</strong><small>{nextRoute.destination.full}</small></span>
+    </div>
+    {capacityIsUnverified(nextStep) && <em className="plan-confidence">Capacity unverified</em>}
+    <p>{nextStep.explanation.join(" · ")}</p>
+    <p className="plan-review-note">Review links do not move anything. Saving changed item or destination details discards this plan so the next plan uses the corrected evidence.</p>
+    <div className="plan-review-actions">
+      {nextItemId && <button onClick={() => openGuidanceTarget("inventory", nextItemId)}>Review item</button>}
+      {nextContainerId && <button onClick={() => openGuidanceTarget("spaces", nextContainerId)}>Review container</button>}
+      <button onClick={() => openGuidanceTarget("spaces", nextStep.destinationId)}>Review destination</button>
+    </div>
+  </div> : null;
+  const itineraryList = active ? <ol className="plan-itinerary-list">{active.steps.map((step, index) => {
+    const subject = subjectForStep(step);
+    const status = step.completedAt
+      ? "Moved"
+      : index === nextStepIndex
+        ? "Next"
+        : "Upcoming";
+    return <li data-status={status.toLowerCase()} key={step.id}>
+      <b>{index + 1}</b>
+      <span>
+        <strong>Move {subject.label}</strong>
+        <small>{placeLabel(step.sourceId)} → {placeLabel(step.destinationId)}</small>
+      </span>
+      <em>{status}</em>
+    </li>;
+  })}</ol> : null;
   return <div className="content">
     {hasConflictingPlans && <section className="panel form-message" role="alert"><h3>Resolve overlapping active plans</h3><p>This older workspace contains {activePlans.length} active plans. Generate a fresh plan to replace all of them, or discard plans until one remains before executing a move.</p>{activePlans.map((plan) => <button key={plan.id} onClick={() => void perform(commit, { type: "plan.status", planId: plan.id, status: "discarded" })}>Discard {plan.name}</button>)}</section>}
-    {active && !hasConflictingPlans && nextStep && nextSubject ? <>
+    {active && !hasConflictingPlans && nextStep && nextSubject && nextRoute ? <>
       <div className="plan-progress"><strong>{active.name}</strong><span>{complete} of {active.steps.length} complete</span></div>
       <section
         aria-label="Next move"
@@ -5785,7 +5926,20 @@ function Planner({ state, commit, openGuidanceTarget }: { state: WorkspaceState;
           </div>
           <b>Step {nextStepIndex + 1} of {active.steps.length}</b>
         </header>
-        <p className="plan-route">{placeLabel(nextStep.sourceId)} → {placeLabel(nextStep.destinationId)}</p>
+        <div
+          aria-label={`From ${nextRoute.source.full} to ${nextRoute.destination.full}`}
+          className="plan-route"
+        >
+          <span>
+            <small>From {nextRoute.source.context && <span className="plan-route-context">{nextRoute.source.context}</span>}</small>
+            <strong className="plan-route-endpoint">{nextRoute.source.endpoint}</strong>
+          </span>
+          <ChevronRight aria-hidden="true" />
+          <span>
+            <small>To {nextRoute.destination.context && <span className="plan-route-context">{nextRoute.destination.context}</span>}</small>
+            <strong className="plan-route-endpoint">{nextRoute.destination.endpoint}</strong>
+          </span>
+        </div>
         <button
           className="primary plan-next-action"
           data-step-state="ready"
@@ -5794,44 +5948,75 @@ function Planner({ state, commit, openGuidanceTarget }: { state: WorkspaceState;
         >
           Mark moved
         </button>
-        <details
-          className="plan-step-support"
-          onToggle={keepNextActionVisible}
-        >
-          <summary>Why this move and review details</summary>
-          <div>
-            {capacityIsUnverified(nextStep) && <em className="plan-confidence">Capacity unverified</em>}
-            <p>{nextStep.explanation.join(" · ")}</p>
-            <p className="plan-review-note">Review links do not move anything. Saving changed item or destination details discards this plan so the next plan uses the corrected evidence.</p>
-            <div className="plan-review-actions">
-              {nextItemId && <button onClick={() => openGuidanceTarget("inventory", nextItemId)}>Review item</button>}
-              {nextContainerId && <button onClick={() => openGuidanceTarget("spaces", nextContainerId)}>Review container</button>}
-              <button onClick={() => openGuidanceTarget("spaces", nextStep.destinationId)}>Review destination</button>
-            </div>
-          </div>
-        </details>
+        {compactLayout
+          ? <button
+            aria-expanded={stepSupportOpen}
+            aria-haspopup="dialog"
+            className="plan-step-support-trigger"
+            onClick={() => setStepSupportOpen(true)}
+            ref={stepSupportTrigger}
+            type="button"
+          >
+            <span>Why this move and review details</span>
+            <ChevronRight aria-hidden="true" />
+          </button>
+          : <details
+            className="plan-step-support"
+            onToggle={keepNextActionVisible}
+          >
+            <summary>Why this move and review details</summary>
+            {stepSupportBody}
+          </details>}
       </section>
-      <details className="panel plan-itinerary">
-        <summary>Review full plan <span>{countLabel(active.steps.length, "move")}</span></summary>
-        <ol>{active.steps.map((step, index) => {
-          const subject = subjectForStep(step);
-          const status = step.completedAt
-            ? "Moved"
-            : index === nextStepIndex
-              ? "Next"
-              : "Upcoming";
-          return <li data-status={status.toLowerCase()} key={step.id}>
-            <b>{index + 1}</b>
-            <span>
-              <strong>Move {subject.label}</strong>
-              <small>{placeLabel(step.sourceId)} → {placeLabel(step.destinationId)}</small>
-            </span>
-            <em>{status}</em>
-          </li>;
-        })}</ol>
-      </details>
+      {compactLayout
+        ? <button
+          aria-expanded={itineraryOpen}
+          aria-haspopup="dialog"
+          className="panel plan-itinerary-trigger"
+          onClick={() => setItineraryOpen(true)}
+          ref={itineraryTrigger}
+          type="button"
+        >
+          <span>Review full plan</span>
+          <small>{countLabel(active.steps.length, "move")}</small>
+          <ChevronRight aria-hidden="true" />
+        </button>
+        : <details className="panel plan-itinerary">
+          <summary>Review full plan <span>{countLabel(active.steps.length, "move")}</span></summary>
+          {itineraryList}
+        </details>}
+      {compactLayout && <ModalDialog
+        mobileSheet
+        onClose={() => setStepSupportOpen(false)}
+        open={stepSupportOpen}
+        returnFocusRef={stepSupportTrigger}
+        title="Why this move"
+      >
+        {stepSupportBody}
+        <button className="planner-sheet-close" onClick={() => setStepSupportOpen(false)} type="button">Close</button>
+      </ModalDialog>}
+      {compactLayout && <ModalDialog
+        mobileSheet
+        onClose={() => setItineraryOpen(false)}
+        open={itineraryOpen}
+        returnFocusRef={itineraryTrigger}
+        title="Full plan"
+      >
+        {itineraryList}
+        <button className="planner-sheet-close" onClick={() => setItineraryOpen(false)} type="button">Close</button>
+      </ModalDialog>}
     </> : null}
     {plannerHero}
+    {compactLayout && active && <ModalDialog
+      mobileSheet
+      onClose={() => setReadinessOpen(false)}
+      open={readinessOpen}
+      returnFocusRef={planOptionsTrigger}
+      title="Planning readiness"
+    >
+      {readinessPanel}
+      <button className="planner-sheet-close" onClick={() => setReadinessOpen(false)} type="button">Close</button>
+    </ModalDialog>}
     {(!active || hasConflictingPlans || !nextStep || !nextSubject) && <Empty title="No active plan" text={readiness.canGenerateUsefulPlan ? "There is enough evidence to try a plan. Review the readiness guidance, then generate when you are comfortable with the gaps." : emptyPlanGuidance(readiness)} />}
   </div>;
 }
