@@ -34,7 +34,7 @@ Global admin authority is stored only in `users.global_role`. `AUTH_ADMIN_EMAILS
 
 Public Google discovery requires the Google client pair, both Turnstile keys, and a valid `AUTH_IDENTITY_DIGEST_KEY`. A partial configuration fails closed and does not advertise Google through `/api/auth/me`. The OAuth runtime reads no GitHub credentials and accepts no GitHub callback; dynamic GitHub provider routes fail before OAuth state allocation or exchange. Historical provider-domain database rows remain readable and governable for compatibility.
 
-Set `AUTH_BASE_URL` to the exact externally visible origin with no path or trailing slash. For the production origin `https://stowplan.jklein.dev`, Google's callback is `https://stowplan.jklein.dev/api/auth/google/callback`. The same base controls OAuth callbacks, same-origin mutation checks, and the hostname expected in a production Turnstile result.
+Set `AUTH_BASE_URL` to the exact externally visible origin with no path or trailing slash. For the production origin `https://stowplan.lasers.app`, Google's callback is `https://stowplan.lasers.app/api/auth/google/callback`. The same base controls OAuth callbacks, same-origin mutation checks, and the hostname expected in a production Turnstile result.
 
 Keep `AUTH_IDENTITY_DIGEST_KEY` durable and identical for every runtime instance that shares a database. Back it up separately from deploy artifacts. The application has no multi-key transition window, so replacing the key without a planned digest migration prevents new identity and recovery-principal digests from matching rows created with the previous key.
 

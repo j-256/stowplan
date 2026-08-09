@@ -27,17 +27,17 @@ const config = validateConfig(
 );
 
 const LEGACY_DESTINATIONS = [
-  { type: "public", uri: "stowplan.jklein.dev/account*" },
-  { type: "public", uri: "stowplan.jklein.dev/api/auth/access*" },
-  { type: "public", uri: "stowplan.jklein.dev/admin*" },
-  { type: "public", uri: "stowplan.jklein.dev/api/admin/*" },
+  { type: "public", uri: "stowplan.lasers.app/account*" },
+  { type: "public", uri: "stowplan.lasers.app/api/auth/access*" },
+  { type: "public", uri: "stowplan.lasers.app/admin*" },
+  { type: "public", uri: "stowplan.lasers.app/api/admin/*" },
 ];
 
 const ADMIN_DESTINATIONS = [
-  { type: "public", uri: "stowplan.jklein.dev/admin" },
-  { type: "public", uri: "stowplan.jklein.dev/admin/*" },
-  { type: "public", uri: "stowplan.jklein.dev/api/admin" },
-  { type: "public", uri: "stowplan.jklein.dev/api/admin/*" },
+  { type: "public", uri: "stowplan.lasers.app/admin" },
+  { type: "public", uri: "stowplan.lasers.app/admin/*" },
+  { type: "public", uri: "stowplan.lasers.app/api/admin" },
+  { type: "public", uri: "stowplan.lasers.app/api/admin/*" },
 ];
 
 function organization(authenticators = ["biometrics", "totp"]) {
@@ -85,7 +85,7 @@ function legacyRemoteState() {
         aud: "private-audience-value",
         name: "Stowplan",
         type: "self_hosted",
-        domain: "stowplan.jklein.dev/account*",
+        domain: "stowplan.lasers.app/account*",
         destinations: LEGACY_DESTINATIONS,
         session_duration: "24h",
         allowed_idps: ["legacy-otp-id"],
@@ -140,7 +140,7 @@ function currentRemoteState() {
         aud: "preserved-audience-value",
         name: "Stowplan",
         type: "self_hosted",
-        domain: "stowplan.jklein.dev/admin",
+        domain: "stowplan.lasers.app/admin",
         destinations: ADMIN_DESTINATIONS,
         session_duration: "2h",
         app_launcher_visible: false,
@@ -407,9 +407,9 @@ describe("Cloudflare Access desired state", () => {
         ...state.applications[0],
         id: "overlapping-app-id",
         name: "unmanaged broad application",
-        domain: "stowplan.jklein.dev/*",
+        domain: "stowplan.lasers.app/*",
         destinations: [
-          { type: "public", uri: "stowplan.jklein.dev/*" },
+          { type: "public", uri: "stowplan.lasers.app/*" },
         ],
         policies: [],
       },
@@ -430,7 +430,7 @@ describe("Cloudflare Access desired state", () => {
       type: "self_hosted",
       domain: "other.example.invalid/admin",
       destinations: [],
-      self_hosted_domains: ["stowplan.jklein.dev/admin/*"],
+      self_hosted_domains: ["stowplan.lasers.app/admin/*"],
       allowed_idps: ["legacy-otp-id"],
       policies: [],
     });
@@ -447,7 +447,7 @@ describe("Cloudflare Access desired state", () => {
       type: "bookmark",
       domain: "https://other.example.invalid",
       destinations: [
-        { type: "public", uri: "stowplan.jklein.dev/api/admin/*" },
+        { type: "public", uri: "stowplan.lasers.app/api/admin/*" },
       ],
       allowed_idps: ["legacy-otp-id"],
       policies: [],
@@ -642,7 +642,7 @@ describe("Cloudflare Access desired state", () => {
         remote_uri: "https://scim.example.invalid",
         enabled: false,
       },
-      self_hosted_domains: ["stowplan.jklein.dev/account*"],
+      self_hosted_domains: ["stowplan.lasers.app/account*"],
       service_auth_401_redirect: true,
       skip_interstitial: true,
       tags: ["synthetic-tag"],
@@ -655,7 +655,7 @@ describe("Cloudflare Access desired state", () => {
     };
     expect(resolution.payload).toMatchObject(preserved);
     expect(resolution.payload).toMatchObject({
-      domain: "stowplan.jklein.dev/admin",
+      domain: "stowplan.lasers.app/admin",
       destinations: ADMIN_DESTINATIONS,
       allowed_idps: ["@identity_provider:admin-cloudflare"],
       policies: [
@@ -730,7 +730,7 @@ describe("Cloudflare Access desired state", () => {
       expect(api.state.applications[0]).toMatchObject({
         id: "managed-app-id",
         aud: "private-audience-value",
-        domain: "stowplan.jklein.dev/admin",
+        domain: "stowplan.lasers.app/admin",
         destinations: ADMIN_DESTINATIONS,
         session_duration: "2h",
       });
@@ -741,7 +741,7 @@ describe("Cloudflare Access desired state", () => {
       expect(api.state.applications[0]).toMatchObject({
         id: "managed-app-id",
         aud: "private-audience-value",
-        domain: "stowplan.jklein.dev/account*",
+        domain: "stowplan.lasers.app/account*",
         destinations: expect.arrayContaining(LEGACY_DESTINATIONS),
         session_duration: "24h",
         allowed_idps: ["legacy-otp-id"],
@@ -879,7 +879,7 @@ describe("Cloudflare Access desired state", () => {
         method: "POST",
       }]);
       expect(api.state.applications[0].domain).toBe(
-        "stowplan.jklein.dev/account*",
+        "stowplan.lasers.app/account*",
       );
       const snapshot = JSON.parse(
         await readFile(rollbackPath, "utf8"),
@@ -928,7 +928,7 @@ describe("Cloudflare Access desired state", () => {
         rollbackAccessPlan({ api, config, rollbackPath }),
       ).rejects.toThrow("changed reusable_policy dependency");
       expect(api.state.applications[0].domain).toBe(
-        "stowplan.jklein.dev/admin",
+        "stowplan.lasers.app/admin",
       );
     } finally {
       await rm(temporaryDirectory, { recursive: true, force: true });
@@ -959,7 +959,7 @@ describe("Cloudflare Access desired state", () => {
         rollbackAccessPlan({ api, config, rollbackPath }),
       ).rejects.toThrow("changed identity_provider dependency");
       expect(api.state.applications[0].domain).toBe(
-        "stowplan.jklein.dev/admin",
+        "stowplan.lasers.app/admin",
       );
     } finally {
       await rm(temporaryDirectory, { recursive: true, force: true });
@@ -974,7 +974,7 @@ describe("Cloudflare Access desired state", () => {
     const api = new FakeCloudflareApi();
     try {
       api.state.applications[0].self_hosted_domains = [
-        "stowplan.jklein.dev/legacy-hidden/*",
+        "stowplan.lasers.app/legacy-hidden/*",
       ];
       await applyAccessPlan({
         api,
@@ -990,7 +990,7 @@ describe("Cloudflare Access desired state", () => {
         destinations: [
           {
             type: "public",
-            uri: "stowplan.jklein.dev/legacy-hidden/*",
+            uri: "stowplan.lasers.app/legacy-hidden/*",
           },
         ],
         allowed_idps: ["legacy-otp-id"],
@@ -1002,7 +1002,7 @@ describe("Cloudflare Access desired state", () => {
         "legacy destinations overlap an unmanaged Access application",
       );
       expect(api.state.applications[0].domain).toBe(
-        "stowplan.jklein.dev/admin",
+        "stowplan.lasers.app/admin",
       );
     } finally {
       await rm(temporaryDirectory, { recursive: true, force: true });
@@ -1120,7 +1120,7 @@ describe("Cloudflare Access desired state", () => {
       expect(api.state.identityProviders).toHaveLength(1);
       expect(api.state.reusablePolicies).toHaveLength(1);
       expect(api.state.applications[0].domain).toBe(
-        "stowplan.jklein.dev/account*",
+        "stowplan.lasers.app/account*",
       );
     } finally {
       await rm(temporaryDirectory, { recursive: true, force: true });

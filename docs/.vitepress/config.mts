@@ -7,7 +7,7 @@ const rawBase = process.env.DOCS_BASE ?? "/";
 const base = rawBase.startsWith("/") && rawBase.endsWith("/") ? rawBase : `/${rawBase.replace(/^\/+|\/+$/g, "")}/`;
 const applicationUrl = (
   process.env.DOCS_APPLICATION_URL ||
-  "https://stowplan.jklein.dev"
+  "https://stowplan.lasers.app"
 ).replace(/\/+$/u, "");
 const demoUrl = `${applicationUrl}/demo`;
 const privacyUrl = (

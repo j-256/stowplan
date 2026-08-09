@@ -80,23 +80,23 @@
       "key": "admin",
       "name": "Stowplan",
       "type": "self_hosted",
-      "domain": "stowplan.jklein.dev/admin",
+      "domain": "stowplan.lasers.app/admin",
       "destinations": [
         {
           "type": "public",
-          "uri": "stowplan.jklein.dev/admin"
+          "uri": "stowplan.lasers.app/admin"
         },
         {
           "type": "public",
-          "uri": "stowplan.jklein.dev/admin/*"
+          "uri": "stowplan.lasers.app/admin/*"
         },
         {
           "type": "public",
-          "uri": "stowplan.jklein.dev/api/admin"
+          "uri": "stowplan.lasers.app/api/admin"
         },
         {
           "type": "public",
-          "uri": "stowplan.jklein.dev/api/admin/*"
+          "uri": "stowplan.lasers.app/api/admin/*"
         }
       ],
       "session_duration": "2h",
@@ -124,19 +124,19 @@
             "destinations": [
               {
                 "type": "public",
-                "uri": "stowplan.jklein.dev/admin"
+                "uri": "stowplan.lasers.app/admin"
               },
               {
                 "type": "public",
-                "uri": "stowplan.jklein.dev/admin/*"
+                "uri": "stowplan.lasers.app/admin/*"
               },
               {
                 "type": "public",
-                "uri": "stowplan.jklein.dev/api/admin"
+                "uri": "stowplan.lasers.app/api/admin"
               },
               {
                 "type": "public",
-                "uri": "stowplan.jklein.dev/api/admin/*"
+                "uri": "stowplan.lasers.app/api/admin/*"
               }
             ]
           }

@@ -26,7 +26,7 @@ export default function PrivacyPolicy() {
       <p className="eyebrow">Official hosted service</p>
       <h1>Privacy policy</h1>
       <p className={styles.effective}>Effective {EFFECTIVE_DATE}</p>
-      <p>This policy explains how the official Stowplan service at <a href="https://stowplan.jklein.dev">stowplan.jklein.dev</a> handles personal information. Strange Lasers operates this service.</p>
+      <p>This policy explains how the official Stowplan service at <a href="https://stowplan.lasers.app">stowplan.lasers.app</a> handles personal information. Strange Lasers operates this service.</p>
       <p>Independent Stowplan installations have their own operators, infrastructure, and privacy practices. Their operators must publish policies that describe those installations.</p>
 
       <section>

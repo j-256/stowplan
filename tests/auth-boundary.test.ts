@@ -177,12 +177,12 @@ describe("Turnstile verification", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     await expect(verifyTurnstile(
       {
-        AUTH_BASE_URL: "https://stowplan.jklein.dev",
+        AUTH_BASE_URL: "https://stowplan.lasers.app",
         AUTH_TURNSTILE_SECRET_KEY: secretKey,
         AUTH_TURNSTILE_SITE_KEY: siteKey,
       },
       "dummy-token",
-      "https://stowplan.jklein.dev",
+      "https://stowplan.lasers.app",
     )).rejects.toMatchObject({
       status: 503,
     } satisfies Partial<TurnstileVerificationError>);
@@ -315,11 +315,11 @@ describe("development authentication boundary", () => {
   it("always refuses the production host", () => {
     expect(developmentAuthenticationAllowed(
       {
-        AUTH_BASE_URL: "https://stowplan.jklein.dev",
-        AUTH_DEV_ALLOWED_HOSTS: "stowplan.jklein.dev",
+        AUTH_BASE_URL: "https://stowplan.lasers.app",
+        AUTH_DEV_ALLOWED_HOSTS: "stowplan.lasers.app",
         AUTH_DEV_ENABLED: "true",
       },
-      "https://stowplan.jklein.dev/api/auth/dev",
+      "https://stowplan.lasers.app/api/auth/dev",
     )).toBe(false);
   });
 
@@ -425,7 +425,7 @@ describe("identity enforcement boundary", () => {
     expect(provider(
       {
         ...testGoogle,
-        AUTH_BASE_URL: "https://stowplan.jklein.dev",
+        AUTH_BASE_URL: "https://stowplan.lasers.app",
       },
       "google",
     )).toBeNull();

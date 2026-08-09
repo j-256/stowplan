@@ -5,8 +5,8 @@ Google is the ordinary-account identity provider. Cloudflare Turnstile protects 
 ## Values to decide first
 
 ```text
-Production origin: https://stowplan.jklein.dev
-Production callback: https://stowplan.jklein.dev/api/auth/google/callback
+Production origin: https://stowplan.lasers.app
+Production callback: https://stowplan.lasers.app/api/auth/google/callback
 Node and OpenNext local callback: http://localhost:3000/api/auth/google/callback
 Sites/Vite local callback, when used: http://localhost:5173/api/auth/google/callback
 Scopes: openid email profile
@@ -59,7 +59,7 @@ The Account page reads only a server-computed boolean for Google-link state. It 
 
 ## Testing versus production
 
-Use Cloudflare's [documented Turnstile test credentials](https://developers.cloudflare.com/turnstile/troubleshooting/testing/) in local, CI, and isolated test deployments. Cloudflare's dummy token can return a provider-owned placeholder hostname and omit the action requested by the page. Stowplan accepts that test metadata only when both configured Turnstile values are recognized official test credentials and both the request origin and `AUTH_BASE_URL` pass the isolated-host guard. It still calls Siteverify and requires a successful result with a fresh challenge time. Any known test site or secret key makes Google unavailable on a public host, including `stowplan.jklein.dev`, before Siteverify is called. Stowplan's development provider accepts synthetic personas only on loopback, reserved `.test` hosts, or hosts explicitly named in `AUTH_DEV_ALLOWED_HOSTS`; it always refuses `stowplan.jklein.dev`.
+Use Cloudflare's [documented Turnstile test credentials](https://developers.cloudflare.com/turnstile/troubleshooting/testing/) in local, CI, and isolated test deployments. Cloudflare's dummy token can return a provider-owned placeholder hostname and omit the action requested by the page. Stowplan accepts that test metadata only when both configured Turnstile values are recognized official test credentials and both the request origin and `AUTH_BASE_URL` pass the isolated-host guard. It still calls Siteverify and requires a successful result with a fresh challenge time. Any known test site or secret key makes Google unavailable on a public host, including `stowplan.lasers.app`, before Siteverify is called. Stowplan's development provider accepts synthetic personas only on loopback, reserved `.test` hosts, or hosts explicitly named in `AUTH_DEV_ALLOWED_HOSTS`; it always refuses `stowplan.lasers.app`.
 
 Stowplan does not request offline access or store Google access or refresh tokens after the callback, so it cannot revoke Google consent on the user's behalf during account deletion. A user who wants to remove that consent must also remove Stowplan from the connections page in their Google Account. Publish and verify the Google app according to the console's production requirements before launch.
 

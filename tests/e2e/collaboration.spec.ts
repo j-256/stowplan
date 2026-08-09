@@ -265,13 +265,13 @@ test("keeps Terms acceptance separate from persistent Google sign-in", async ({
     name: "Terms of Service",
   })).toHaveAttribute(
     "href",
-    "https://stowplan.jklein.dev/terms",
+    "https://stowplan.lasers.app/terms",
   );
   await expect(agreementRow.getByRole("link", {
     name: "Privacy Policy",
   })).toHaveAttribute(
     "href",
-    "https://stowplan.jklein.dev/privacy",
+    "https://stowplan.lasers.app/privacy",
   );
 
   await termsAgreement.check();

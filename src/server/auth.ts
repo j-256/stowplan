@@ -70,7 +70,7 @@ const IPV6_HEXTET_COUNT = 8;
 const IPV6_PREFIX_BITS = 48;
 const IPV6_PREFIX_HEXTET_COUNT = 3;
 const DEVELOPMENT_AUTHENTICATION_BLOCKED_HOSTS = new Set([
-  "stowplan.jklein.dev",
+  "stowplan.lasers.app",
 ]);
 const MINIMUM_IDENTITY_DIGEST_KEY_BYTES = 32;
 const TURNSTILE_TEST_SECRET_KEYS = new Set([

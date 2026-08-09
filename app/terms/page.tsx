@@ -30,7 +30,7 @@ export default function TermsOfService() {
       <p className={styles.effective}>
         Effective {TERMS_EFFECTIVE_DATE}
       </p>
-      <p>These Terms govern the official Stowplan service at <a href="https://stowplan.jklein.dev">stowplan.jklein.dev</a>. Strange Lasers operates this service.</p>
+      <p>These Terms govern the official Stowplan service at <a href="https://stowplan.lasers.app">stowplan.lasers.app</a>. Strange Lasers operates this service.</p>
       <p>When you check the agreement and continue with Google, you agree to these Terms. If you do not agree, do not sign in. You can still use Stowplan&apos;s browser-only organizing features and demo without an account.</p>
       <p>Independent Stowplan installations have their own operators and terms. These Terms do not govern a fork or another installation.</p>
 

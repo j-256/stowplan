@@ -8,7 +8,7 @@
 
 A mobile-first, local-first organizer for rooms, cabinets, drawers, boxes, bins, and every container inside them. Label physical spaces, perform a fast first-pass count, search structured inventory, generate explainable move plans, and keep working through connectivity or server failures.
 
-[Try the ready-made kitchen](https://stowplan.jklein.dev/demo) or read the [user guide](https://docs.stowplan.lasers.app/guide/getting-started). The demo needs no account and does not replace another workspace already stored in the browser.
+[Try the ready-made kitchen](https://stowplan.lasers.app/demo) or read the [user guide](https://docs.stowplan.lasers.app/guide/getting-started). The demo needs no account and does not replace another workspace already stored in the browser.
 
 <table>
   <tr>
@@ -115,7 +115,7 @@ The GitHub Pages workflow derives the deployment base from the Pages site metada
 
 ## Security and privacy
 
-Inventory is private application data. APIs are uncached and workspace-scoped; session values, provider tokens, Access assertions, guest URLs, secrets, and production exports must never be logged or committed. Read the official hosted service's [privacy policy](https://stowplan.jklein.dev/privacy) and [SECURITY.md](SECURITY.md) before reporting a vulnerability.
+Inventory is private application data. APIs are uncached and workspace-scoped; session values, provider tokens, Access assertions, guest URLs, secrets, and production exports must never be logged or committed. Read the official hosted service's [privacy policy](https://stowplan.lasers.app/privacy) and [SECURITY.md](SECURITY.md) before reporting a vulnerability.
 
 ## Contributing
 

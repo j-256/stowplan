@@ -744,13 +744,13 @@ test("publishes the hosted service legal policies", async ({ page }) => {
     name: "Privacy policy",
   })).toHaveAttribute(
     "href",
-    "https://stowplan.jklein.dev/privacy",
+    "https://stowplan.lasers.app/privacy",
   );
   await expect(page.getByRole("main").getByRole("link", {
     name: "Terms of Service",
   })).toHaveAttribute(
     "href",
-    "https://stowplan.jklein.dev/terms",
+    "https://stowplan.lasers.app/terms",
   );
   await page.goto("/privacy");
   await expect(page.getByRole("heading", {
@@ -2513,13 +2513,13 @@ test("keeps account and administration controls easy to find", async ({
     name: "Privacy policy",
   })).toHaveAttribute(
     "href",
-    "https://stowplan.jklein.dev/privacy",
+    "https://stowplan.lasers.app/privacy",
   );
   await expect(userMenu.getByRole("link", {
     name: "Terms of Service",
   })).toHaveAttribute(
     "href",
-    "https://stowplan.jklein.dev/terms",
+    "https://stowplan.lasers.app/terms",
   );
   const accessibility = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa"])

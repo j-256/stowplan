@@ -1,11 +1,11 @@
 const DEFAULT_DOCUMENTATION_URL =
   "https://docs.stowplan.lasers.app/";
 const DEFAULT_PRIVACY_POLICY_URL =
-  "https://stowplan.jklein.dev/privacy";
+  "https://stowplan.lasers.app/privacy";
 const DEFAULT_REPOSITORY_URL =
   "https://github.com/j-256/stowplan";
 const DEFAULT_TERMS_OF_SERVICE_URL =
-  "https://stowplan.jklein.dev/terms";
+  "https://stowplan.lasers.app/terms";
 
 function trailingSlash(value: string): string {
   return value.endsWith("/") ? value : `${value}/`;
