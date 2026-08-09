@@ -3653,6 +3653,7 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
 }
 
 function Spaces({ state, current, select, commit, focusEditorKey, focusEditorSection }: { state: WorkspaceState; current: Location | null; select: (id: string) => void; commit: Commit; focusEditorKey: number | null; focusEditorSection?: GuidanceFocus }) {
+  const compactLayout = useMediaQuery(STACKED_TOUCH_LAYOUT_QUERY);
   const [compactPanel, setCompactPanel] = useState<CompactPanel>(
     focusEditorKey === null ? "primary" : "secondary",
   );
@@ -3661,7 +3662,11 @@ function Spaces({ state, current, select, commit, focusEditorKey, focusEditorSec
   const [dragging, setDragging] = useState(false);
   const [dropCue, setDropCue] = useState<DropTarget | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  const [spaceActionsLocationId, setSpaceActionsLocationId] = useState<
+    string | null
+  >(null);
   const inspector = useRef<HTMLElement | null>(null);
+  const spaceActionsTrigger = useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
     if (focusEditorKey === null) return;
     let focusFrame = 0;
@@ -3999,24 +4004,6 @@ function Spaces({ state, current, select, commit, focusEditorKey, focusEditorSec
         >
           <button
             type="button"
-            aria-label={`Earlier ${location.name}`}
-            disabled={index === 0}
-            onClick={() => reorderLocation(location, -1)}
-          >
-            <ArrowUp />
-            Earlier
-          </button>
-          <button
-            type="button"
-            aria-label={`Later ${location.name}`}
-            disabled={index === siblings.length - 1}
-            onClick={() => reorderLocation(location, 1)}
-          >
-            <ArrowDown />
-            Later
-          </button>
-          <button
-            type="button"
             aria-label={`Edit details for ${location.name}`}
             onClick={() => showInspector(location)}
           >
@@ -4024,15 +4011,17 @@ function Spaces({ state, current, select, commit, focusEditorKey, focusEditorSec
             Edit details
           </button>
           <button
+            aria-expanded={spaceActionsLocationId === location.id}
+            aria-haspopup="dialog"
+            aria-label={`More actions for ${location.name}`}
+            onClick={(event) => {
+              spaceActionsTrigger.current = event.currentTarget;
+              setSpaceActionsLocationId(location.id);
+            }}
             type="button"
-            aria-label={`Move ${location.name}`}
-            onClick={(event) => openMoveDialog(
-              location,
-              event.currentTarget,
-            )}
           >
-            <GripVertical />
-            Move
+            <Menu />
+            More actions
           </button>
         </div>}
         {children.length > 0 && !isCollapsed &&
@@ -4042,17 +4031,170 @@ function Spaces({ state, current, select, commit, focusEditorKey, focusEditorSec
       </div>;
     },
   );
-  const removeLocation = (location: Location) => {
+  const removeLocation = (location: Location): boolean => {
     const descendants = descendantIds(state, location.id);
     const locationIds = [location.id, ...descendants];
     const itemIds = state.items.filter((item) => locationIds.includes(item.locationId)).map((item) => item.id);
-    if (confirm(`Delete ${location.name}, ${countLabel(descendants.length, "nested space")}, and ${countLabel(itemIds.length, "item record")}? The deletion is recorded in Activity and can be undone until a later conflicting edit.`)) {
-      void perform(commit, { type: "location.delete", id: location.id, descendantIds: descendants, itemIds }, () => select(live.find((candidate) => !locationIds.includes(candidate.id))?.id ?? ""));
-    }
+    if (!confirm(`Delete ${location.name}, ${countLabel(descendants.length, "nested space")}, and ${countLabel(itemIds.length, "item record")}? The deletion is recorded in Activity and can be undone until a later conflicting edit.`)) return false;
+    void perform(commit, { type: "location.delete", id: location.id, descendantIds: descendants, itemIds }, () => select(live.find((candidate) => !locationIds.includes(candidate.id))?.id ?? ""));
+    return true;
   };
 
+  const spaceActionsLocation = compactLayout && spaceActionsLocationId
+    ? live.find((location) => location.id === spaceActionsLocationId) ?? null
+    : null;
+  const spaceActionSiblings = spaceActionsLocation
+    ? sortLocations(live.filter((location) =>
+      location.parentId === spaceActionsLocation.parentId
+    ))
+    : [];
+  const spaceActionIndex = spaceActionsLocation
+    ? spaceActionSiblings.findIndex((location) =>
+      location.id === spaceActionsLocation.id
+    )
+    : -1;
+  const spaceActionCanArchive = Boolean(
+    spaceActionsLocation &&
+    !state.items.some((item) =>
+      item.locationId === spaceActionsLocation.id && !item.archivedAt
+    ) &&
+    !descendantIds(state, spaceActionsLocation.id).some((id) =>
+      !state.locations.find((location) => location.id === id)?.archivedAt
+    ),
+  );
+
   const treePanel = <section className="panel tree-panel" data-dragging={dragging}><div className="title"><div><p className="eyebrow">Your physical hierarchy</p><h2>Rooms → cabinets → boxes</h2></div></div><div className="tree-tools"><details className="tree-add"><summary><Plus /><span>Add top-level space</span></summary><form onSubmit={(event) => submitForm(event, addRoot)}><LocationCreateFields defaultKind="room" existingCodes={live.map((location) => location.code)} kindLabel="Space type" namePlaceholder="Friendly name" /><button>Add top-level space</button></form></details><details className="tree-help"><summary><Info /><span>Move spaces</span></summary><p>Drag a handle onto the top, middle, or bottom of another row to place before, move inside, or place after. On touch, press the handle, slide, and release.</p></details></div><div className="root-drop" data-drop-target="root" data-drop-intent={dropCue?.kind === "root" ? "inside" : undefined} onDragOver={(event) => dragOver(event, { id: null, intent: "inside", kind: "root" })} onDrop={(event) => drop(event, { id: null, intent: "inside", kind: "root" })}>Drop here to make a top-level room or area</div><p className="mobile-tree-hint">Tap a space for move and edit actions.</p><div className="location-tree" role="list" aria-label="Space hierarchy">{branch(null)}</div>{archived.length > 0 && <details className="archived"><summary>{archived.length} archived</summary>{archived.map((location) => <div key={location.id}><span>{location.code} · {location.name}</span><button onClick={() => void perform(commit, { type: "location.archive", id: location.id, archived: false })}>Restore</button></div>)}</details>}</section>;
-  const inspectorPanel = <section className="panel inspector" id="space-inspector" ref={inspector} tabIndex={-1} aria-label={current ? `Edit ${current.name}` : "Space editor"}>{current && <button type="button" className="mobile-back-to-hierarchy" onClick={() => focusTreeLocation(current.id)}>Back to hierarchy</button>}{current ? <LocationEditor key={current.id} state={state} location={current} commit={commit} select={select} reorder={reorderLocation} remove={() => removeLocation(current)} editItem={setEditingItem} moveByDrop={finishTouchDrop} requestHierarchyChange={requestHierarchyChange} setDragging={setDragging} startNativeDrag={startNativeDrag} endNativeDrag={endNativeDrag} /> : <Empty title="Select a space" text="Edit it, move it, or drop an item or container onto it." />}</section>;
+  const inspectorPanel = <section
+    aria-label={current ? `Edit ${current.name}` : "Space editor"}
+    className="panel inspector"
+    id="space-inspector"
+    ref={inspector}
+    tabIndex={-1}
+  >
+    {current
+      ? <LocationEditor
+        compactActions={compactLayout}
+        commit={commit}
+        editItem={setEditingItem}
+        endNativeDrag={endNativeDrag}
+        key={current.id}
+        location={current}
+        moveByDrop={finishTouchDrop}
+        remove={() => removeLocation(current)}
+        reorder={reorderLocation}
+        requestHierarchyChange={requestHierarchyChange}
+        select={select}
+        setDragging={setDragging}
+        startNativeDrag={startNativeDrag}
+        state={state}
+      />
+      : <Empty
+        title="Select a space"
+        text="Edit it, move it, or drop an item or container onto it."
+      />}
+  </section>;
+  const spaceActionSheet = spaceActionsLocation
+    ? <ModalDialog
+      mobileSheet="content"
+      onClose={() => setSpaceActionsLocationId(null)}
+      open={Boolean(spaceActionsLocation)}
+      returnFocusRef={spaceActionsTrigger}
+      title={`${spaceActionsLocation.name} actions`}
+    >
+      <div className="space-action-sheet">
+        <p className="space-action-summary">
+          <strong>{spaceActionsLocation.code} · {spaceActionsLocation.name}</strong>
+          <small>{spaceActionsLocation.kind} · Choose one hierarchy action</small>
+        </p>
+        <div className="space-action-reorder">
+          <button
+            aria-label={`Earlier ${spaceActionsLocation.name}`}
+            disabled={spaceActionIndex <= 0}
+            onClick={() => {
+              reorderLocation(spaceActionsLocation, -1);
+              setSpaceActionsLocationId(null);
+            }}
+            type="button"
+          >
+            <ArrowUp />
+            Earlier
+          </button>
+          <button
+            aria-label={`Later ${spaceActionsLocation.name}`}
+            disabled={
+              spaceActionIndex < 0 ||
+              spaceActionIndex === spaceActionSiblings.length - 1
+            }
+            onClick={() => {
+              reorderLocation(spaceActionsLocation, 1);
+              setSpaceActionsLocationId(null);
+            }}
+            type="button"
+          >
+            <ArrowDown />
+            Later
+          </button>
+        </div>
+        <button
+          aria-label={`Move ${spaceActionsLocation.name}`}
+          onClick={(event) => {
+            const trigger = spaceActionsTrigger.current ?? event.currentTarget;
+            setSpaceActionsLocationId(null);
+            openMoveDialog(spaceActionsLocation, trigger);
+          }}
+          type="button"
+        >
+          <GripVertical />
+          Move to another parent or position
+        </button>
+        <button
+          aria-label={`Archive ${spaceActionsLocation.name}`}
+          disabled={!spaceActionCanArchive}
+          onClick={() => {
+            setSpaceActionsLocationId(null);
+            void perform(
+              commit,
+              {
+                type: "location.archive",
+                id: spaceActionsLocation.id,
+                archived: true,
+              },
+              () => select(live.find((candidate) =>
+                candidate.id !== spaceActionsLocation.id
+              )?.id ?? ""),
+            );
+          }}
+          title={spaceActionCanArchive
+            ? undefined
+            : "Move, archive, or delete live contents and nested spaces first."}
+          type="button"
+        >
+          <Archive />
+          Archive empty space
+        </button>
+        <button
+          aria-label={`Delete ${spaceActionsLocation.name} and subtree`}
+          className="danger"
+          onClick={() => {
+            if (removeLocation(spaceActionsLocation)) {
+              setSpaceActionsLocationId(null);
+            }
+          }}
+          type="button"
+        >
+          <Trash2 />
+          Delete subtree
+        </button>
+      </div>
+      <button
+        className="space-action-close"
+        onClick={() => setSpaceActionsLocationId(null)}
+        type="button"
+      >
+        Close
+      </button>
+    </ModalDialog>
+    : null;
   return <>
     <ResizablePanels
       activeCompactPanel={compactPanel}
@@ -4067,6 +4209,7 @@ function Spaces({ state, current, select, commit, focusEditorKey, focusEditorSec
       secondaryLabel="space details"
       storageId="spaces"
     />
+    {spaceActionSheet}
     <HierarchyChangeDialogs controller={hierarchy} state={state} />
     {editingItem && state.items.find((item) => item.id === editingItem) && <ItemEditor item={state.items.find((item) => item.id === editingItem) as ItemRecord} state={state} commit={commit} close={() => setEditingItem(null)} />}
   </>;
@@ -4339,7 +4482,7 @@ function LocationMoveDialog({
   </section>;
 }
 
-function LocationEditor({ state, location, commit, select, reorder, remove, editItem, moveByDrop, requestHierarchyChange, setDragging, startNativeDrag, endNativeDrag }: { state: WorkspaceState; location: Location; commit: Commit; select: (id: string) => void; reorder: (location: Location, direction: -1 | 1) => void; remove: () => void; editItem: (id: string) => void; moveByDrop: (payload: DragPayload, target: DropTarget) => void; requestHierarchyChange: (command: LocationHierarchyCommand, trigger?: HTMLElement | null) => Promise<boolean>; setDragging: (dragging: boolean) => void; startNativeDrag: (event: React.DragEvent, payload: DragPayload) => void; endNativeDrag: () => void }) {
+function LocationEditor({ compactActions, state, location, commit, select, reorder, remove, editItem, moveByDrop, requestHierarchyChange, setDragging, startNativeDrag, endNativeDrag }: { compactActions: boolean; state: WorkspaceState; location: Location; commit: Commit; select: (id: string) => void; reorder: (location: Location, direction: -1 | 1) => void; remove: () => void; editItem: (id: string) => void; moveByDrop: (payload: DragPayload, target: DropTarget) => void; requestHierarchyChange: (command: LocationHierarchyCommand, trigger?: HTMLElement | null) => Promise<boolean>; setDragging: (dragging: boolean) => void; startNativeDrag: (event: React.DragEvent, payload: DragPayload) => void; endNativeDrag: () => void }) {
   const [childCreatorOpen, setChildCreatorOpen] = useState(false);
   const hierarchyChangeTrigger = useRef<HTMLElement | null>(null);
   const editorForm = useRef<HTMLFormElement | null>(null);
@@ -4457,12 +4600,12 @@ function LocationEditor({ state, location, commit, select, reorder, remove, edit
       </details>
       <button className="primary">Save space</button>
     </form>
-    <div className="inspector-actions">
+    {!compactActions && <div className="inspector-actions">
       <button disabled={siblingIndex <= 0} onClick={() => reorder(location, -1)}><ArrowUp /> Earlier</button>
       <button disabled={siblingIndex < 0 || siblingIndex === siblings.length - 1} onClick={() => reorder(location, 1)}><ArrowDown /> Later</button>
       <button disabled={!canArchive} title={canArchive ? undefined : "Move, archive, or delete live contents and nested spaces first."} onClick={() => void perform(commit, { type: "location.archive", id: location.id, archived: true }, () => select(state.locations.find((candidate) => !candidate.archivedAt && candidate.id !== location.id)?.id ?? ""))}><Archive /> Archive</button>
       <button className="danger" onClick={remove}><Trash2 /> Delete subtree</button>
-    </div>
+    </div>}
     {captureComplete && <div className="capture-locked capture-locked-action" role="status">
       <CheckCircle2 />
       <span><strong>Contents are read-only</strong><small>Reopen capture before adding, editing, moving, or reordering direct contents.</small></span>
@@ -5868,7 +6011,7 @@ function Planner({ state, commit, openGuidanceTarget }: { state: WorkspaceState;
       {(!compactLayout || !active) && plannerBody}
     </section>
     {compactLayout && active && <ModalDialog
-      mobileSheet
+      mobileSheet="full"
       onClose={() => setPlanOptionsOpen(false)}
       open={planOptionsOpen}
       returnFocusRef={planOptionsTrigger}
@@ -5986,7 +6129,7 @@ function Planner({ state, commit, openGuidanceTarget }: { state: WorkspaceState;
           {itineraryList}
         </details>}
       {compactLayout && <ModalDialog
-        mobileSheet
+        mobileSheet="full"
         onClose={() => setStepSupportOpen(false)}
         open={stepSupportOpen}
         returnFocusRef={stepSupportTrigger}
@@ -5996,7 +6139,7 @@ function Planner({ state, commit, openGuidanceTarget }: { state: WorkspaceState;
         <button className="planner-sheet-close" onClick={() => setStepSupportOpen(false)} type="button">Close</button>
       </ModalDialog>}
       {compactLayout && <ModalDialog
-        mobileSheet
+        mobileSheet="full"
         onClose={() => setItineraryOpen(false)}
         open={itineraryOpen}
         returnFocusRef={itineraryTrigger}
@@ -6008,7 +6151,7 @@ function Planner({ state, commit, openGuidanceTarget }: { state: WorkspaceState;
     </> : null}
     {plannerHero}
     {compactLayout && active && <ModalDialog
-      mobileSheet
+      mobileSheet="full"
       onClose={() => setReadinessOpen(false)}
       open={readinessOpen}
       returnFocusRef={planOptionsTrigger}

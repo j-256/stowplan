@@ -74,7 +74,7 @@ export interface ModalDialogProps {
   children: ReactNode;
   description?: ReactNode;
   destructive?: boolean;
-  mobileSheet?: boolean;
+  mobileSheet?: "content" | "full";
   onClose: () => void;
   open: boolean;
   returnFocusRef?: RefObject<HTMLElement | null>;
@@ -86,7 +86,7 @@ export function ModalDialog({
   children,
   description,
   destructive = false,
-  mobileSheet = false,
+  mobileSheet,
   onClose,
   open,
   returnFocusRef,
@@ -186,7 +186,7 @@ export function ModalDialog({
 
   return <div
     className={styles.backdrop}
-    data-mobile-sheet={mobileSheet ? "true" : undefined}
+    data-mobile-sheet={mobileSheet}
     onMouseDown={closeBackdrop}
   >
     <div
@@ -195,7 +195,7 @@ export function ModalDialog({
       aria-modal="true"
       className={styles.dialog}
       data-destructive={destructive}
-      data-mobile-sheet={mobileSheet ? "true" : undefined}
+      data-mobile-sheet={mobileSheet}
       ref={dialogRef}
       role="dialog"
       tabIndex={-1}

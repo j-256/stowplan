@@ -21,6 +21,7 @@ const EXPANDED_SIDEBAR_WIDTH = 248;
 const MAX_COMPACT_ACTIVITY_ROW_HEIGHT = 145;
 const MAX_COMPACT_INVENTORY_ROW_HEIGHT = 72;
 const MAX_COMPACT_SHEET_EDGE_GAP = 10;
+const MAX_COMPACT_SPACE_ACTION_BAR_HEIGHT = 62;
 const MAX_GOOD_CUMULATIVE_LAYOUT_SHIFT = 0.1;
 const MAX_LAYOUT_GEOMETRY_DRIFT = 1;
 const NARROW_PHONE_VIEWPORT = Object.freeze({ height: 568, width: 320 });
@@ -4781,7 +4782,7 @@ test("keeps Capture rows compact and supports a focused mobile Move fallback", a
   await expect(foodRow.locator(".queue-row")).toBeFocused();
 });
 
-test("moves a space from visible mobile tree actions and atomically reopens its completed parents", async ({
+test("moves a space from a compact mobile action sheet and atomically reopens its completed parents", async ({
   page,
 }, testInfo) => {
   test.skip(
@@ -4795,27 +4796,52 @@ test("moves a space from visible mobile tree actions and atomically reopens its 
 
   const row = page.locator('.tree-row[data-location-id="loc_food"]');
   await row.locator(".tree-select").click();
-  const earlier = page.getByRole("button", {
-    name: "Earlier Food cabinet",
-  });
-  const later = page.getByRole("button", {
-    name: "Later Food cabinet",
-  });
   const edit = page.getByRole("button", {
     name: "Edit details for Food cabinet",
   });
-  const move = page.getByRole("button", {
-    name: "Move Food cabinet",
-    exact: true,
+  const moreActions = page.getByRole("button", {
+    name: "More actions for Food cabinet",
   });
-  for (const action of [earlier, later, edit, move]) {
+  for (const action of [edit, moreActions]) {
     await expect(action).toBeVisible();
   }
-  await expect(move).toBeInViewport();
-  const moveBounds = await move.boundingBox();
-  if (!moveBounds) throw new Error("The mobile tree Move action is not visible");
-  expect(moveBounds.width).toBeGreaterThanOrEqual(44);
-  expect(moveBounds.height).toBeGreaterThanOrEqual(44);
+  const actionBar = edit.locator("..");
+  await expect(actionBar.locator("button")).toHaveCount(2);
+  const actionBarBox = await actionBar.boundingBox();
+  expect(actionBarBox?.height).toBeLessThanOrEqual(
+    MAX_COMPACT_SPACE_ACTION_BAR_HEIGHT,
+  );
+  await expect(page.getByRole("button", {
+    name: "Earlier Food cabinet",
+  })).toBeHidden();
+  await moreActions.click();
+  const actionSheet = page.getByRole("dialog", {
+    name: "Food cabinet actions",
+  });
+  const actionSheetBox = await actionSheet.boundingBox();
+  expect(actionSheetBox).not.toBeNull();
+  expect(
+    (actionSheetBox?.y ?? 0) + (actionSheetBox?.height ?? 0),
+  ).toBeGreaterThanOrEqual(
+    (page.viewportSize()?.height ?? 0) - MAX_COMPACT_SHEET_EDGE_GAP,
+  );
+  for (const actionName of [
+    "Earlier Food cabinet",
+    "Later Food cabinet",
+    "Move Food cabinet",
+    "Archive Food cabinet",
+    "Delete Food cabinet and subtree",
+  ]) {
+    await expect(actionSheet.getByRole("button", {
+      exact: true,
+      name: actionName,
+    })).toBeVisible();
+  }
+  await expect(actionSheet.getByRole("button", {
+    name: "Archive Food cabinet",
+  })).toBeDisabled();
+  await actionSheet.getByRole("button", { name: "Close" }).click();
+  await expect(moreActions).toBeFocused();
 
   const panelNavigation = page.getByRole("group", {
     name: "Space panels navigation",
@@ -4840,9 +4866,13 @@ test("moves a space from visible mobile tree actions and atomically reopens its 
   await expect(inspector.getByRole("button", {
     name: "Save space",
   })).toBeInViewport();
-  await inspector.getByLabel("Friendly name").fill(draftName);
-  await inspector.getByRole("button", {
+  await expect(inspector.getByRole("button", {
     name: "Back to hierarchy",
+  })).toHaveCount(0);
+  await expect(inspector.locator(".inspector-actions")).toHaveCount(0);
+  await inspector.getByLabel("Friendly name").fill(draftName);
+  await panelNavigation.getByRole("button", {
+    name: "space hierarchy",
   }).click();
   await expect(inspector).toBeHidden();
   await expect(page.locator(".tree-panel")).toBeVisible();
@@ -4867,7 +4897,11 @@ test("moves a space from visible mobile tree actions and atomically reopens its 
       workspace: { revision: number };
     };
   };
-  await move.click();
+  await moreActions.click();
+  await actionSheet.getByRole("button", {
+    name: "Move Food cabinet",
+    exact: true,
+  }).click();
   const moveDialog = page.getByRole("dialog", {
     name: "Move Food cabinet",
   });
@@ -4895,7 +4929,7 @@ test("moves a space from visible mobile tree actions and atomically reopens its 
   await expect(cancel).toBeVisible();
   await cancel.click();
   await expect(confirmation).toHaveCount(0);
-  await expect(move).toBeFocused();
+  await expect(moreActions).toBeFocused();
   const afterCancel = await localReplica(page) as typeof before;
   expect(afterCancel.state.workspace.revision).toBe(
     before.state.workspace.revision,
@@ -4908,7 +4942,11 @@ test("moves a space from visible mobile tree actions and atomically reopens its 
       ?.parentId,
   ).toBe("loc_left");
 
-  await move.click();
+  await moreActions.click();
+  await actionSheet.getByRole("button", {
+    name: "Move Food cabinet",
+    exact: true,
+  }).click();
   await moveDialog.getByLabel("Parent space").selectOption("loc_right");
   await moveDialog.getByLabel("Position").selectOption(lastPositionValue);
   await moveDialog.getByRole("button", { name: "Review move" }).click();
