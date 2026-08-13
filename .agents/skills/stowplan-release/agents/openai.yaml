@@ -1,0 +1,6 @@
+interface:
+  display_name: "Release Stowplan"
+  short_description: "Verify and publish Stowplan to Sites"
+  default_prompt: "Use $stowplan-release to verify, push, publish, and smoke-test the current Stowplan main branch."
+policy:
+  allow_implicit_invocation: false
