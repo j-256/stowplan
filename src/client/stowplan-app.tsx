@@ -2720,6 +2720,10 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
   const [containerReviewNotice, setContainerReviewNotice] = useState("");
   const [containerCreatorOpen, setContainerCreatorOpen] = useState(false);
   const [editorNavigationKey, setEditorNavigationKey] = useState(0);
+  const [captureRevealTarget, setCaptureRevealTarget] = useState<{
+    id: string;
+    token: number;
+  } | null>(null);
   const [hierarchyDragging, setHierarchyDragging] = useState(false);
   const [nativeReorderCue, setNativeReorderCue] = useState<DropTarget | null>(null);
   const [nativeReorderSource, setNativeReorderSource] = useState<DragPayload | null>(null);
@@ -2781,20 +2785,15 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
     });
     setCompactPanel("primary");
     select(location.id);
-    requestAnimationFrame(() => {
-      const row = Array.from(
-        document.querySelectorAll<HTMLElement>(
-          ".capture-location-row[data-location-id]",
-        ),
-      ).find((candidate) => candidate.dataset.locationId === location.id);
-      const behavior = matchMedia("(prefers-reduced-motion: reduce)").matches
-        ? "auto"
-        : "smooth";
-      row?.scrollIntoView({ behavior, block: "center" });
-      row?.querySelector<HTMLButtonElement>(".queue-row")?.focus({
-        preventScroll: true,
-      });
-    });
+    // Focus after the reorder commits. Doing it here in a bare
+    // requestAnimationFrame can fire before React commits the reordered rows,
+    // so the imperative focus lands on a stale node or is dropped by
+    // reconciliation and never recovers. A commit-keyed effect defers it until
+    // the target row is rendered, matching the editorNavigationKey pattern
+    setCaptureRevealTarget((previous) => ({
+      id: location.id,
+      token: (previous?.token ?? 0) + 1,
+    }));
   };
   const hierarchy = useHierarchyChanges({
     commit,
@@ -2820,6 +2819,26 @@ function Capture({ state, current, select, commit, demoIntro, focusEditorKey }: 
     });
     return () => cancelAnimationFrame(frame);
   }, [editorNavigationKey]);
+  useEffect(() => {
+    if (!captureRevealTarget) return;
+    const frame = requestAnimationFrame(() => {
+      const row = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          ".capture-location-row[data-location-id]",
+        ),
+      ).find(
+        (candidate) => candidate.dataset.locationId === captureRevealTarget.id,
+      );
+      const behavior = matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "auto"
+        : "smooth";
+      row?.scrollIntoView({ behavior, block: "center" });
+      row?.querySelector<HTMLButtonElement>(".queue-row")?.focus({
+        preventScroll: true,
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [captureRevealTarget]);
   useEffect(() => {
     if (focusEditorKey === null) return;
     let focusFrame = 0;
