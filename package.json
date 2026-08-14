@@ -53,7 +53,7 @@
     "react-dom": "^19.2.8"
   },
   "devDependencies": {
-    "@axe-core/playwright": "^4.12.1",
+    "@axe-core/playwright": "^4.13.0",
     "@cloudflare/vite-plugin": "1.51.2",
     "@cloudflare/workers-types": "^5.20260811.1",
     "@opennextjs/cloudflare": "^1.20.2",
