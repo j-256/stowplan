@@ -17,6 +17,10 @@ updates:
     # while every other package in it is fine. Hold both back and drop the entry
     # once the bundled plugins accept the new major
     ignore:
+      # Vinext 0.0.46 through 0.2.1 pin vulnerable image-size 2.0.2
+      # Resume proposals when Vinext ships beyond the affected range
+      - dependency-name: vinext
+        versions: [">=0.0.46 <=0.2.1"]
       # typescript-eslint declares typescript <6.1 and refuses to load under 7.
       # Blocked upstream on asynchronous ESLint parser support, not a release
       - dependency-name: typescript
