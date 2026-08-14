@@ -5,9 +5,14 @@ const E2E_DATABASE_PATH =
   `${TEST_OUTPUT_DIRECTORY}/stowplan-e2e.sqlite`;
 const E2E_IDENTITY_DIGEST_KEY =
   "playwright-identity-digest-key-at-least-32-bytes";
-// Chromium needs this flag so service workers trust the ephemeral E2E certificate
-const CHROMIUM_HTTPS_USE = {
-  launchOptions: { args: ["--ignore-certificate-errors"] },
+const CHROMIUM_LAUNCH_ARGUMENTS = [
+  // Trust the ephemeral E2E certificate so service workers run under HTTPS
+  "--ignore-certificate-errors",
+  // Remove the separate GPU-process startup path implicated by issue 20
+  "--in-process-gpu",
+];
+const CHROMIUM_USE = {
+  launchOptions: { args: CHROMIUM_LAUNCH_ARGUMENTS },
 };
 
 export default defineConfig({
@@ -34,12 +39,12 @@ export default defineConfig({
     env: { ...process.env, AUTH_BASE_URL:"https://localhost:3100", AUTH_DEV_ENABLED:"true", AUTH_IDENTITY_DIGEST_KEY:E2E_IDENTITY_DIGEST_KEY, HOST:"127.0.0.1", PORT:"3100", STOWPLAN_SQLITE_PATH:E2E_DATABASE_PATH },
   },
   projects: [
-    { name:"mobile-chromium", use:{ ...devices["Pixel 7 Pro"], ...CHROMIUM_HTTPS_USE } },
-    { name:"mobile-landscape", use:{ ...devices["Pixel 7 Pro landscape"], ...CHROMIUM_HTTPS_USE } },
-    { name:"tablet-portrait", use:{ ...devices["iPad Mini"], ...CHROMIUM_HTTPS_USE, browserName:"chromium" } },
-    { name:"tablet-landscape", use:{ ...devices["iPad Mini landscape"], ...CHROMIUM_HTTPS_USE, browserName:"chromium" } },
-    { name:"desktop-compact", use:{ ...devices["Desktop Chrome"], ...CHROMIUM_HTTPS_USE, viewport:{ width:1024, height:700 } } },
-    { name:"desktop-chromium", use:{ ...devices["Desktop Chrome"], ...CHROMIUM_HTTPS_USE, viewport:{ width:1440, height:900 } } },
+    { name:"mobile-chromium", use:{ ...devices["Pixel 7 Pro"], ...CHROMIUM_USE } },
+    { name:"mobile-landscape", use:{ ...devices["Pixel 7 Pro landscape"], ...CHROMIUM_USE } },
+    { name:"tablet-portrait", use:{ ...devices["iPad Mini"], ...CHROMIUM_USE, browserName:"chromium" } },
+    { name:"tablet-landscape", use:{ ...devices["iPad Mini landscape"], ...CHROMIUM_USE, browserName:"chromium" } },
+    { name:"desktop-compact", use:{ ...devices["Desktop Chrome"], ...CHROMIUM_USE, viewport:{ width:1024, height:700 } } },
+    { name:"desktop-chromium", use:{ ...devices["Desktop Chrome"], ...CHROMIUM_USE, viewport:{ width:1440, height:900 } } },
     {
       name: "webkit-phone",
       testMatch: /safe-beta\.spec\.ts/,
