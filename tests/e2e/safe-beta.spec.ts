@@ -1120,8 +1120,9 @@ test(
 
       const recipient = safeBeta.identity("browser invite member");
       if (testInfo.project.name === WEBKIT_PHONE_PROJECT) {
+        await expect(page.getByLabel("Name")).toBeVisible();
         await safeBeta.signIn(context, "browser invite member");
-        await page.reload();
+        await page.reload({ waitUntil: "commit" });
       } else {
         await page.getByLabel("Name").fill(recipient.name);
         await page.getByLabel("Email").fill(recipient.email);
