@@ -708,6 +708,21 @@ describe("Cloudflare Access desired state", () => {
     ).toThrow("rollback snapshot would contain forbidden field");
   });
 
+  it("requires the rollback snapshot to be a regular file", async () => {
+    const temporaryDirectory = await mkdtemp(
+      join(tmpdir(), "stowplan-access-test-"),
+    );
+    try {
+      await expect(rollbackAccessPlan({
+        api: new FakeCloudflareApi(),
+        config,
+        rollbackPath: temporaryDirectory,
+      })).rejects.toThrow("rollback snapshot must be a regular file");
+    } finally {
+      await rm(temporaryDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("applies in dependency order and restores the private snapshot", async () => {
     const temporaryDirectory = await mkdtemp(
       join(tmpdir(), "stowplan-access-test-"),

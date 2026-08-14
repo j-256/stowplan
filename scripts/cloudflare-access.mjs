@@ -6,7 +6,6 @@ import {
   open,
   readFile,
   rename,
-  stat,
   unlink,
 } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
@@ -1579,20 +1578,33 @@ export async function applyAccessPlan({
 }
 
 async function readRollbackSnapshot(path, config, accountId) {
-  let fileStat;
+  let handle;
   try {
-    fileStat = await stat(path);
+    handle = await open(path, "r");
   } catch {
     fail("rollback snapshot could not be read", 66);
   }
-  if ((fileStat.mode & 0o077) !== 0) {
-    fail("rollback snapshot permissions must be 0600", 77);
-  }
   let snapshot;
   try {
-    snapshot = JSON.parse(await readFile(path, "utf8"));
-  } catch {
-    fail("rollback snapshot is invalid", 65);
+    let fileStat;
+    try {
+      fileStat = await handle.stat();
+    } catch {
+      fail("rollback snapshot could not be read", 66);
+    }
+    if (!fileStat.isFile()) {
+      fail("rollback snapshot must be a regular file", 66);
+    }
+    if ((fileStat.mode & 0o077) !== 0) {
+      fail("rollback snapshot permissions must be 0600", 77);
+    }
+    try {
+      snapshot = JSON.parse(await handle.readFile("utf8"));
+    } catch {
+      fail("rollback snapshot is invalid", 65);
+    }
+  } finally {
+    await handle.close();
   }
   if (
     snapshot?.schema_version !== SNAPSHOT_SCHEMA_VERSION
