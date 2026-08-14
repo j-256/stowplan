@@ -38,7 +38,7 @@
     "docs:build": "vitepress build docs",
     "docs:check": "node scripts/check-docs-build.mjs",
     "docs:preview": "vitepress preview docs",
-    "build:next": "bash scripts/sites-env.sh -- next build",
+    "build:next": "bash scripts/sites-env.sh -- bash scripts/with-clean-next-output.sh -- next build",
     "build:cloudflare": "bash scripts/sites-env.sh -- opennextjs-cloudflare build",
     "preview:cloudflare": "bash scripts/sites-env.sh -- opennextjs-cloudflare build && bash scripts/sites-env.sh -- opennextjs-cloudflare preview",
     "deploy:cloudflare": "bash scripts/sites-env.sh -- opennextjs-cloudflare build && bash scripts/sites-env.sh -- opennextjs-cloudflare deploy"
