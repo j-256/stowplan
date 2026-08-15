@@ -2,7 +2,11 @@ version: 2
 updates:
   - package-ecosystem: npm
     directory: /
-    schedule: { interval: weekly }
+    schedule:
+      interval: weekly
+      day: friday
+      time: "00:00"
+      timezone: America/Chicago
     groups:
       production:
         dependency-type: production
@@ -31,4 +35,12 @@ updates:
         update-types: [version-update:semver-major]
   - package-ecosystem: github-actions
     directory: /
-    schedule: { interval: weekly }
+    schedule:
+      interval: weekly
+      day: friday
+      time: "00:30"
+      timezone: America/Chicago
+    groups:
+      all-actions:
+        patterns:
+          - "*"
