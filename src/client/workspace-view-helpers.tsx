@@ -5,6 +5,10 @@ import {
   useSyncExternalStore,
 } from "react";
 import { suggestLocationCode } from "../domain/location-code";
+import {
+  workspacePath,
+  type WorkspaceView,
+} from "../domain/app-url";
 import type {
   CaptureStatus,
   Command,
@@ -13,6 +17,7 @@ import type {
   ItemRecord,
   Location,
   LocationKind,
+  WorkspaceState,
 } from "../domain/types";
 import type {
   Commit,
@@ -315,6 +320,52 @@ export function showFeedback(
 
 export function dismissFeedback(): void {
   dispatchEvent(new Event(DISMISS_FEEDBACK_EVENT));
+}
+
+export function followAppLink(
+  event: React.MouseEvent<HTMLAnchorElement>,
+  navigate: () => void,
+): void {
+  if (
+    event.button !== 0 ||
+    event.metaKey ||
+    event.ctrlKey ||
+    event.shiftKey ||
+    event.altKey
+  ) return;
+  event.preventDefault();
+  navigate();
+}
+
+export function stateWorkspacePath(
+  state: WorkspaceState,
+  {
+    itemId = null,
+    locationId = null,
+    view,
+  }: {
+    itemId?: string | null;
+    locationId?: string | null;
+    view: WorkspaceView;
+  },
+): string {
+  const item = itemId
+    ? state.items.find((candidate) => candidate.id === itemId)
+    : undefined;
+  const location = locationId
+    ? state.locations.find((candidate) => candidate.id === locationId)
+    : undefined;
+  return workspacePath({
+    itemId,
+    itemLabel: item?.name,
+    locationId,
+    locationLabel: location
+      ? `${location.code} ${location.name}`
+      : undefined,
+    view,
+    workspaceId: state.workspace.id,
+    workspaceLabel: state.workspace.name,
+  });
 }
 
 export function submitForm(
