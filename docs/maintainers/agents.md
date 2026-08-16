@@ -1,6 +1,6 @@
 # Agent handoff
 
-Read in this order: `README.md`, `AGENTS.md`, this architecture guide, `src/domain/types.ts`, `src/domain/commands.ts`, `src/server/sync-service.ts`, `src/client/store.tsx`, then the adapter or route being changed.
+Read in this order: `README.md`, `AGENTS.md`, this architecture guide, `src/domain/types.ts`, `src/domain/commands.ts`, `src/server/sync-service.ts`, `src/client/store.tsx`, then `src/client/workspace-application.tsx` and the relevant feature, adapter, or route being changed.
 
 ## Non-negotiable contracts
 

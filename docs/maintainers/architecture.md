@@ -45,6 +45,17 @@ committed mutation → runtime notification port → SSE or hibernating WebSocke
 
 `src/domain` has no Cloudflare, React, SQL, or browser imports. `SnapshotStore` is the persistence port. D1 and Node SQLite are adapters. Route handlers use standard `Request`/`Response`; `runtimeEnv` is the small composition seam. `src/server/live-notifications.ts` is the runtime-neutral notification boundary. The Node composition selects its process-local SSE hub, while the Cloudflare composition signs bounded notifications for the separate `worker/live-relay.ts` Durable Object adapter.
 
+The client composition follows one direction:
+
+```text
+stowplan-app -> StowplanProvider + workspace-application
+workspace-application -> store hook + route/shell state + feature views
+feature views -> item editor + workspace hierarchy + view helpers/contracts
+workspace hierarchy and view helpers -> runtime-neutral domain types and commands
+```
+
+`src/client/stowplan-app.tsx` is only the public provider entry. `workspace-application.tsx` owns URL restoration, workspace lifecycle, account and backup presentation, responsive navigation, global feedback, and selection of the active feature view. Capture, Spaces, Inventory, Planner, Activity, and Preferences live in feature modules and receive workspace state plus a typed command callback instead of reading the store directly. `item-editor.tsx` is shared by the item-bearing views. `workspace-hierarchy.tsx` owns tree projection, pointer and touch placement, cycle refusal, and completed-parent confirmation for both Capture and Spaces. `workspace-view-helpers.tsx` and `workspace-view-types.ts` contain view-only utilities and contracts; they must not import the store or application composition root. Domain rules, mutation authority, durable outbox behavior, and synchronization remain below these modules rather than being reimplemented in a view.
+
 The Sites manifest binds D1 as `DB`. `db/schema.ts` is the typed collaboration schema and Drizzle generates the SQL packaged under `.openai/drizzle`. The packaged schema includes local-first workspace snapshots plus users, identities, memberships, workspace custody, sessions, creation ledgers, guest links, OAuth state, circuit breakers, governance limits, ban digests, deletion receipts, and audit events. The artifact validator treats the binding and its migration payload as one deployment requirement.
 
 Workspace snapshot schema 2 names the item's searchable free-text field `description`. Normalization upgrades schema 1 `notes` values in live items, retained whole-record and field history, queued item commands, and field expectations before validation or application. Adapters, local replicas, imports, restores, recovery bundles, and command application share that normalization path so an offline schema 1 edit keeps its conflict and undo meaning.
