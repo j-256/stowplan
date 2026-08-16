@@ -5,6 +5,7 @@ export const LIVE_SUBPROTOCOL = "stowplan-live-v1";
 export const LIVE_AUTH_SUBPROTOCOL_PREFIX = "stowplan-auth.";
 export const LIVE_CAPABILITY_AUDIENCE = "stowplan-live-relay";
 export const LIVE_CAPABILITY_TTL_MS = 60_000;
+export const LIVE_COLLABORATION_TARGET_SECONDS = 5;
 export const LIVE_RELAY_CLOCK_SKEW_MS = 60_000;
 export const LIVE_RELAY_REQUEST_MAX_BYTES = 16_384;
 export const LIVE_CONNECTION_ID_MAX_CHARACTERS = 128;
@@ -12,6 +13,8 @@ export const LIVE_RELAY_SIGNATURE_HEADER =
   "x-stowplan-live-signature";
 export const LIVE_RELAY_TIMESTAMP_HEADER =
   "x-stowplan-live-timestamp";
+export const LIVE_CONNECTION_ID_HEADER =
+  "x-stowplan-live-connection-id";
 
 const LIVE_IDENTIFIER_MAX_CHARACTERS = 128;
 const LIVE_ORIGIN_MAX_CHARACTERS = 512;
@@ -408,6 +411,27 @@ export function parseLiveNotification(value: unknown): LiveNotification {
     type: "workspace-change",
     version: LIVE_PROTOCOL_VERSION,
     workspaceId: requiredString(value.workspaceId, "workspace ID"),
+  };
+}
+
+export function parseLiveWireMessage(value: unknown): LiveWireMessage {
+  if (
+    !isRecord(value) ||
+    value.version !== LIVE_PROTOCOL_VERSION ||
+    (
+      value.type !== "access" &&
+      value.type !== "change" &&
+      value.type !== "deleted" &&
+      value.type !== "ready"
+    )
+  ) {
+    throw new LiveProtocolError("Live workspace message is invalid");
+  }
+  return {
+    accessRevision: safeRevision(value.accessRevision, "access"),
+    revision: safeRevision(value.revision, "workspace"),
+    type: value.type,
+    version: LIVE_PROTOCOL_VERSION,
   };
 }
 

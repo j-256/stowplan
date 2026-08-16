@@ -2258,6 +2258,8 @@ function Application({
       : WORKSPACE_LIST_PATH;
   const syncTitle = syncStatus.terminal
     ? `${syncStatus.label}. This retained device copy is not backed up online.`
+    : syncStatus.state === "pending" && serverBacked && signedIn && online
+      ? "Changes are saved on this device immediately and normally appear for collaborators within five seconds."
     : backupMessage?.message ??
       (lastSyncedAt
         ? `Last successful backup: ${formatTimestamp(lastSyncedAt)}`

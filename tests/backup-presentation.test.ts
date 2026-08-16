@@ -52,6 +52,41 @@ describe("backup presentation", () => {
     });
   });
 
+  it("sets a clear five-second sharing expectation during batching", () => {
+    const options = {
+      ...BASE_PRESENTATION,
+      pending: 1,
+      serverBacked: true,
+      signedIn: true,
+    };
+
+    expect(backupPresentation(options)).toEqual({
+      label: "1 change sharing within 5 seconds",
+      state: "pending",
+    });
+    expect(backupPresentation({
+      ...options,
+      syncing: true,
+    })).toEqual({
+      label: "Sharing changes...",
+      state: "pending",
+    });
+  });
+
+  it("does not promise the sharing window while offline", () => {
+    expect(backupPresentation({
+      ...BASE_PRESENTATION,
+      online: false,
+      pending: 2,
+      serverBacked: true,
+      signedIn: true,
+    })).toEqual({
+      label: "Working offline, 2 changes saved",
+      offline: true,
+      state: "local",
+    });
+  });
+
   it("keeps genuine backup failures loud and recovery-focused", () => {
     const options = {
       ...BASE_PRESENTATION,

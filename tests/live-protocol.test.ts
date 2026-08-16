@@ -4,6 +4,7 @@ import {
   LIVE_SUBPROTOCOL,
   liveRequestCost,
   parseLiveNotification,
+  parseLiveWireMessage,
   pollingRequestsPerDay,
   signLiveCapability,
   signLiveRelayRequest,
@@ -132,6 +133,27 @@ describe("live collaboration protocol", () => {
       version: 1,
       workspaceId: "ws_a",
     })).toThrow("revision");
+  });
+
+  it("accepts only versioned revision-only client messages", () => {
+    expect(parseLiveWireMessage({
+      accessRevision: 3,
+      revision: 8,
+      type: "change",
+      version: 1,
+    })).toEqual({
+      accessRevision: 3,
+      revision: 8,
+      type: "change",
+      version: 1,
+    });
+    expect(() => parseLiveWireMessage({
+      accessRevision: 3,
+      revision: 8,
+      state: { inventory: "must never be transported" },
+      type: "snapshot",
+      version: 1,
+    })).toThrow("message");
   });
 });
 

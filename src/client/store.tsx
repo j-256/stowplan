@@ -69,6 +69,10 @@ import {
   responseMatchesAccount,
 } from "../shared/account-context";
 import {
+  LIVE_CONNECTION_ID_HEADER,
+  type LiveWireMessage,
+} from "../shared/live-collaboration";
+import {
   ACCOUNT_CHANGE_MESSAGE_TYPE,
   WORKSPACE_CHANNEL_NAME,
 } from "./account-channel";
@@ -80,6 +84,10 @@ import {
   DEVICE_ONLY_BACKUP_ERROR,
   SIGN_IN_BACKUP_ERROR,
 } from "./backup-presentation";
+import {
+  createLiveConnectionId,
+  startLiveWorkspaceConnection,
+} from "./live-reconciliation";
 
 export { DEVICE_ONLY_BACKUP_ERROR } from "./backup-presentation";
 
@@ -104,6 +112,8 @@ const BACKUP_UNAVAILABLE_API_ERROR = "Durable storage is not configured";
 const BACKUP_UNAVAILABLE_SESSION_KEY = "stowplan-backup-unavailable-at";
 const BACKUP_RETRY_INTERVAL_MS = 5 * 60 * 1_000;
 const MAXIMUM_CONCURRENT_RECONCILIATIONS = 2;
+const SYNC_IDLE_DELAY_MS = 1_800;
+const SYNC_MAXIMUM_BATCH_DELAY_MS = 3_500;
 
 class RetryableSyncError extends Error {
   constructor(
@@ -351,6 +361,7 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
   const [localWorkspaces, setLocalWorkspaces] = useState<
     LocalWorkspaceSummary[]
   >([]);
+  const [liveConnectionId] = useState(createLiveConnectionId);
   const [
     confirmedTerminalAuthorizations,
     setConfirmedTerminalAuthorizations,
@@ -358,6 +369,7 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
     () => new Map(),
   );
   const mutationQueue = useRef<Promise<void>>(Promise.resolve());
+  const replicaRef = useRef<LocalReplica | null>(null);
   const accountIdRef = useRef<string | null>(null);
   const selectedWorkspaceIdRef = useRef<string | null>(null);
   const catalogRefreshEntries = useRef<ServerWorkspaceSummary[]>([]);
@@ -496,6 +508,9 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     selectedWorkspaceIdRef.current = replica?.state.workspace.id ?? null;
   }, [replica?.state.workspace.id]);
+  useEffect(() => {
+    replicaRef.current = replica;
+  }, [replica]);
 
   const broadcastWorkspaceChange = useCallback((
     message:
@@ -958,6 +973,7 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
           method: "POST",
           headers: accountContextHeaders(requestAccountId, {
             "content-type": "application/json",
+            [LIVE_CONNECTION_ID_HEADER]: liveConnectionId,
           }),
           body: JSON.stringify({ commands: batch.map(entry => entry.envelope), snapshot: value.state, workspaceId: value.state.workspace.id }),
         });
@@ -1099,7 +1115,7 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
           }
         }
       } catch (error) {
-        // Local state stays authoritative; visibility/manual/online events retry
+        // Local state stays authoritative; live and lifecycle events retry
         if (error instanceof RetryableSyncError) {
           scheduleRetry(workspaceId, error.retryAfterMs);
         }
@@ -1138,6 +1154,7 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
     backupConfigured,
     broadcastWorkspaceChange,
     clearRetry,
+    liveConnectionId,
     recordSyncAttempt,
     refreshWorkspaces,
     requestAuthenticationRefresh,
@@ -1156,17 +1173,32 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
     current.idle = setTimeout(() => {
       clearSchedule(workspaceId);
       void flushWorkspace(workspaceId, false);
-    }, 1_800);
+    }, SYNC_IDLE_DELAY_MS);
     if (!current.maximum) {
       current.maximum = setTimeout(() => {
         clearSchedule(workspaceId);
         void flushWorkspace(workspaceId, false);
-      }, 8_000);
+      }, SYNC_MAXIMUM_BATCH_DELAY_MS);
     }
     syncTimers.current.set(workspaceId, current);
   }, [clearSchedule, flushWorkspace]);
 
   const activeWorkspaceId = replica?.state.workspace.id;
+  const activeWorkspaceAuthorization = replica
+    ? normalizeWorkspaceAccessState(replica.authorization)
+    : null;
+  const liveConnectionEligible = Boolean(
+    activeWorkspaceId &&
+    accountId &&
+    signedIn &&
+    online &&
+    activeWorkspaceAuthorization?.kind === "server" &&
+    activeWorkspaceAuthorization.status === "active" &&
+    workspaceAccountIdsMatch(
+      activeWorkspaceAuthorization.accountId,
+      accountId,
+    )
+  );
   const syncing = Boolean(
     activeWorkspaceId && syncingWorkspaceIds.has(activeWorkspaceId),
   );
@@ -1248,14 +1280,63 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
     addEventListener("focus", immediate);
     addEventListener("online", immediate);
     document.addEventListener("visibilitychange", visible);
-    const reconciliation = setInterval(immediate, 300_000);
     return () => {
       removeEventListener("focus", immediate);
       removeEventListener("online", immediate);
       document.removeEventListener("visibilitychange", visible);
-      clearInterval(reconciliation);
     };
   }, [activeWorkspaceId, clearSchedule, flushWorkspace]);
+  useEffect(() => {
+    if (
+      !liveConnectionEligible ||
+      !activeWorkspaceId ||
+      !accountId
+    ) {
+      return;
+    }
+    const current = replicaRef.current;
+    const authorization = current
+      ? normalizeWorkspaceAccessState(current.authorization)
+      : null;
+    if (
+      !current ||
+      current.state.workspace.id !== activeWorkspaceId ||
+      authorization?.kind !== "server"
+    ) {
+      return;
+    }
+    const reconcileLiveMessage = (message?: LiveWireMessage) => {
+      clearSchedule(activeWorkspaceId);
+      void flushWorkspaceRef.current(activeWorkspaceId, true);
+      if (
+        !message ||
+        message.type === "access" ||
+        message.type === "deleted"
+      ) {
+        void refreshWorkspaces().catch(() => undefined);
+      }
+    };
+    const connection = startLiveWorkspaceConnection({
+      accessRevision: authorization.accessRevision,
+      accountId,
+      connectionId: liveConnectionId,
+      onAccessLost: () => reconcileLiveMessage(),
+      onAccountMismatch: requestAuthenticationRefresh,
+      onAuthenticationRequired: requestAuthenticationRefresh,
+      onMessage: reconcileLiveMessage,
+      revision: current.state.workspace.revision,
+      workspaceId: activeWorkspaceId,
+    });
+    return () => connection.stop();
+  }, [
+    accountId,
+    activeWorkspaceId,
+    clearSchedule,
+    liveConnectionEligible,
+    liveConnectionId,
+    refreshWorkspaces,
+    requestAuthenticationRefresh,
+  ]);
   useEffect(() => () => {
     clearRetry();
     clearSchedule();

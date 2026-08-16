@@ -1,6 +1,7 @@
 import type { D1DatabaseLike } from "../adapters/d1-snapshot-store";
 import {
   LIVE_PROTOCOL_VERSION,
+  LIVE_CONNECTION_ID_HEADER,
   type LiveNotification,
   type LiveWireMessage,
   LIVE_RELAY_SIGNATURE_HEADER,
@@ -12,12 +13,10 @@ import {
 import { runtimeEnv } from "./runtime";
 
 export {
+  LIVE_CONNECTION_ID_HEADER,
   LIVE_RELAY_SIGNATURE_HEADER,
   LIVE_RELAY_TIMESTAMP_HEADER,
 } from "../shared/live-collaboration";
-
-export const LIVE_CONNECTION_ID_HEADER =
-  "x-stowplan-live-connection-id";
 const LOCAL_LIVE_HUB_KEY = "__STOWPLAN_LOCAL_LIVE_HUB";
 
 export interface LiveNotificationState {

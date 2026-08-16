@@ -1,4 +1,7 @@
 import type { WorkspaceAccessStatus } from "../domain/workspace-access";
+import {
+  LIVE_COLLABORATION_TARGET_SECONDS,
+} from "../shared/live-collaboration";
 
 export const DEVICE_ONLY_BACKUP_ERROR =
   "Server backup is not configured for this deployment.";
@@ -130,7 +133,7 @@ export function backupPresentation(
       state: "blocked",
     };
   }
-  if (syncing) return { label: "Backing up...", state: "pending" };
+  if (syncing) return { label: "Sharing changes...", state: "pending" };
   if (effectiveSyncError) {
     return {
       label: pending
@@ -139,14 +142,22 @@ export function backupPresentation(
       state: "blocked",
     };
   }
-  if (pending) {
+  if (online === false) {
     return {
-      label: `${pending} change${pending === 1 ? "" : "s"} pending upload`,
-      state: "pending",
+      label: pending
+        ? `Working offline, ${pending} change${pending === 1 ? "" : "s"} saved`
+        : "Working offline",
+      offline: true,
+      state: "local",
     };
   }
-  if (online === false) {
-    return { label: "Working offline", offline: true, state: "local" };
+  if (pending) {
+    return {
+      label: `${pending} change${pending === 1 ? "" : "s"} sharing within ${
+        LIVE_COLLABORATION_TARGET_SECONDS
+      } seconds`,
+      state: "pending",
+    };
   }
   if (lastSyncedAt) {
     return { label: "Backed up online", state: "synced" };

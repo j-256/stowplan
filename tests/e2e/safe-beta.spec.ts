@@ -663,14 +663,34 @@ test(
 );
 
 test(
-  "reconciles collaborator changes when the window regains focus",
+  "streams collaborator changes within five seconds without polling or focus",
   async ({ browser, context, page, safeBeta }, testInfo) => {
     skipUnlessProject(testInfo, [DESKTOP_PROJECT]);
-    await safeBeta.signIn(context, "focus reconciliation owner");
+    await safeBeta.signIn(context, "live reconciliation owner");
     const workspace = await safeBeta.createWorkspace(
       context,
-      "focus reconciliation workspace",
-      `Focus pantry ${safeBeta.namespace}`,
+      "live reconciliation workspace",
+      `Live pantry ${safeBeta.namespace}`,
+    );
+    const invite = await safeBeta.createInvite(
+      context,
+      workspace.summary.id,
+      "editor",
+    );
+    const recipientRequests: string[] = [];
+    page.on("request", (request) => {
+      const path = new URL(request.url()).pathname;
+      if (
+        path === "/api/live/capability" ||
+        path === "/api/live/events" ||
+        path === "/api/sync"
+      ) {
+        recipientRequests.push(path);
+      }
+    });
+    const liveConnected = page.waitForResponse((response) =>
+      new URL(response.url()).pathname === "/api/live/events" &&
+      response.status() === 200
     );
     await page.goto(workspacePath({
       view: "settings",
@@ -680,12 +700,14 @@ test(
     await expect(page.getByText(workspace.summary.name, {
       exact: true,
     })).toBeVisible();
+    await liveConnected;
 
     const collaboratorContext = await newContext(browser, safeBeta.origin);
     try {
-      await safeBeta.signIn(
+      await safeBeta.redeemInvite(
         collaboratorContext,
-        "focus reconciliation owner",
+        invite.oneTimeUrl,
+        "live reconciliation editor",
       );
       const collaboratorPage = await collaboratorContext.newPage();
       await collaboratorPage.goto(workspacePath({
@@ -693,7 +715,14 @@ test(
         workspaceId: workspace.summary.id,
         workspaceLabel: workspace.summary.name,
       }));
-      const collaboratorName = `Focused update ${safeBeta.namespace}`;
+      const collaboratorName = `Live update ${safeBeta.namespace}`;
+      const recipientSyncCount = recipientRequests.filter(
+        path => path === "/api/sync",
+      ).length;
+      const recipientSync = page.waitForResponse((response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname === "/api/sync"
+      );
       const collaboratorSync = collaboratorPage.waitForResponse((response) =>
         syncRequestHasCommands(response.request())
       );
@@ -703,26 +732,29 @@ test(
       await collaboratorPage.getByRole("button", {
         name: "Rename workspace",
       }).click();
+      await expect(collaboratorPage.locator(".sync")).toContainText(
+        "sharing within 5 seconds",
+      );
       expect((await collaboratorSync).ok()).toBe(true);
       await expect.poll(async () =>
         (await readActiveReplica(collaboratorPage))?.outbox.length
       ).toBe(0);
+      expect((await recipientSync).ok()).toBe(true);
       await expect(page.getByText(collaboratorName, {
         exact: true,
-      })).toHaveCount(0);
-
-      const focusReconciliation = page.waitForResponse((response) =>
-        response.request().method() === "POST" &&
-        new URL(response.url()).pathname === "/api/sync"
-      );
-      await page.evaluate(() => dispatchEvent(new Event("focus")));
-      expect((await focusReconciliation).ok()).toBe(true);
-      await expect(page.getByText(collaboratorName, {
-        exact: true,
-      })).toBeVisible();
+      })).toBeVisible({ timeout: 5_000 });
       expect(
         (await readActiveReplica(page))?.state.workspace.name,
       ).toBe(collaboratorName);
+      expect(recipientRequests.filter(
+        path => path === "/api/sync",
+      )).toHaveLength(recipientSyncCount + 1);
+      expect(recipientRequests.filter(
+        path => path === "/api/live/capability",
+      )).toHaveLength(1);
+      expect(recipientRequests.filter(
+        path => path === "/api/live/events",
+      )).toHaveLength(1);
     } finally {
       await collaboratorContext.close();
     }
