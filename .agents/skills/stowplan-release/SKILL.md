@@ -71,6 +71,8 @@ Stop on any failure. Do not weaken, skip, or rerun a narrower substitute for a f
 
 ## Save and deploy Sites
 
+Treat the GitHub semantic version and Sites integer version number as independent identifiers. Do not compare or synchronize them; correlate both publications through the recorded full commit and report both versions.
+
 1. Save a new version using the exact project ID, verified full commit, and absolute archive path. Retain the returned opaque version ID and report its human-facing version number.
 2. Deploy only that saved version with the public Sites deployment tool. The explicit skill invocation is the required production approval.
 3. Poll the exact deployment ID with the exact project and version IDs until `succeeded` or `failed`. Provide concise progress updates at least once per minute.
