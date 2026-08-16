@@ -66,5 +66,6 @@ For a shared workspace, the owner sends an invite link. Open it, sign in if need
 
 - [Fast capture](/guide/capture) for the room-by-room counting loop
 - [Spaces and inventory](/guide/organize) for search, details, and moving records
+- [CSV inventory import](/guide/csv-import) for onboarding an existing spreadsheet safely
 - [Move plans](/guide/plans) for turning the first pass into physical work
 - [Offline and backup](/guide/offline) for what is safe without a connection

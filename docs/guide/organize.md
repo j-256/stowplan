@@ -20,6 +20,12 @@ The item editor can:
 
 Select several records to move them to one destination together. Records already at that destination stay put. Moving a partial quantity creates a separate record at the destination; equivalent records combine.
 
+## Import many records
+
+Choose **Import CSV** in the Inventory toolbar to add records from a spreadsheet without replacing existing inventory. The file stays on the device while you map item fields and either choose one destination or resolve values from a location column. Review valid and invalid rows, capacity, and any completed spaces that must reopen before committing one undoable Activity change.
+
+See [Import inventory from CSV](/guide/csv-import) for the accepted fields, destination matching, partial-row review, offline behavior, and undo workflow.
+
 ## Browse the physical hierarchy
 
 Open **Spaces** to follow rooms, zones, cabinets, shelves, boxes, bins, and containers. A hierarchy can be as simple or as deep as the physical layout requires.

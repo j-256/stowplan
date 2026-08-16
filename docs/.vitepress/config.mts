@@ -104,6 +104,7 @@ export default defineConfig({
         { text: "Getting started", link: "/guide/getting-started" },
         { text: "Fast capture", link: "/guide/capture" },
         { text: "Spaces and inventory", link: "/guide/organize" },
+        { text: "CSV inventory import", link: "/guide/csv-import" },
         { text: "Move plans", link: "/guide/plans" },
         { text: "Workspaces and sharing", link: "/guide/collaboration" },
         { text: "Offline and backup", link: "/guide/offline" },

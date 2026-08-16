@@ -49,6 +49,16 @@ The Sites manifest binds D1 as `DB`. `db/schema.ts` is the typed collaboration s
 
 Workspace snapshot schema 2 names the item's searchable free-text field `description`. Normalization upgrades schema 1 `notes` values in live items, retained whole-record and field history, queued item commands, and field expectations before validation or application. Adapters, local replicas, imports, restores, recovery bundles, and command application share that normalization path so an offline schema 1 edit keeps its conflict and undo meaning.
 
+## CSV bulk onboarding
+
+`src/domain/csv-import.ts` is the runtime-neutral boundary for bounded CSV parsing, header guesses, active-location matching, row normalization, and import planning. It has no browser, React, SQL, Node, or Cloudflare dependency. The client decodes UTF-8 bytes with fatal error handling and keeps the raw file outside IndexedDB and network requests.
+
+The planner holds generated item IDs, the command ID, and the preparation timestamp stable while a user maps and reviews the file. It applies the proposed `item.bulkCreate` command to an isolated workspace value, protects the proposed Activity entry during deterministic history compaction, and measures the result with the same snapshot-quota functions used by synchronization. Preview is therefore advisory but structurally identical to the eventual domain transition, not a second import implementation.
+
+`item.bulkCreate` validates the complete item array and every active destination before mutation. Its field expectations include each destination's `captureStatus`, including destinations that are already in progress, so a review becomes stale when another tab or collaborator changes any affected capture status. Completed destinations require the command's explicit reopen confirmation. One successful command writes whole-record item patches, any capture-status patches, plan invalidation, and one Activity entry; one failure leaves the batch unapplied.
+
+The accepted command uses the ordinary IndexedDB outbox, authenticated `/api/sync` envelope, workspace-role authorization, compare-and-swap, conflict receipts, replay deduplication, and revision-only live hint. Snapshot adapters persist the resulting JSON without a CSV-specific schema or transport, so Node with SQLite and Cloudflare with D1 use the same transition.
+
 ## Authentication and operational administration
 
 Direct Google OIDC is the ordinary production identity path. A same-origin POST begins every OAuth transaction only after request validation and Managed Turnstile Siteverify succeeds for the expected hostname and `oauth_start` action. Ordinary sign-in requires explicit Terms acceptance and a separate cookie-persistence choice. The server binds its current Terms version and that choice into the single-use, short-lived, browser-bound transaction alongside PKCE, an OIDC nonce, a validated local return path, and the explicit sign-in intent. Link and reauthentication transactions instead carry the exact authenticated app user and session and reject sign-in-only fields. The callback validates Google's signature, issuer, audience, token time, nonce, stable subject, and verified-email claim. The optional `azp` claim must match when present and is required for a multi-audience token.
