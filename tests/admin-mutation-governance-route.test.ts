@@ -5,6 +5,7 @@ import { TEST_IDENTITY_DIGEST_KEY } from "./helpers/auth";
 const mocks = vi.hoisted(() => ({
   adminMutation: vi.fn(),
   authorizeAdmin: vi.fn(),
+  notifyWorkspaceChanges: vi.fn(),
 }));
 
 vi.mock("../src/server/admin", () => ({
@@ -15,6 +16,10 @@ vi.mock("../src/server/auth", async importOriginal => ({
   ...await importOriginal<typeof import("../src/server/auth")>(),
   authorizeAdmin: mocks.authorizeAdmin,
   isTrustedMutation: vi.fn(() => true),
+}));
+
+vi.mock("../src/server/live-notifications", () => ({
+  notifyWorkspaceChanges: mocks.notifyWorkspaceChanges,
 }));
 
 vi.mock("../src/server/runtime", () => ({
@@ -53,6 +58,7 @@ describe("admin governance mutation route", () => {
 
   it("forwards ban metadata and clears a self-revoked session", async () => {
     mocks.adminMutation.mockResolvedValue({
+      affectedWorkspaceIds: ["ws_live"],
       message: "Account banned and sign-in identities redacted",
       revokedSessions: 2,
     });
@@ -81,10 +87,19 @@ describe("admin governance mutation route", () => {
         signInProviderIds: [],
       },
     );
-    await expect(response.json()).resolves.toMatchObject({
+    expect(mocks.notifyWorkspaceChanges).toHaveBeenCalledWith(
+      expect.anything(),
+      ["ws_live"],
+      { force: true },
+    );
+    const responseBody = await response.json();
+    expect(responseBody).toMatchObject({
       currentSessionRevoked: true,
       revokedSessions: 2,
     });
+    expect(responseBody).not.toHaveProperty(
+      "affectedWorkspaceIds",
+    );
   });
 
   it("does not clear the operator cookie for another account", async () => {

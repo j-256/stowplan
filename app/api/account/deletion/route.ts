@@ -18,6 +18,8 @@ import {
   identityEnforcementConfigured,
   isTrustedMutation,
 } from "../../../../src/server/auth";
+import { notifyWorkspaceChanges } from
+  "../../../../src/server/live-notifications";
 import {
   ACCOUNT_DELETION_REQUEST_MAX_BYTES,
   readJsonRequest,
@@ -220,12 +222,21 @@ export async function POST(request: Request) {
         403,
       );
     }
-    const deletion = await executeAccountDeletion(env.DB, {
+    const deletionResult = await executeAccountDeletion(env.DB, {
       ...input,
       digestKey: env.AUTH_IDENTITY_DIGEST_KEY,
       reauthenticatedAt: session.reauthenticated_at,
       userId: principal.userId,
     });
+    const {
+      affectedWorkspaceIds = [],
+      ...deletion
+    } = deletionResult;
+    await notifyWorkspaceChanges(
+      env.DB,
+      affectedWorkspaceIds,
+      { force: true },
+    );
     return accountScopedJson(
       { deletion },
       principal.userId,

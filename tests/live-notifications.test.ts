@@ -1,11 +1,13 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { D1SnapshotStore } from "../src/adapters/d1-snapshot-store";
 import { createEmptyState } from "../src/domain/factories";
 import {
   LIVE_RELAY_SIGNATURE_HEADER,
   LIVE_RELAY_TIMESTAMP_HEADER,
+  LIVE_RELAY_PUBLISH_TIMEOUT_MS,
   loadLiveNotificationState,
   notifyWorkspaceChange,
+  notifyWorkspaceChanges,
   subscribeLocalLiveWorkspace,
 } from "../src/server/live-notifications";
 import {
@@ -49,6 +51,7 @@ async function collaborationDatabase() {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   delete (globalThis as typeof globalThis & {
     __STOWPLAN_LOCAL_LIVE_HUB?: unknown;
   }).__STOWPLAN_LOCAL_LIVE_HUB;
@@ -142,6 +145,27 @@ describe("live notification boundary", () => {
     });
   });
 
+  it("coalesces duplicate workspace impacts before publishing", async () => {
+    const { database, state } = await collaborationDatabase();
+    let requests = 0;
+    await expect(notifyWorkspaceChanges(
+      database,
+      [state.workspace.id, state.workspace.id, ""],
+      {
+        environment: {
+          LIVE_RELAY_SECRET: SECRET,
+          LIVE_RELAY_URL: "https://relay.example",
+        },
+        fetcher: (async () => {
+          requests += 1;
+          return new Response(null, { status: 204 });
+        }) as typeof fetch,
+        force: true,
+      },
+    )).resolves.toEqual([{ status: "delivered" }]);
+    expect(requests).toBe(1);
+  });
+
   it("suppresses the source connection and disconnects removed members", async () => {
     const { database, editor, owner, sqlite, state } =
       await collaborationDatabase();
@@ -216,5 +240,34 @@ describe("live notification boundary", () => {
       }) as typeof fetch,
       force: true,
     })).resolves.toEqual({ status: "failed" });
+  });
+
+  it("bounds a stalled relay publish", async () => {
+    vi.useFakeTimers();
+    const { database, state } = await collaborationDatabase();
+    let publishSignal: AbortSignal | null = null;
+    const notification = notifyWorkspaceChange(
+      database,
+      state.workspace.id,
+      {
+        environment: {
+          LIVE_RELAY_SECRET: SECRET,
+          LIVE_RELAY_URL: "https://relay.example",
+        },
+        fetcher: ((_input, init) => {
+          publishSignal = init?.signal as AbortSignal;
+          return new Promise<Response>((_resolve, reject) => {
+            publishSignal?.addEventListener("abort", () => {
+              reject(new DOMException("Relay timed out", "AbortError"));
+            }, { once: true });
+          });
+        }) as typeof fetch,
+        force: true,
+      },
+    );
+    await vi.waitFor(() => expect(publishSignal).not.toBeNull());
+
+    await vi.advanceTimersByTimeAsync(LIVE_RELAY_PUBLISH_TIMEOUT_MS);
+    await expect(notification).resolves.toEqual({ status: "failed" });
   });
 });

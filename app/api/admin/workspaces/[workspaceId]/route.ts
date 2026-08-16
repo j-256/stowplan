@@ -19,6 +19,9 @@ import {
   isTrustedMutation,
 } from "../../../../../src/server/auth";
 import {
+  notifyWorkspaceChange,
+} from "../../../../../src/server/live-notifications";
+import {
   QuotaExceededError,
   quotaProblem,
 } from "../../../../../src/server/quotas";
@@ -134,6 +137,12 @@ export async function DELETE(
         WORKSPACE_ACCESS_REQUEST_MAX_BYTES,
       ),
     );
+    await notifyWorkspaceChange(env.DB, result.workspaceId, {
+      deleted: {
+        accessRevision: result.finalAccessRevision,
+        revision: result.finalSnapshotRevision,
+      },
+    });
     return accountScopedJson(result, user.userId);
   } catch (error) {
     return adminWorkspaceErrorResponse(
@@ -207,6 +216,13 @@ export async function POST(
         "INVALID_REQUEST",
         "action must be inspect or takeOwnership",
         400,
+      );
+    }
+    if ("action" in body && body.action === "takeOwnership") {
+      await notifyWorkspaceChange(
+        env.DB,
+        workspaceId,
+        { force: true },
       );
     }
     return accountScopedJson(result, user.userId);

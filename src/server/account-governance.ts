@@ -95,6 +95,7 @@ export interface AccountDeletionExecutionInput {
 }
 
 export interface AccountDeletionExecutionResult {
+  affectedWorkspaceIds: string[];
   deletedAt: string;
   deletionId: string;
   identitiesDeleted: number;
@@ -709,6 +710,16 @@ export async function executeAccountDeletion(
     throw deletionBlockerProblem(preparation);
   }
 
+  const affectedWorkspaces = await db.prepare(
+    `SELECT workspace_id
+     FROM workspace_members
+     WHERE user_id = ?
+     ORDER BY workspace_id`,
+  ).bind(input.userId).all<{ workspace_id: string }>();
+  const affectedWorkspaceIds = affectedWorkspaces.results.map(
+    row => row.workspace_id,
+  );
+
   const now = at.toISOString();
   const deletionId = newId("del");
   const digest = await accountDeletionDigest(
@@ -1059,6 +1070,7 @@ export async function executeAccountDeletion(
     throw deletionBlockerProblem(current);
   }
   return {
+    affectedWorkspaceIds,
     deletedAt: now,
     deletionId,
     identitiesDeleted: changes(results[identityIndex]),

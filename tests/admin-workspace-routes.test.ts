@@ -14,6 +14,10 @@ import {
   createOrLinkUser,
   issueSession,
 } from "../src/server/auth";
+import {
+  loadLiveNotificationState,
+  subscribeLocalLiveWorkspace,
+} from "../src/server/live-notifications";
 import type { RuntimeEnv } from "../src/server/runtime";
 import { WORKSPACE_ACCESS_REQUEST_MAX_BYTES } from "../src/server/request-body";
 import { ACCOUNT_CONTEXT_HEADER } from "../src/shared/account-context";
@@ -189,6 +193,32 @@ describe("global admin workspace routes", () => {
 
   it("takes custody and then performs guarded server deletion", async () => {
     const fixture = await routeFixture();
+    if (!runtimeGlobal.__STOWPLAN_ENV) {
+      throw new Error("Expected the route environment");
+    }
+    runtimeGlobal.__STOWPLAN_ENV.STOWPLAN_LIVE_LOCAL_ENABLED = "true";
+    const initialLiveState = await loadLiveNotificationState(
+      fixture.database,
+      fixture.state.workspace.id,
+    );
+    if (!initialLiveState) {
+      throw new Error("Expected live workspace state");
+    }
+    const liveMessages: string[] = [];
+    let liveClosed = 0;
+    const unsubscribe = subscribeLocalLiveWorkspace({
+      accessRevision: initialLiveState.accessRevision,
+      connectionId: "admin_workspace_route_owner",
+      userId: initialLiveState.allowedUserIds[0]!,
+      workspaceId: fixture.state.workspace.id,
+    }, {
+      close() {
+        liveClosed += 1;
+      },
+      send(message) {
+        liveMessages.push(message.type);
+      },
+    });
     const before = fixture.sqlite.prepare(
       `SELECT revision,access_revision
        FROM workspace_snapshots
@@ -219,6 +249,7 @@ describe("global admin workspace routes", () => {
     expect(custodyBody.accessRevision).toBe(
       before.access_revision + 1,
     );
+    expect(liveMessages).toEqual(["access"]);
 
     const deletion = await deleteAdminWorkspace(
       jsonRequest(
@@ -241,6 +272,9 @@ describe("global admin workspace routes", () => {
       recovery: "not_available",
       workspaceId: fixture.state.workspace.id,
     });
+    expect(liveMessages).toEqual(["access", "deleted"]);
+    expect(liveClosed).toBe(1);
+    unsubscribe();
     expect(fixture.sqlite.prepare(
       `SELECT COUNT(*) AS count
        FROM workspace_deletions

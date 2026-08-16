@@ -246,6 +246,7 @@ describe("admin control plane", () => {
       targetId: disabledOwner.userId,
       value: "disabled",
     })).resolves.toEqual({
+      affectedWorkspaceIds: [state.workspace.id],
       message: "User disabled",
       revokedSessions: 0,
       unusedGuestLinksRevoked: 0,
@@ -265,7 +266,10 @@ describe("admin control plane", () => {
       )),
       targetId: `${state.workspace.id}::${disabledOwner.userId}`,
       value: "editor",
-    })).resolves.toEqual({ message: "Workspace role changed to editor" });
+    })).resolves.toEqual({
+      affectedWorkspaceIds: [state.workspace.id],
+      message: "Workspace role changed to editor",
+    });
     await expect(adminMutation(db, admin.userId, {
       action: "member.role",
       ...(await memberPreconditions(
@@ -341,6 +345,7 @@ describe("admin control plane", () => {
       targetId: target.userId,
       value: "disabled",
     })).resolves.toEqual({
+      affectedWorkspaceIds: [shared.workspace.id],
       message: "User disabled",
       revokedSessions: 2,
       unusedGuestLinksRevoked: 1,
@@ -369,7 +374,10 @@ describe("admin control plane", () => {
       ...(await accountPreconditions(db, target.userId)),
       targetId: target.userId,
       value: "active",
-    })).resolves.toEqual({ message: "User enabled" });
+    })).resolves.toEqual({
+      affectedWorkspaceIds: [shared.workspace.id],
+      message: "User enabled",
+    });
     for (const raw of [first.raw, second.raw]) {
       await expect(authenticate(db, new Request(
         "https://example.test",
@@ -1042,7 +1050,10 @@ describe("admin control plane", () => {
       )),
       targetId: `${state.workspace.id}::${roleTarget.userId}`,
       value: "editor",
-    })).resolves.toEqual({ message: "Workspace role changed to editor" });
+    })).resolves.toEqual({
+      affectedWorkspaceIds: [state.workspace.id],
+      message: "Workspace role changed to editor",
+    });
     await expect(adminMutation(db, admin.userId, {
       action: "member.remove",
       ...(await memberPreconditions(
@@ -1051,11 +1062,17 @@ describe("admin control plane", () => {
         removalTarget.userId,
       )),
       targetId: `${state.workspace.id}::${removalTarget.userId}`,
-    })).resolves.toEqual({ message: "Workspace member removed" });
+    })).resolves.toEqual({
+      affectedWorkspaceIds: [state.workspace.id],
+      message: "Workspace member removed",
+    });
     await expect(adminMutation(db, admin.userId, {
       action: "guest.revoke",
       targetId: link.id,
-    })).resolves.toEqual({ message: "Guest link revoked" });
+    })).resolves.toEqual({
+      affectedWorkspaceIds: [state.workspace.id],
+      message: "Guest link revoked",
+    });
 
     expect(sqlite.prepare(
       `SELECT action
@@ -1110,11 +1127,17 @@ describe("admin control plane", () => {
     await expect(adminMutation(db, admin.userId, {
       action: "guest.delete",
       targetId: active.id,
-    })).resolves.toEqual({ message: "Guest link deleted" });
+    })).resolves.toEqual({
+      affectedWorkspaceIds: [state.workspace.id],
+      message: "Guest link deleted",
+    });
     await expect(adminMutation(db, admin.userId, {
       action: "guest.delete",
       targetId: retained.id,
-    })).resolves.toEqual({ message: "Guest link deleted" });
+    })).resolves.toEqual({
+      affectedWorkspaceIds: [state.workspace.id],
+      message: "Guest link deleted",
+    });
     expect(sqlite.prepare(
       `SELECT COUNT(*) AS count
        FROM guest_links

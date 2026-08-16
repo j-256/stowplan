@@ -21,6 +21,8 @@ import {
   QuotaExceededError,
   quotaProblem,
 } from "../../../../src/server/quotas";
+import { notifyWorkspaceChanges } from
+  "../../../../src/server/live-notifications";
 import {
   CONTROL_REQUEST_MAX_BYTES,
   readJsonRequest,
@@ -149,7 +151,7 @@ export async function POST(request: Request) {
         CONTROL_REQUEST_MAX_BYTES,
       ),
     );
-    const result = await adminMutation(
+    const mutationResult = await adminMutation(
       env.DB,
       user.userId,
       body,
@@ -166,6 +168,15 @@ export async function POST(request: Request) {
             typeof providerId === "string",
         ),
       },
+    );
+    const {
+      affectedWorkspaceIds = [],
+      ...result
+    } = mutationResult;
+    await notifyWorkspaceChanges(
+      env.DB,
+      affectedWorkspaceIds,
+      { force: true },
     );
     const currentSessionRevoked =
       result.currentSessionRevoked === true ||

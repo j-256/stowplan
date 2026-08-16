@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => {
     authenticate: vi.fn(),
     executeAccountDeletion: vi.fn(),
     isTrustedMutation: vi.fn(() => true),
+    notifyWorkspaceChanges: vi.fn(),
     prepareAccountDeletion: vi.fn(),
     statement,
   };
@@ -30,6 +31,10 @@ vi.mock("../src/server/auth", async (importOriginal) => ({
   clearSessionCookie: vi.fn(() => "__Host-stowplan_session=; Max-Age=0"),
   identityEnforcementConfigured: vi.fn(() => true),
   isTrustedMutation: mocks.isTrustedMutation,
+}));
+
+vi.mock("../src/server/live-notifications", () => ({
+  notifyWorkspaceChanges: mocks.notifyWorkspaceChanges,
 }));
 
 vi.mock("../src/server/runtime", () => ({
@@ -106,6 +111,7 @@ describe("account deletion route", () => {
       reauthenticated_at: SESSION_CREATED_AT,
     });
     mocks.executeAccountDeletion.mockResolvedValue({
+      affectedWorkspaceIds: ["ws_first", "ws_second"],
       deletedAt: "2026-07-26T12:01:00.000Z",
       deletionId: "del_test",
       identitiesDeleted: 1,
@@ -158,6 +164,14 @@ describe("account deletion route", () => {
         reauthenticatedAt: SESSION_CREATED_AT,
         userId: ACCOUNT_ID,
       },
+    );
+    expect(mocks.notifyWorkspaceChanges).toHaveBeenCalledWith(
+      expect.anything(),
+      ["ws_first", "ws_second"],
+      { force: true },
+    );
+    await expect(response.json()).resolves.not.toHaveProperty(
+      "deletion.affectedWorkspaceIds",
     );
   });
 

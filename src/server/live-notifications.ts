@@ -18,6 +18,7 @@ export {
   LIVE_RELAY_TIMESTAMP_HEADER,
 } from "../shared/live-collaboration";
 const LOCAL_LIVE_HUB_KEY = "__STOWPLAN_LOCAL_LIVE_HUB";
+export const LIVE_RELAY_PUBLISH_TIMEOUT_MS = 2_000;
 
 export interface LiveNotificationState {
   accessRevision: number;
@@ -298,18 +299,29 @@ async function publishRemotely(
     timestamp,
     transport.secret,
   );
-  const response = await fetcher(
-    new URL("/v1/publish", transport.url),
-    {
-      body,
-      headers: {
-        "content-type": "application/json",
-        [LIVE_RELAY_SIGNATURE_HEADER]: signature,
-        [LIVE_RELAY_TIMESTAMP_HEADER]: timestamp,
-      },
-      method: "POST",
-    },
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    LIVE_RELAY_PUBLISH_TIMEOUT_MS,
   );
+  let response: Response;
+  try {
+    response = await fetcher(
+      new URL("/v1/publish", transport.url),
+      {
+        body,
+        headers: {
+          "content-type": "application/json",
+          [LIVE_RELAY_SIGNATURE_HEADER]: signature,
+          [LIVE_RELAY_TIMESTAMP_HEADER]: timestamp,
+        },
+        method: "POST",
+        signal: controller.signal,
+      },
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
   if (!response.ok) {
     throw new Error(`Live relay publish failed (${response.status})`);
   }
@@ -371,4 +383,22 @@ export async function notifyWorkspaceChange(
   } catch {
     return { status: "failed" };
   }
+}
+
+export async function notifyWorkspaceChanges(
+  database: D1DatabaseLike,
+  workspaceIds: readonly string[],
+  options: PublishWorkspaceChangeOptions = {},
+): Promise<LiveNotificationResult[]> {
+  const uniqueWorkspaceIds = [...new Set(
+    workspaceIds.filter(workspaceId => workspaceId.length > 0),
+  )];
+  if (uniqueWorkspaceIds.length === 0) return [];
+  const environment = options.environment ?? await runtimeEnv();
+  return Promise.all(uniqueWorkspaceIds.map(workspaceId =>
+    notifyWorkspaceChange(database, workspaceId, {
+      ...options,
+      environment,
+    })
+  ));
 }

@@ -1759,6 +1759,19 @@ async function currentAdminMemberMutationState(
   return current;
 }
 
+async function accountWorkspaceIds(
+  db: Db,
+  userId: string,
+): Promise<string[]> {
+  const rows = await db.prepare(
+    `SELECT workspace_id
+     FROM workspace_members
+     WHERE user_id=?
+     ORDER BY workspace_id`,
+  ).bind(userId).all<{ workspace_id: string }>();
+  return rows.results.map(row => row.workspace_id);
+}
+
 function assertAdminMemberMutationRevisions(
   current: AdminMemberMutationState,
   expectedAccessRevision: number,
@@ -1887,6 +1900,7 @@ export async function adminMutation(
   await requireActiveAdminActor(db, actor);
   const now = nowIso();
   let currentSessionRevoked: boolean | undefined;
+  let affectedWorkspaceIds: string[] = [];
   let message = "Administrative change saved";
   let revokedSessions: number | undefined;
   let unusedGuestLinksRevoked: number | undefined;
@@ -1928,6 +1942,10 @@ export async function adminMutation(
         unusedGuestLinksRevoked =
           result.unusedGuestLinksRevoked;
       }
+      affectedWorkspaceIds = await accountWorkspaceIds(
+        db,
+        input.targetId,
+      );
       message = status === "disabled"
         ? "User disabled"
         : "User enabled";
@@ -1952,6 +1970,10 @@ export async function adminMutation(
         targetUserId: input.targetId,
       });
       revokedSessions = result.revokedSessions;
+      affectedWorkspaceIds = await accountWorkspaceIds(
+        db,
+        input.targetId,
+      );
       message = "Account banned and sign-in identities redacted";
       break;
     }
@@ -2235,6 +2257,7 @@ export async function adminMutation(
           expectedMembershipRevision,
         );
       }
+      affectedWorkspaceIds = [target.workspaceId];
       message = `Workspace role changed to ${role}`;
       break;
     }
@@ -2316,6 +2339,7 @@ export async function adminMutation(
           expectedMembershipRevision,
         );
       }
+      affectedWorkspaceIds = [target.workspaceId];
       message = "Workspace member removed";
       break;
     }
@@ -2480,6 +2504,15 @@ export async function adminMutation(
         }
         refuseAdminMutation("Expired guest links cannot be revoked");
       }
+      const changedLink = await db.prepare(
+        `SELECT workspace_id
+         FROM guest_links
+         WHERE guest_link_id=?`,
+      ).bind(input.targetId).first<{ workspace_id: string }>();
+      if (!changedLink) {
+        throw new Error("Revoked guest link workspace was not found");
+      }
+      affectedWorkspaceIds = [changedLink.workspace_id];
       message = "Guest link revoked";
       break;
     }
@@ -2584,6 +2617,7 @@ export async function adminMutation(
             : "Guest link was not found",
         );
       }
+      affectedWorkspaceIds = [link.workspace_id];
       message = "Guest link deleted";
       break;
     }
@@ -2591,6 +2625,9 @@ export async function adminMutation(
       refuseAdminMutation("Unsupported admin action");
   }
   return {
+    ...(affectedWorkspaceIds.length > 0
+      ? { affectedWorkspaceIds }
+      : {}),
     ...(currentSessionRevoked === undefined
       ? {}
       : { currentSessionRevoked }),
