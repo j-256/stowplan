@@ -281,6 +281,11 @@ export function normalizeCommandEnvelope<T extends CommandEnvelope>(
     if (isRecord(command)) {
         if (command.type === "item.create") {
             normalizeItemDescription(command.item);
+        } else if (
+            command.type === "item.bulkCreate" &&
+            Array.isArray(command.items)
+        ) {
+            for (const item of command.items) normalizeItemDescription(item);
         } else if (command.type === "item.update") {
             normalizeItemFieldChanges(command.changes);
         }

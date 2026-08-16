@@ -563,6 +563,39 @@ function bulkMoveCaptureProgressPatches(
     });
 }
 
+function bulkCreateCaptureProgressPatches(
+    state: WorkspaceState,
+    destinationIds: readonly string[],
+    timestamp: string,
+    reopenCompletedParents: boolean,
+): FieldPatch[] {
+    return [...new Set(destinationIds)].flatMap((locationId) => {
+        const location = requireActiveLocation(state, locationId);
+        const shouldProgress = location.captureStatus === "uncounted" ||
+            (
+                reopenCompletedParents &&
+                completeCaptureStatuses.has(location.captureStatus)
+            );
+        if (!shouldProgress) return [];
+        return [
+            patch(
+                "location",
+                location.id,
+                "captureStatus",
+                location.captureStatus,
+                "in_progress",
+            ),
+            patch(
+                "location",
+                location.id,
+                "updatedAt",
+                location.updatedAt,
+                timestamp,
+            ),
+        ];
+    });
+}
+
 function planInvalidationPatches(
     state: WorkspaceState,
     itemIds: string[] = [],
@@ -1272,6 +1305,86 @@ function normalPatches(
                 ),
             ],
             subjectIds: [command.item.id, command.item.locationId],
+        };
+    }
+
+    if (command.type === "item.bulkCreate") {
+        if (!Array.isArray(command.items) || !command.items.length) {
+            throw new DomainError(
+                "EMPTY_IMPORT",
+                "Import at least one item record",
+            );
+        }
+        if (
+            command.reopenCompletedParents !== undefined &&
+            typeof command.reopenCompletedParents !== "boolean"
+        ) {
+            throw new DomainError(
+                "INVALID_REOPEN_CONFIRMATION",
+                "Completed-space confirmation must be true or false",
+            );
+        }
+        const itemIds = new Set<string>();
+        for (const item of command.items) {
+            validateItem(state, item);
+            if (itemIds.has(item.id)) {
+                throw new DomainError(
+                    "DUPLICATE_ITEM_ID",
+                    "Imported item IDs must be unique",
+                );
+            }
+            if (state.items.some((candidate) => candidate.id === item.id)) {
+                throw new DomainError(
+                    "ITEM_EXISTS",
+                    "An imported item ID already exists",
+                );
+            }
+            itemIds.add(item.id);
+        }
+        const destinationIds = [...new Set(
+            command.items.map((item) => item.locationId),
+        )];
+        const completedDestinationIds = destinationIds.filter((locationId) =>
+            completeCaptureStatuses.has(
+                requireActiveLocation(state, locationId).captureStatus,
+            )
+        );
+        if (!command.reopenCompletedParents) {
+            assertCaptureContentsEditable(
+                state,
+                destinationIds.map((locationId) => ({
+                    action: captureContentActions.addItem,
+                    locationId,
+                })),
+            );
+        }
+        const progressPatches = bulkCreateCaptureProgressPatches(
+            state,
+            destinationIds,
+            envelope.timestamp,
+            Boolean(command.reopenCompletedParents),
+        );
+        const itemCount = command.items.length;
+        return {
+            label: `Imported ${itemCount} item record${
+                itemCount === 1 ? "" : "s"
+            }${
+                command.reopenCompletedParents &&
+                    completedDestinationIds.length
+                    ? " and reopened affected spaces"
+                    : ""
+            }`,
+            patches: [
+                ...planInvalidationPatches(state, [], destinationIds),
+                ...command.items.map((item) =>
+                    patch("item", item.id, "", undefined, item)
+                ),
+                ...progressPatches,
+            ],
+            subjectIds: [
+                ...itemIds,
+                ...destinationIds,
+            ],
         };
     }
 

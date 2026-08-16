@@ -164,6 +164,17 @@ export function expectationsForCommand(
         return [itemExpectation(item, "")];
     }
 
+    if (command.type === "item.bulkCreate") {
+        const locationIds = new Set(
+            command.items.map((item) => item.locationId),
+        );
+        return state.locations
+            .filter((location) => locationIds.has(location.id))
+            .map((location) =>
+                locationExpectation(location, "captureStatus")
+            );
+    }
+
     if (command.type === "item.bulkMove") {
         const itemExpectations = command.itemIds.flatMap((id) => {
             const item = state.items.find((candidate) => candidate.id === id);

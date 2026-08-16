@@ -209,6 +209,11 @@ export type Command =
     | { type: "capture.empty"; id: string; itemIds: string[] }
     | { type: "capture.status"; id: string; status: CaptureStatus }
     | { type: "item.create"; item: ItemRecord }
+    | {
+          type: "item.bulkCreate";
+          items: ItemRecord[];
+          reopenCompletedParents?: boolean;
+      }
     | { type: "item.update"; id: string; changes: Partial<Omit<ItemRecord, "id" | "createdAt">> }
     | { type: "item.reorder"; id: string; order: number }
     | { type: "item.delete"; id: string }

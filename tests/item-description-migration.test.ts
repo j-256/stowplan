@@ -126,4 +126,34 @@ describe("item description migration", () => {
     expect(applied.state.items.find((candidate) => candidate.id === item.id)
       ?.description).toBe(description);
   });
+
+  it("upgrades every legacy item in a queued bulk import", () => {
+    const state = createDemoState();
+    const location = state.locations.find((candidate) =>
+      candidate.id === "loc_corner"
+    )!;
+    location.captureStatus = "in_progress";
+    const first = legacyItemRecord({
+      ...state.items[0],
+      id: "item_legacy_bulk_first",
+      locationId: location.id,
+    }, "First imported description");
+    const second = legacyItemRecord({
+      ...state.items[1],
+      id: "item_legacy_bulk_second",
+      locationId: location.id,
+    }, "Second imported description");
+    const envelope = createEnvelope(state, {
+      type: "item.bulkCreate",
+      items: [first, second],
+    } as never);
+
+    const applied = applyCommand(state, envelope);
+    expect(applied.state.items.find((item) =>
+      item.id === "item_legacy_bulk_first"
+    )?.description).toBe("First imported description");
+    expect(applied.state.items.find((item) =>
+      item.id === "item_legacy_bulk_second"
+    )?.description).toBe("Second imported description");
+  });
 });
