@@ -1,11 +1,11 @@
 ---
 name: stowplan-release
-description: Release the Stowplan main branch through its GitHub origin and OpenAI Sites production project, including release-equivalent verification, exact-source artifact packaging, non-force source pushes, Sites version save and deploy, and live browser smoke tests. Use only when the user explicitly invokes $stowplan-release.
+description: Release the Stowplan main branch through its GitHub origin and OpenAI Sites production project, including release-equivalent verification, exact-source artifact packaging, non-force source and version-tag pushes, GitHub Release publication with an SBOM, Sites version save and deploy, and live browser smoke tests. Use only when the user explicitly invokes $stowplan-release.
 ---
 
 # Release Stowplan
 
-Release the clean `main` branch to the public Stowplan Sites project and verify the custom production domain end to end.
+Release the clean `main` branch through GitHub and the public Stowplan Sites project, then verify both publication surfaces end to end.
 
 ## Treat invocation as release authorization
 
@@ -13,6 +13,7 @@ An explicit invocation authorizes all ordinary release writes in this workflow:
 
 - Push the verified `main` commit to `origin` with an ordinary non-force push when needed
 - Push that same commit to the Sites source repository with an ordinary non-force push when needed
+- Create an annotated version tag at the verified commit and push it to `origin` without force so the Release workflow publishes the GitHub release and SBOM
 - Save a Sites version with the exact verified archive
 - Deploy that saved version to public production
 
@@ -20,10 +21,12 @@ Do not ask for duplicate confirmation before those actions. Invocation does not 
 
 ## Load the release surfaces
 
-1. Resolve the Stowplan repository root with `git rev-parse --show-toplevel`, work only in that checkout, and read its `AGENTS.md` plus `docs/maintainers/agents.md` before acting.
-2. Read `.openai/hosting.json` and copy its opaque `project_id` exactly.
-3. Use the connected Sites app for site inspection, source credentials, version saving, deployment, and deployment status. Never create another site.
-4. Use the browser automation skill for production smoke tests and run `agent-browser skills get core` before browser commands.
+1. Resolve the Stowplan repository root with `git rev-parse --show-toplevel`, work only in that checkout, and read its `AGENTS.md`, `docs/maintainers/agents.md`, and `docs/maintainers/testing.md` before acting.
+2. Read `package.json`, `package-lock.json`, `CHANGELOG.md`, `.github/workflows/release.yml`, and `.openai/hosting.json`. Copy the opaque Sites `project_id` exactly.
+3. Require the Release workflow to trigger on `v*` tag pushes and publish `stowplan-sbom.cdx.json`. Stop before creating a tag if that automation does not match.
+4. Use `gh` against the repository resolved from `origin` for GitHub Actions and Releases. Do not hardcode the repository owner or name.
+5. Use the connected Sites app for site inspection, source credentials, version saving, deployment, and deployment status. Never create another site.
+6. Use the browser automation skill for production smoke tests and run `agent-browser skills get core` before browser commands.
 
 ## Preflight Git
 
@@ -31,8 +34,10 @@ Do not ask for duplicate confirmation before those actions. Invocation does not 
 2. Fetch `origin/main` without changing the checkout.
 3. Require `origin/main` to equal `HEAD` or be an ancestor of `HEAD`. Stop if local `main` is behind or diverged.
 4. Record the full `HEAD` commit and do not permit it to change during the workflow.
-5. Inspect Sites project metadata and require the existing `stowplan` project, owner access, public mode, and custom live URL `https://stowplan.lasers.app`.
-6. Read Sites environment metadata without printing secret values. A missing `NEXT_PUBLIC_DOCS_URL` is valid because the source default is canonical. Stop if it overrides the docs base to anything except `https://docs.stowplan.lasers.app/`. Do not mutate the environment.
+5. Read the release version from `package.json`, require the root versions in `package-lock.json` to match it, require a matching `CHANGELOG.md` version entry, and derive the release tag as `v<version>`. Require a stable Semantic Versioning release in `MAJOR.MINOR.PATCH` form.
+6. Require the release tag to be absent from local refs, `origin`, and GitHub Releases. Stop and request a committed changelog and version update if the tag or release already exists.
+7. Inspect Sites project metadata and require the existing `stowplan` project, owner access, public mode, and custom live URL `https://stowplan.lasers.app`.
+8. Read Sites environment metadata without printing secret values. A missing `NEXT_PUBLIC_DOCS_URL` is valid because the source default is canonical. Stop if it overrides the docs base to anything except `https://docs.stowplan.lasers.app/`. Do not mutate the environment.
 
 ## Verify and package
 
@@ -55,6 +60,15 @@ Stop on any failure. Do not weaken, skip, or rerun a narrower substitute for a f
 5. Push `HEAD:refs/heads/main` to the exact credential-provided remote without force when needed. Verify with a credentialed `ls-remote`, then discard the token from working context.
 6. Stop if either remote would require a force push or contains commits absent from local `main`.
 
+## Publish the GitHub release
+
+1. Reconfirm `HEAD` matches the recorded and packaged commit and `origin/main` resolves to that commit.
+2. Create one annotated release tag at the recorded commit with message `stowplan <tag>`.
+3. Push only that tag to `origin` without force. Verify the remote tag dereferences to the full recorded commit. Never force, move, delete, or recreate a release tag.
+4. Locate the exact Release workflow run triggered by the tag push, require its tag and head commit to match the recorded values, and poll it until completion. Provide concise progress updates at least once per minute.
+5. On workflow failure, stop and report the run URL plus the failing step and error. Do not create the release manually, bypass the workflow, or deploy Sites.
+6. Require the published GitHub release to use the exact tag, be neither draft nor prerelease, and include the nonempty `stowplan-sbom.cdx.json` asset. Retain and report its public URL.
+
 ## Save and deploy Sites
 
 1. Save a new version using the exact project ID, verified full commit, and absolute archive path. Retain the returned opaque version ID and report its human-facing version number.
@@ -75,4 +89,4 @@ Use a new isolated browser session so an older client bundle cannot satisfy the 
 
 ## Finish
 
-Require the Git worktree to be clean. Report the released commit, Sites version number, production URL, complete verification result, and live smoke-test result. Send a Hero notification for success and a Sosumi notification only when a real blocker needs attention.
+Require the Git worktree to be clean. Report the released commit and tag, GitHub release URL and workflow result, SBOM attachment result, Sites version number, production URL, complete verification result, and live smoke-test result. Send a Hero notification for success and a Sosumi notification only when a real blocker needs attention.
