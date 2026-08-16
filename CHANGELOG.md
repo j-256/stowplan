@@ -2,6 +2,26 @@
 
 All notable changes follow Keep a Changelog. Versions use Semantic Versioning.
 
+## [1.2.0] - 2026-08-16
+
+### Added
+
+- Authenticated, quota-aware live collaboration that streams remote workspace and administrative access changes without carrying workspace content through notifications.
+- Guided CSV onboarding with bounded parsing, destination mapping, explicit invalid-row handling, atomic import, offline commit, and Activity restoration.
+- A public landing experience with visitor-aware continuation, hosted Privacy Policy and Terms of Service, and truthful mobile-first screenshots.
+- Inspectable Activity history with field-aware selective and batch undo and redo.
+
+### Changed
+
+- Reworked compact Capture, Spaces, Inventory, Plan, Account, and workspace creation flows around focused mobile actions while retaining full desktop controls.
+- Split the workspace client into focused application, feature, interaction, and view modules without changing its local-first command path.
+- Moved the application and documentation to their canonical custom domains and expanded release verification across GitHub, Sites, Node, Cloudflare, and both documentation bases.
+
+### Fixed
+
+- Preserved pending-work attribution, field-level history, invitation continuation, touch reordering, and offline recovery across account, browser, and synchronization edge cases.
+- Hardened dependency, SBOM, browser, security, build-output, and deployment checks so release-only failures surface before publication.
+
 ## [1.1.0] - 2026-07-22
 
 ### Added
