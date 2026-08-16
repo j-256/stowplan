@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import {
   useCallback,
@@ -127,6 +128,10 @@ import { parseAuthorizedRecoverySnapshot } from "./recovery-permissions";
 import { StowplanProvider, useStowplan, WorkspaceOpenError } from "./store";
 import { WorkspaceHub } from "./workspace-hub";
 import { WorkspaceAccessController } from "./workspace-access-controller";
+
+const CsvImportDialog = dynamic(
+  () => import("./csv-import-dialog").then((module) => module.CsvImportDialog),
+);
 
 type View = WorkspaceView;
 type Commit = (command: Command) => Promise<void>;
@@ -4841,6 +4846,14 @@ function Inventory({ state, commit, editing, editFocus, locationFilter, onEditin
   const pendingBulkMoveItemCount = pendingBulkMove
     ? movableBulkMoveItems(pendingBulkMove.command).length
     : 0;
+  const reportCsvImport = (count: number) => {
+    setQuery("");
+    setSelected([]);
+    showFeedback(
+      `${countLabel(count, "item record")} imported. Undo the whole import from Activity.`,
+      "success",
+    );
+  };
   const clearNativeReorder = () => {
     setNativeReorderCue(null);
     setNativeReorderSource(null);
@@ -5053,6 +5066,12 @@ function Inventory({ state, commit, editing, editFocus, locationFilter, onEditin
           <button className="inventory-filter-done" onClick={() => setFiltersOpen(false)} type="button">Done</button>
         </div>
       </div>
+      <CsvImportDialog
+        commit={commit}
+        onImported={reportCsvImport}
+        preferredLocationId={locationFilter || undefined}
+        state={state}
+      />
     </div>
     {filteredCaptureComplete && filteredLocation && <div className="capture-locked capture-locked-action" role="status">
       <CheckCircle2 />

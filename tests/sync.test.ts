@@ -3,6 +3,7 @@ import {
     applyCommand,
     createDemoState,
     createEnvelope,
+    createItem,
     generatePlan,
     type ActivityRecord,
     type AuditEvent,
@@ -373,6 +374,61 @@ describe("synchronization", () => {
         expect(first.receipts[0].status).toBe("applied");
         expect(second.receipts[0].status).toBe("duplicate");
         expect(second.snapshot.workspace.revision).toBe(1);
+    });
+
+    it("authorizes and deduplicates an atomic bulk import", async () => {
+        const initial = editableDemoState();
+        const store = new AuthorizedMemorySnapshotStore(initial);
+        const items = ["First imported row", "Second imported row"].map(
+            (name, index) => {
+                const item = createItem({
+                    locationId: "loc_warm",
+                    name,
+                    order: 20 + index,
+                });
+                item.id = `item_sync_import_${index}`;
+                return item;
+            },
+        );
+        const command = createEnvelope(
+            initial,
+            { items, type: "item.bulkCreate" },
+            { id: "cmd_sync_bulk_import" },
+        );
+        const options = {
+            authorization: {
+                basis: {
+                    membershipRevision: 11,
+                    workspaceAccessRevision: 7,
+                },
+                userId: "usr_editor",
+            },
+        } as const;
+
+        const first = await synchronize(
+            store,
+            initial.workspace.id,
+            [command],
+            options,
+        );
+        const second = await synchronize(
+            store,
+            initial.workspace.id,
+            [command],
+            options,
+        );
+
+        expect(first.receipts[0]?.status).toBe("applied");
+        expect(first.snapshot.items.filter((item) =>
+            item.id.startsWith("item_sync_import_")
+        )).toHaveLength(2);
+        expect(first.snapshot.activities[0]?.label).toBe(
+            "Imported 2 item records",
+        );
+        expect(second.receipts[0]?.status).toBe("duplicate");
+        expect(second.snapshot.activities.filter((activity) =>
+            activity.commandId === command.id
+        )).toHaveLength(1);
     });
 
     it("rejects a malformed command envelope without failing the sync batch", async () => {
