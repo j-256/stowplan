@@ -416,6 +416,7 @@ const organizerSourceFiles = Object.freeze([
   "planner-view.tsx",
   "spaces-view.tsx",
   "stowplan-app.tsx",
+  "workspace-application.tsx",
   "workspace-hierarchy.tsx",
   "workspace-preferences.tsx",
   "workspace-view-helpers.tsx",
