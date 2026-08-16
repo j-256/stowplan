@@ -24,6 +24,7 @@
     "start:node": "node scripts/node-server.mjs",
     "test": "npm run typecheck && npm run lint && npm run test:unit && npm run build && npm run test:render",
     "test:unit": "vitest run",
+    "test:live-relay": "vitest run --config vitest.live.config.ts",
     "test:render": "node --test tests/rendered-html.test.mjs",
     "test:node-smoke": "node scripts/smoke-node.mjs",
     "test:next-dev-smoke": "node scripts/smoke-next-dev.mjs",
@@ -32,7 +33,7 @@
     "test:coverage": "vitest run --coverage",
     "typecheck": "tsc --noEmit",
     "validate:artifact": "bash scripts/validate-artifact.sh",
-    "lint": "bash scripts/sites-env.sh -- eslint . --max-warnings 0 --ignore-pattern dist --ignore-pattern coverage --ignore-pattern .next --ignore-pattern .open-next --ignore-pattern .sites-runtime --ignore-pattern docs/.vitepress/dist",
+    "lint": "bash scripts/sites-env.sh -- eslint . --max-warnings 0 --ignore-pattern dist --ignore-pattern coverage --ignore-pattern .next --ignore-pattern .open-next --ignore-pattern .sites-runtime --ignore-pattern .live-relay-dist --ignore-pattern docs/.vitepress/dist",
     "db:generate": "bash scripts/sites-env.sh -- drizzle-kit generate",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
@@ -40,8 +41,10 @@
     "docs:preview": "vitepress preview docs",
     "build:next": "bash scripts/sites-env.sh -- bash scripts/with-clean-next-output.sh -- next build",
     "build:cloudflare": "bash scripts/sites-env.sh -- opennextjs-cloudflare build",
+    "build:live-relay": "wrangler deploy --dry-run --outdir .live-relay-dist --config wrangler.live.jsonc",
     "preview:cloudflare": "bash scripts/sites-env.sh -- opennextjs-cloudflare build && bash scripts/sites-env.sh -- opennextjs-cloudflare preview",
-    "deploy:cloudflare": "bash scripts/sites-env.sh -- opennextjs-cloudflare build && bash scripts/sites-env.sh -- opennextjs-cloudflare deploy"
+    "deploy:cloudflare": "bash scripts/sites-env.sh -- opennextjs-cloudflare build && bash scripts/sites-env.sh -- opennextjs-cloudflare deploy",
+    "deploy:live-relay": "wrangler deploy --config wrangler.live.jsonc"
   },
   "dependencies": {
     "drizzle-orm": "0.45.2",
@@ -55,6 +58,7 @@
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
     "@cloudflare/vite-plugin": "1.51.2",
+    "@cloudflare/vitest-pool-workers": "0.21.3",
     "@cloudflare/workers-types": "^5.20260811.1",
     "@opennextjs/cloudflare": "^1.20.2",
     "@playwright/test": "^1.62.1",

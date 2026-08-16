@@ -48,6 +48,7 @@ next-env.d.ts
 /test-results/
 /.wrangler/
 /.sites-runtime/
+/.live-relay-dist/
 /outputs/
 /work/
 /stowplan-before-upgrade.sql

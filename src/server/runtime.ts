@@ -17,6 +17,9 @@ export interface RuntimeEnv {
   AUTH_SESSION_TTL_SECONDS?: string;
   AUTH_TURNSTILE_SECRET_KEY?: string;
   AUTH_TURNSTILE_SITE_KEY?: string;
+  LIVE_RELAY_SECRET?: string;
+  LIVE_RELAY_URL?: string;
+  STOWPLAN_LIVE_LOCAL_ENABLED?: string;
 }
 
 export async function runtimeEnv(): Promise<RuntimeEnv> {

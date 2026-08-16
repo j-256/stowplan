@@ -1,0 +1,23 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "stowplan-live",
+  "main": "worker/live-relay.ts",
+  "compatibility_date": "2026-08-16",
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "WORKSPACES",
+        "class_name": "WorkspaceLiveRoom"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["WorkspaceLiveRoom"]
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}
