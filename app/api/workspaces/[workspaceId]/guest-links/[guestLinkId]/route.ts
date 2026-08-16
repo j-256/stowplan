@@ -1,4 +1,5 @@
 import { accountScopedJson } from "../../../../../../src/server/account-context";
+import { notifyWorkspaceChange } from "../../../../../../src/server/live-notifications";
 import {
   readWorkspaceAccessBody,
   requireWorkspacePrincipal,
@@ -25,6 +26,11 @@ export async function DELETE(
       principal.user.userId,
       route.guestLinkId,
       body,
+    );
+    await notifyWorkspaceChange(
+      principal.database,
+      route.workspaceId,
+      { force: true },
     );
     return accountScopedJson(result, principal.user.userId);
   } catch (error) {

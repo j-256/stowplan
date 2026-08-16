@@ -55,6 +55,10 @@ import {
 import {
   initializeOwnedWorkspace,
 } from "../../../src/server/workspace-initialization";
+import {
+  liveConnectionIdFromRequest,
+  notifyWorkspaceChange,
+} from "../../../src/server/live-notifications";
 import { API_QUOTAS } from "../../../src/shared/api-quotas";
 
 interface SyncBody {
@@ -552,6 +556,11 @@ export async function POST(request: Request) {
       ), user.userId);
     }
     const checkedAt = new Date().toISOString();
+    await notifyWorkspaceChange(env.DB, body.workspaceId, {
+      environment: env,
+      previousRevision: priorAuthorized.state.workspace.revision,
+      sourceConnectionId: liveConnectionIdFromRequest(request),
+    });
     return accountScopedJson({
       authorization: workspaceAccess(latestAuthorized, checkedAt),
       receipts: result.receipts,

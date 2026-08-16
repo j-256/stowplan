@@ -1,5 +1,6 @@
 import { guestInvitationUrl } from "../../../../../src/domain/app-url";
 import { accountScopedJson } from "../../../../../src/server/account-context";
+import { notifyWorkspaceChange } from "../../../../../src/server/live-notifications";
 import {
   createWorkspaceGuestLink,
   listWorkspaceGuestLinks,
@@ -33,11 +34,17 @@ export async function POST(
   try {
     const principal = await requireWorkspacePrincipal(request, true);
     const body = await readWorkspaceAccessBody(request);
+    const workspaceId = (await params).workspaceId;
     const result = await createWorkspaceGuestLink(
       principal.database,
-      (await params).workspaceId,
+      workspaceId,
       principal.user.userId,
       body,
+    );
+    await notifyWorkspaceChange(
+      principal.database,
+      workspaceId,
+      { force: true },
     );
     const oneTimeUrl = guestInvitationUrl(
       principal.baseUrl,

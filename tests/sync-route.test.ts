@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   initializeOwnedWorkspace: vi.fn(),
   loadAuthorization: vi.fn(),
   loadAuthorized: vi.fn(),
+  notifyWorkspaceChange: vi.fn(),
   synchronize: vi.fn(),
 }));
 
@@ -50,6 +51,16 @@ vi.mock("../src/server/auth", async importOriginal => {
 vi.mock("../src/server/runtime", () => ({
   runtimeEnv: vi.fn(async () => ({ DB: {} })),
 }));
+
+vi.mock("../src/server/live-notifications", async importOriginal => {
+  const actual = await importOriginal<
+    typeof import("../src/server/live-notifications")
+  >();
+  return {
+    ...actual,
+    notifyWorkspaceChange: mocks.notifyWorkspaceChange,
+  };
+});
 
 vi.mock("../src/server/sync-service", async importOriginal => {
   const actual = await importOriginal<
@@ -121,6 +132,9 @@ describe("sync route authorization", () => {
       role: "editor",
     });
     mocks.loadAuthorized.mockResolvedValue(null);
+    mocks.notifyWorkspaceChange.mockResolvedValue({
+      status: "delivered",
+    });
   });
 
   it("rejects a forged viewer mutation before synchronization", async () => {
@@ -333,6 +347,44 @@ describe("sync route authorization", () => {
         role: "editor",
       },
     });
+  });
+
+  it("publishes only an authoritative revision hint after synchronization", async () => {
+    const before = createEmptyState("Live sync");
+    const after = structuredClone(before);
+    after.workspace.revision = 1;
+    mocks.loadAuthorized
+      .mockResolvedValueOnce(authorized(before))
+      .mockResolvedValueOnce(authorized(after));
+    mocks.synchronize.mockResolvedValue({
+      receipts: [],
+      snapshot: after,
+    });
+    const request = syncRequest({
+      commands: [createEnvelope(
+        before,
+        { name: "Live sync renamed", type: "workspace.rename" },
+        { id: "cmd_live_sync" },
+      )],
+      workspaceId: before.workspace.id,
+    });
+    request.headers.set(
+      "x-stowplan-live-connection-id",
+      "connection_source",
+    );
+
+    const response = await POST(request);
+
+    expect(response.status).toBe(200);
+    expect(mocks.notifyWorkspaceChange).toHaveBeenCalledWith(
+      {},
+      before.workspace.id,
+      {
+        environment: { DB: {} },
+        previousRevision: 0,
+        sourceConnectionId: "connection_source",
+      },
+    );
   });
 
   it("rejects mixed or differently paired authorization bases", async () => {

@@ -176,7 +176,11 @@ const DB = {
     }
   },
 };
-globalThis.__STOWPLAN_ENV = { ...process.env, DB };
+globalThis.__STOWPLAN_ENV = {
+  ...process.env,
+  DB,
+  STOWPLAN_LIVE_LOCAL_ENABLED: "true",
+};
 process.env.HOSTNAME = process.env.HOST ?? "0.0.0.0";
 
 const standalone = resolve(".next/standalone");

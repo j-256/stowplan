@@ -25,6 +25,7 @@ import {
   RequestBodyTooLargeError,
 } from "../../../../../src/server/request-body";
 import { runtimeEnv } from "../../../../../src/server/runtime";
+import { notifyWorkspaceChange } from "../../../../../src/server/live-notifications";
 
 export async function GET(
   request: Request,
@@ -136,6 +137,11 @@ export async function POST(
       );
     }
     const result = await consumeGuestLink(env.DB, token, user.userId);
+    await notifyWorkspaceChange(
+      env.DB,
+      result.workspaceId,
+      { environment: env, force: true },
+    );
     const returnTo = workspaceReturnTo(requested, result.workspaceId);
     return new Response(null, {
       status: 303,

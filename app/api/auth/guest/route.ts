@@ -31,6 +31,7 @@ import {
   RequestBodyTooLargeError,
 } from "../../../../src/server/request-body";
 import { runtimeEnv } from "../../../../src/server/runtime";
+import { notifyWorkspaceChange } from "../../../../src/server/live-notifications";
 
 const MAX_EXPECTED_ACCOUNT_ID_LENGTH = 256;
 
@@ -193,6 +194,11 @@ export async function POST(request: Request) {
       env.DB,
       body.token,
       user.userId,
+    );
+    await notifyWorkspaceChange(
+      env.DB,
+      result.workspaceId,
+      { environment: env, force: true },
     );
     return accountScopedJson(
       {
