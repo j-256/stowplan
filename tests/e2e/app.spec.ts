@@ -360,11 +360,13 @@ async function openCaptureSpaceCreator(page: Page): Promise<void> {
 
 async function openInventoryFilters(page: Page): Promise<void> {
   const locationFilter = page.getByLabel("Filter by location");
-  if (!(await locationFilter.isVisible())) {
-    await page.getByRole("button", {
-      name: "Filter and sort inventory",
-    }).click();
-  }
+  const filterButton = page.getByRole("button", {
+    name: "Filter and sort inventory",
+  });
+  await expect.poll(async () =>
+    await locationFilter.isVisible() || await filterButton.isVisible()
+  ).toBe(true);
+  if (!(await locationFilter.isVisible())) await filterButton.click();
   await expect(locationFilter).toBeVisible();
 }
 
@@ -5773,6 +5775,7 @@ test("plucks an older same-item edit and records each history action", async ({
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await reopenCaptureLocation(page, "loc_warm");
   await page.locator(".nav:visible", { hasText: "Inventory" }).click();
+  await expect(page.getByLabel("Search inventory")).toBeVisible();
 
   await page.locator('[data-item-id="item_pasta"] .item-name').click();
   await page.getByLabel("Quantity", { exact: true }).fill("7");

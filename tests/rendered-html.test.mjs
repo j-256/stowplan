@@ -410,7 +410,15 @@ test("initializes OpenNext bindings for next dev and awaits runtime context fail
 });
 
 test("keeps hierarchy and touch drag affordances in the shipped organizer", () => {
-  const application = readFileSync(new URL("../src/client/stowplan-app.tsx", import.meta.url), "utf8");
+  const application = [
+    "stowplan-app.tsx",
+    "workspace-hierarchy.tsx",
+    "workspace-view-helpers.tsx",
+    "workspace-view-types.ts",
+  ].map((file) => readFileSync(
+    new URL(`../src/client/${file}`, import.meta.url),
+    "utf8",
+  )).join("\n");
   const activityHistory = readFileSync(new URL("../src/client/activity-history.tsx", import.meta.url), "utf8");
   const styles = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
   assert.match(application, /aria-label="Space hierarchy"/);
