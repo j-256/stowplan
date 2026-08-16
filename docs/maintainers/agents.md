@@ -9,6 +9,7 @@ Read in this order: `README.md`, `AGENTS.md`, this architecture guide, `src/doma
 - Never discard or reorder an outbox envelope silently.
 - Never bypass field expectations for conflict resolution or history reversal.
 - Never scope a SQL query only in client code; authorization is server-side.
+- Never transport workspace content through live notification adapters; revision-only hints wake authenticated sync.
 - Never log raw session tokens, OAuth codes/tokens, guest URLs, Access assertions, or full production snapshots.
 - Keep Cloudflare logic in adapters/composition roots. Run Node and D1 conformance gates after persistence changes.
 - Add a numbered migration; do not edit an already-released migration.

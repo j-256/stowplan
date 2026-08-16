@@ -20,6 +20,14 @@ To exercise the full control plane, visit `http://localhost:3000/account?returnT
 
 Never enable the development provider on a public origin. It is refused outside loopback, reserved `.test` hosts, or explicit `AUTH_DEV_ALLOWED_HOSTS`, and the reference production origin remains hard-blocked even if that list is misconfigured.
 
+## Live collaboration
+
+`npm run start:node` enables the process-local live adapter automatically. Each signed-in browser with an active server-backed workspace holds one SSE response, and committed changes publish revision-only hints through the in-process hub. The browser then uses the ordinary authenticated sync route to read the authoritative data. Idle clients do not make recurring HTTP requests; the server sends response-stream comments periodically so compatible proxies keep the existing stream open.
+
+Configure the reverse proxy to disable response buffering for `text/event-stream`, preserve streaming, and allow an idle interval longer than the heartbeat. The route also sends `X-Accel-Buffering: no`. A dropped stream reconnects with bounded backoff, and focus, visibility, online, and manual reconciliation remain available.
+
+The built-in hub is process-local. A single Node process needs no relay configuration. A deployment that routes requests across multiple application processes must configure the shared Cloudflare relay described in the [Cloudflare runbook](/deploy/cloudflare#8-deploy-the-live-collaboration-relay), with the same `LIVE_RELAY_URL` available during the application build and at runtime and the same `LIVE_RELAY_SECRET` installed on every process and the relay. A complete remote configuration takes precedence over the local adapter.
+
 ## Production authentication
 
 For production, use HTTPS at the reverse proxy, remove `AUTH_DEV_ENABLED`, create a Google web OAuth client and Managed Turnstile widget for the exact public hostname, and set:

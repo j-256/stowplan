@@ -219,7 +219,49 @@ Use `plan --prune` to preview removal of stale `[stowplan]` rules after switchin
 
 Browser Integrity Check and standard DDoS controls complement the application budgets. Do not enable a zone-wide bot mode that cannot exempt Stowplan API traffic without testing its effect on sync, shared NATs, guest redemption, and accessibility.
 
-## 8. Back up, migrate, and build
+## 8. Deploy the live collaboration relay
+
+The Sites application manifest intentionally has no Durable Object binding. Live collaboration is a separately deployed Worker whose `WorkspaceLiveRoom` Durable Object accepts hibernating WebSockets. The application continues to own authentication, authorization, commands, snapshots, and reconciliation; the relay receives only signed revision and access hints.
+
+Generate one high-entropy shared secret, store it in the operator's secret manager, and install the exact same value on the relay and application. The UTF-8 value must contain at least 32 bytes. Never put it in `wrangler.live.jsonc`, a build log, or a tracked environment file.
+
+Validate and deploy the relay first:
+
+```bash
+npm run test:live-relay
+npm run build:live-relay
+npx wrangler secret put LIVE_RELAY_SECRET --config wrangler.live.jsonc
+npm run deploy:live-relay
+curl --fail https://YOUR_RELAY_ORIGIN/health
+```
+
+The secret command reads the stored value interactively. Record the exact HTTPS origin printed by Wrangler or assigned as the relay's custom domain. The health response proves routing, not authenticated publish or workspace access.
+
+Configure the application with both values:
+
+```text
+LIVE_RELAY_URL=https://YOUR_RELAY_ORIGIN
+LIVE_RELAY_SECRET=the-identical-shared-secret
+```
+
+For Sites, add `LIVE_RELAY_URL` to both the build and runtime environments and add `LIVE_RELAY_SECRET` only as a runtime secret. For a direct Worker, install both runtime values through Wrangler or the dashboard and export `LIVE_RELAY_URL` while running `npm run build:cloudflare`. The build-time URL is required because `next.config.ts` admits the exact HTTPS and WebSocket origins in the browser CSP. Deploy the relay before the application so newly loaded clients never receive a capability for a missing origin.
+
+The conservative request model keeps three quota lanes explicit:
+
+| Event | Application or Pages requests | Relay Worker requests | Durable Object requests |
+|---|---:|---:|---:|
+| First connection for one tab | 1 capability request | 1 WebSocket upgrade | 1 room connection |
+| Established idle tab | 0 recurring | 0 recurring | 0 recurring |
+| One committed command batch | 1 sync request | 1 signed publish | 1 room publish |
+| Genuine reconnect | 1 capability request | 1 WebSocket upgrade | 1 room connection |
+
+Application and relay Worker ingress share the account's Workers or Pages request allowance; Durable Object requests have their own allowance. The browser sends no application messages over the WebSocket, and `acceptWebSocket` allows the room to hibernate between publish events while sockets remain connected. Cloudflare bills a Worker WebSocket at its initial upgrade rather than as recurring requests, and its [Hibernation API](https://developers.cloudflare.com/durable-objects/best-practices/websockets/) avoids idle Durable Object duration. Review the current [Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/) and [Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/) for the account plan before deployment.
+
+A five-second polling loop would issue approximately 17,000 application requests per day for one continuously open tab; six tabs would exceed a 100,000-request daily allowance before normal application traffic. This relay instead costs nothing in recurring request count while a connection remains healthy. Adjacent application writes are batched, control-plane fan-out is deduplicated by workspace, and relay publishing has a short timeout so a relay outage cannot hold open the primary mutation.
+
+To disable live collaboration, remove both application variables and rebuild the application so its CSP and capability route return to the no-relay configuration. Existing tabs may reconnect until the old build is replaced, so leave the relay deployed through that application rollback. Local command acceptance, the durable outbox, normal sync, and focus, visibility, online, and manual reconciliation remain available throughout. After the rebuilt application is active, the relay can be retired through the ordinary Cloudflare Worker rollback or deletion process.
+
+## 9. Back up, migrate, and build
 
 For an existing direct Wrangler installation, export before migration:
 
@@ -258,7 +300,7 @@ npx wrangler deploy --config wrangler.jsonc
 
 `NEXT_PUBLIC_*` values are compiled into browser assets; setting them only as Worker runtime variables is too late. `wrangler deploy` creates a Worker version and does not apply D1 migrations automatically.
 
-## 9. Public-auth cutover
+## 10. Public-auth cutover
 
 Use this order for the legacy Access-to-Google transition:
 
@@ -278,7 +320,7 @@ Use this order for the legacy Access-to-Google transition:
 
 Do not place test accounts on a quota or authorization bypass. Local and CI use synthetic `@example.test` personas and Turnstile test keys. Production canary accounts use real Google identities, synthetic inventory, ordinary quotas, an assigned operator, and a review date. A guest canary is an ordinary account with a viewer or editor membership, not a separate weak identity class.
 
-## 10. Verification and rollback
+## 11. Verification and rollback
 
 After each deployment:
 
@@ -287,7 +329,7 @@ npx wrangler deployments list
 npx wrangler tail --status error
 ```
 
-Request `https://YOUR_ORIGIN/api/health`, complete Google plus Turnstile sign-in, create one local item, wait for "Up to date", reload, redeem a guest link with another ordinary account, and inspect the admin control plane through Access. Do not put assertions, OAuth material, guest URLs, environment values, or inventory into tail filters, screenshots, or incident notes.
+Request `https://YOUR_ORIGIN/api/health` and the relay's `/health`, complete Google plus Turnstile sign-in, create one local item, wait for "Backed up online", and verify that another signed-in member with the same workspace open receives the committed edit within five seconds without focus or reload. Then reload, redeem a guest link with another ordinary account, and inspect the admin control plane through Access. Do not put assertions, OAuth material, guest URLs, environment values, or inventory into tail filters, screenshots, or incident notes.
 
 Before the Access conversion, application rollback needs no Access mutation: deploy the last known-good saved Sites version and restore only the environment expected by that version.
 

@@ -46,6 +46,7 @@ A mobile-first, local-first organizer for rooms, cabinets, drawers, boxes, bins,
 - Container-first onboarding distinguishes uncounted, in-progress, known-empty, and counted spaces.
 - Name-first item capture with a default quantity, optional descriptions and units, nested-container creation, and "mark counted & next" are optimized for a phone in one hand.
 - IndexedDB is the immediate source of truth; a durable outbox batches and retries authenticated server backups.
+- Connected workspace members see committed edits within five seconds under normal connectivity, without idle polling.
 - Multiple local workspaces are preserved; scanner-safe guest links open shared workspaces without erasing the current one.
 - Hierarchical moves are cycle-safe; partial quantities split/merge; bulk moves are atomic.
 - Item and space editors expose structured attributes, conditions, dimensions, partial moves, archive/delete review, drag-and-drop, and equivalent touch/keyboard controls.
@@ -91,6 +92,7 @@ src/adapters/        D1 and Node SQLite adapters
 migrations/          Ordered durable schema migrations
 docs/                VitePress user, operator, maintainer, and agent docs
 cloudflare/          Parameterized Access, WAF, and rate-limit desired state
+worker/              Hibernating live-collaboration relay for Cloudflare
 scripts/             Build, smoke, deployment, and reconciliation automation
 tests/               Domain, sync, adapter, offline, and auth tests
 ```

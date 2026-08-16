@@ -14,6 +14,8 @@ All responses containing workspace or administrative data use `Cache-Control: no
 | `/api/workspaces/:workspaceId/guest-links` | GET, POST | workspace owner | List links or create a viewer/editor link |
 | `/api/workspaces/:workspaceId/guest-links/:guestLinkId` | DELETE | workspace owner | Revoke an active link |
 | `/api/workspaces/:workspaceId` | DELETE | workspace owner | Immediately delete the server workspace after strong confirmation |
+| `/api/live/capability?workspaceId=…&connectionId=…` | GET | workspace member | Return an account-bound SSE endpoint, a short-lived signed WebSocket capability, or an unavailable result |
+| `/api/live/events?workspaceId=…&connectionId=…` | GET | workspace member on the Node adapter | Hold one server-sent event stream for revision-only live hints |
 | `/api/sync` | POST | workspace member | Initialize/claim, replay editor/owner commands, or pull with an empty viewer batch |
 | `/api/snapshot?workspaceId=…` | GET | workspace member | Read authorized server copy for conflict recovery |
 | `/api/snapshot` | PUT | workspace owner | Validated compare-and-swap backup restore |
@@ -189,6 +191,18 @@ Workspace access errors use a structured body with at least `code` and `error`; 
 
 Browser mutations require a trusted `Origin`, reject cross-site Fetch Metadata, and reject browser-shaped requests that omit `Origin`; non-browser clients without Fetch Metadata may omit `Origin` and still authenticate normally. Security headers apply a same-origin CSP, deny framing, restrict browser capabilities, and disable content-type sniffing. JSON bodies are streamed through a byte-counting parser rather than buffered without a limit. Invitation confirmations accept at most 4 KiB, workspace access mutations accept at most 32 KiB, sync and snapshot restore accept at most 8 MiB, and development sign-in plus remaining administrative control mutations accept at most 256 KiB. An oversized body returns before any state mutation. Dedicated guest-confirmation rate limits cover both the fixed and legacy API paths where the Cloudflare plan supports a separate rule.
 
+## Live reconciliation
+
+Live delivery is a wake-up path, not a second data protocol. The browser first calls the account-bound capability endpoint for the active server-backed workspace. The Node composition returns one long-lived same-origin SSE endpoint. A Cloudflare composition returns a short-lived HMAC capability in a WebSocket subprotocol and the browser connects directly to the separate relay. The capability binds the user, workspace, browser connection ID, application origin, snapshot revision, access revision, issuance time, and expiry. It is valid for at most one minute.
+
+The relay and local SSE adapter send only protocol version, message type, snapshot revision, and access revision. Message types are `ready`, `change`, `access`, and `deleted`. They never carry commands, inventory, snapshots, member lists, session material, or guest credentials. Browser WebSocket messages are unsupported. A hint causes the client to call the ordinary authenticated `/api/sync` route with an empty batch when needed, so workspace authorization, field-aware reconciliation, and the authoritative snapshot stay on the existing path.
+
+Every browser instance creates a non-secret connection ID and includes it as `X-Stowplan-Live-Connection-Id` on sync. A committed data notification suppresses that source connection while waking other connections. Access changes always reach every connection, update the relay's authoritative allowed-user set, and close removed users. Workspace deletion sends a final `deleted` hint and closes the room's sockets. Account disable, ban, deletion, ordinary membership changes, and global-admin access controls use the same notification boundary.
+
+Clients coalesce adjacent hints, retain focus, visibility, online, and manual reconciliation fallbacks, and reconnect with equal-jitter exponential backoff capped at one minute. A connection must remain stable before the backoff resets, which prevents a flapping relay from producing a tight request loop. Idle WebSockets create no recurring HTTP requests. The Node SSE adapter may send response-stream comments to keep a proxy from buffering or closing the already-established response; those comments do not create new requests.
+
+Notification publishing happens only after a primary mutation commits. Duplicate workspace impacts in one control operation are coalesced, relay publishing has a short timeout, and delivery failure never rolls back or misreports the durable mutation. Under normal connectivity, the client's bounded sync batch plus notification and authoritative pull target collaborator visibility within five seconds.
+
 ## Sync body
 
 ```json
@@ -199,7 +213,7 @@ Browser mutations require a trusted `Origin`, reject cross-site Fetch Metadata, 
 }
 ```
 
-The initial authenticated sync may include a fully validated local snapshot; the server creates it and assigns owner membership. A colliding workspace ID never grants membership to the second creator. Subsequent syncs require membership, and only editors/owners may submit commands. An empty member batch is a low-frequency pull reconciliation. Before replay, the server replaces every command envelope's `actorId` with the authenticated user ID while preserving command IDs and order, so client-supplied attribution is never authoritative. The response contains the authoritative snapshot plus a receipt per command: `applied`, `duplicate`, or `rejected` with structured conflicts.
+The initial authenticated sync may include a fully validated local snapshot; the server creates it and assigns owner membership. A colliding workspace ID never grants membership to the second creator. Subsequent syncs require membership, and only editors/owners may submit commands. An empty member batch is an event-driven or lifecycle reconciliation pull, never a fixed-rate rapid poll. Before replay, the server replaces every command envelope's `actorId` with the authenticated user ID while preserving command IDs and order, so client-supplied attribution is never authoritative. The response contains the authoritative snapshot plus a receipt per command: `applied`, `duplicate`, or `rejected` with structured conflicts.
 
 Owner restore validates the backup again, requires the caller's expected server revision, advances the restored revision, and uses the same persistence compare-and-swap as sync. A concurrent write returns `409` and leaves both versions unchanged.
 

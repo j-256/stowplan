@@ -8,6 +8,10 @@ UI / PWA → local replica + outbox → authenticated sync API → SnapshotStore
             command/history engine      session/workspace     D1   Node SQLite
                     ↓
              planner + import validation
+
+committed mutation → runtime notification port → SSE or hibernating WebSocket hint
+                                                        ↓
+                                             authenticated empty sync
 ```
 
 ## Invariants
@@ -35,10 +39,11 @@ UI / PWA → local replica + outbox → authenticated sync API → SnapshotStore
 - Disabling an active user, revoking that user's active sessions, and revoking active unused guest links created by that user commit atomically. Re-enabling the user never revives those sessions or links.
 - Global-admin inspection is an explicit audited control-plane read. It returns validated workspace state without creating membership, a local replica, or an outbox.
 - Global-admin custody is an explicit durable owner membership. It is the only bridge from control-plane visibility to ordinary deterministic workspace mutation.
+- Live transports carry revision and access hints only. They never carry commands or workspace state, never make network success a prerequisite for a local command, and never replace authenticated sync as the authorization or reconciliation boundary.
 
 ## Boundaries
 
-`src/domain` has no Cloudflare, React, SQL, or browser imports. `SnapshotStore` is the persistence port. D1 and Node SQLite are adapters. Route handlers use standard `Request`/`Response`; `runtimeEnv` is the small composition seam.
+`src/domain` has no Cloudflare, React, SQL, or browser imports. `SnapshotStore` is the persistence port. D1 and Node SQLite are adapters. Route handlers use standard `Request`/`Response`; `runtimeEnv` is the small composition seam. `src/server/live-notifications.ts` is the runtime-neutral notification boundary. The Node composition selects its process-local SSE hub, while the Cloudflare composition signs bounded notifications for the separate `worker/live-relay.ts` Durable Object adapter.
 
 The Sites manifest binds D1 as `DB`. `db/schema.ts` is the typed collaboration schema and Drizzle generates the SQL packaged under `.openai/drizzle`. The packaged schema includes local-first workspace snapshots plus users, identities, memberships, workspace custody, sessions, creation ledgers, guest links, OAuth state, circuit breakers, governance limits, ban digests, deletion receipts, and audit events. The artifact validator treats the binding and its migration payload as one deployment requirement.
 
@@ -89,6 +94,8 @@ Routine collaboration is workspace-scoped self-service. Owners use the workspace
 IndexedDB is the interaction database, not a cache. It preserves the active replica plus inactive workspaces and each durable outbox. Workspace opening, guarded removal, reset, and restore use single-transaction selection or compare-and-swap so stale renders and concurrent tabs cannot overwrite a newer local replica. Reconnect and foreground reconciliation include inactive workspaces with pending commands.
 
 The server is a durable backup and multi-device reconciliation authority. A rejected command remains inspectable; never silently drop it. A full server snapshot is not disposable cache when pending or blocked local commands exist. Recovery-bundle uploads must prove that every retained outbox command is already represented in the bundled snapshot before recovery discards the queue.
+
+After a data or access mutation commits, the notification port loads authoritative revisions and active member IDs, coalesces duplicate workspace impacts, and emits a revision-only hint. The source browser is suppressed for ordinary data changes, while access changes and deletion reach every connection and close ineligible sockets. The browser then reconciles through `/api/sync`; notification failure is contained and foreground, visibility, online, and manual fallbacks remain. Connected idle clients do not poll. Cloudflare uses hibernating Durable Object WebSockets so an idle room does not require a recurring application request, and Node uses one established SSE response per active workspace tab.
 
 Backup messaging follows persisted workspace authority rather than deployment availability alone. A signed-out device-only replica is a normal local state and must not persist a sign-in error. An active server-backed replica whose app session ends is a paused remote-backup state, while terminal access and genuine sync failures retain their distinct recovery paths. Large backup, access, preference-storage, and workspace notices are independently dismissible; dismissing one does not erase the compact status or another notice.
 

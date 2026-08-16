@@ -2,6 +2,10 @@
 
 Online backup and sharing are optional. A workspace can remain on one device without an account, or it can have an online copy with viewers, editors, and owners.
 
+When two signed-in members keep the same online workspace open, committed edits normally appear on the other screen within five seconds. Stowplan saves each edit on the device immediately, batches the online share briefly, and shows **1 change sharing within 5 seconds** or the corresponding change count in the existing workspace status. The status changes to **Sharing changes...** while the request is in progress. It is a quiet timing cue rather than a countdown.
+
+The five-second target assumes both devices are online and the live connection is healthy. If that connection is interrupted, local work remains safe and Stowplan reconciles again after reconnect, when the window becomes active or visible, or when the workspace list is refreshed. It never discards queued work to make another screen look up to date.
+
 ## Accept an invitation
 
 If someone sent you an invite link:

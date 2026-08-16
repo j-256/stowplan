@@ -19,7 +19,8 @@ After an online app load installs offline support, the workspace hub, built-in q
 | Stored only on this device | Stowplan does not know of an authorized online copy |
 | Available from the server | The signed-in account has access, but this device has not downloaded it |
 | Device and server are synchronized | The known device and online copies match and nothing is waiting |
-| Local changes are waiting to upload | The changes are saved here, but the online copy is behind |
+| Changes sharing within 5 seconds | The changes are saved here immediately and are waiting for the short online sharing batch |
+| Sharing changes | The online sharing request is in progress |
 | Backup refused one or more local changes | Stowplan preserved work that needs review |
 | This device has newer work | The device summary is ahead of the latest online summary it knows |
 | The server copy is newer | Another device or person changed the online copy |
@@ -30,7 +31,9 @@ A failed connection does not erase the last successful backup time. Stowplan sho
 
 ## What happens when the connection returns
 
-Stowplan retries waiting changes, including changes in local workspaces that are not open. It also checks the open workspace for changes from other devices. It does not switch workspaces on its own or discard refused work.
+Stowplan retries waiting changes, including changes in local workspaces that are not open. It also checks the open workspace for changes from other devices. When two members keep that workspace open with healthy connections, committed edits normally appear on the other screen within five seconds. It does not switch workspaces on its own or discard refused work.
+
+An offline status says how many changes are saved rather than promising the five-second sharing window. When the connection returns, the normal sharing status resumes.
 
 If your Stowplan session expires, **Remote backup paused** means local work remains on the device but cannot reach the account until you sign in again.
 
