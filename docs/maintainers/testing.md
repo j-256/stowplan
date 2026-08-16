@@ -76,7 +76,7 @@ Stowplan pins the newest Node 24 LTS patch in `.nvmrc` as the deployment default
 5. Check light/dark/system, reduced motion, keyboard-only, screen-reader labels, phone and tablet orientations, compact desktop, and wide desktop.
 6. Build docs with `/stowplan/` and `/` bases; inspect generated links.
 7. Generate truthful screenshots from the final build.
-8. Generate an SBOM, review licenses, update changelog/version, and sign/tag the release version.
+8. Generate an SBOM, review licenses, update and commit the changelog, then run `npm version <major|minor|patch>` from clean `main`. The `preversion` lifecycle rejects every other branch, and project npm configuration preserves npm's default version commit and annotated `v` tag format.
 9. Verify `AUTH_ACCESS_MIGRATION_ENABLED` and `AUTH_ADMIN_RECOVERY_TOKEN` are absent or disabled outside an approved migration or recovery window, the retired email-list setting is not used as authority, and the admin inventory reports zero active pre-Google sessions before Account leaves the Access perimeter.
 10. For direct Wrangler, export the database, apply the numbered remote migrations, then deploy code. For Sites, do not apply the numbered stream; push the exact validated source, save a Sites version that references that pushed commit and matching archive, and deploy only the saved version so Sites applies its packaged Drizzle stream.
 11. Run health, Google plus Turnstile login, ordinary authorization, guest enrollment, sync, export, restore, admin Access, last-admin, and session-revocation smoke checks in production.

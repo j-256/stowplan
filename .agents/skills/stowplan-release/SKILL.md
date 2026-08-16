@@ -13,16 +13,18 @@ An explicit invocation authorizes all ordinary release writes in this workflow:
 
 - Push the verified `main` commit to `origin` with an ordinary non-force push when needed
 - Push that same commit to the Sites source repository with an ordinary non-force push when needed
-- Create an annotated version tag at the verified commit and push it to `origin` without force so the Release workflow publishes the GitHub release and SBOM
+- Push the npm-created annotated version tag at the verified commit to `origin` without force so the Release workflow publishes the GitHub release and SBOM
 - Save a Sites version with the exact verified archive
 - Deploy that saved version to public production
 
 Do not ask for duplicate confirmation before those actions. Invocation does not authorize creating or amending commits, merging, rebasing, force-pushing, changing environment variables, rolling back, deleting versions, or changing access and domain configuration.
 
+Prepare the version before invoking this skill: update and commit `CHANGELOG.md`, then run `npm version <major|minor|patch>` from clean `main`. The repository's `preversion` lifecycle rejects other branches, and npm creates the version commit and local annotated tag with its default `%s` message and `v` prefix. Validate and push that tag in this workflow; never create or rewrite it here.
+
 ## Load the release surfaces
 
 1. Resolve the Stowplan repository root with `git rev-parse --show-toplevel`, work only in that checkout, and read its `AGENTS.md`, `docs/maintainers/agents.md`, and `docs/maintainers/testing.md` before acting.
-2. Read `package.json`, `package-lock.json`, `CHANGELOG.md`, `.github/workflows/release.yml`, and `.openai/hosting.json`. Copy the opaque Sites `project_id` exactly.
+2. Read `package.json`, `package-lock.json`, `.npmrc`, `CHANGELOG.md`, `scripts/preversion.sh`, `.github/workflows/release.yml`, and `.openai/hosting.json`. Copy the opaque Sites `project_id` exactly.
 3. Require the Release workflow to trigger on `v*` tag pushes and publish `stowplan-sbom.cdx.json`. Stop before creating a tag if that automation does not match.
 4. Use `gh` against the repository resolved from `origin` for GitHub Actions and Releases. Do not hardcode the repository owner or name.
 5. Use the connected Sites app for site inspection, source credentials, version saving, deployment, and deployment status. Never create another site.
@@ -35,9 +37,11 @@ Do not ask for duplicate confirmation before those actions. Invocation does not 
 3. Require `origin/main` to equal `HEAD` or be an ancestor of `HEAD`. Stop if local `main` is behind or diverged.
 4. Record the full `HEAD` commit and do not permit it to change during the workflow.
 5. Read the release version from `package.json`, require the root versions in `package-lock.json` to match it, require a matching `CHANGELOG.md` version entry, and derive the release tag as `v<version>`. Require a stable Semantic Versioning release in `MAJOR.MINOR.PATCH` form.
-6. Require the release tag to be absent from local refs, `origin`, and GitHub Releases. Stop and request a committed changelog and version update if the tag or release already exists.
-7. Inspect Sites project metadata and require the existing `stowplan` project, owner access, public mode, and custom live URL `https://stowplan.lasers.app`.
-8. Read Sites environment metadata without printing secret values. A missing `NEXT_PUBLIC_DOCS_URL` is valid because the source default is canonical. Stop if it overrides the docs base to anything except `https://docs.stowplan.lasers.app/`. Do not mutate the environment.
+6. Require the `preversion` lifecycle to reject non-`main` branches and project npm configuration to set `git-tag-version=true`, `message=%s`, and `tag-version-prefix=v`.
+7. Require a local annotated release tag that dereferences to the recorded commit and whose annotation subject is the unprefixed release version. Stop and request a committed `npm version` update if it is absent or mismatched.
+8. Require the release tag to be absent from `origin` and GitHub Releases. Stop if either already exists; never move, delete, or recreate the tag.
+9. Inspect Sites project metadata and require the existing `stowplan` project, owner access, public mode, and custom live URL `https://stowplan.lasers.app`.
+10. Read Sites environment metadata without printing secret values. A missing `NEXT_PUBLIC_DOCS_URL` is valid because the source default is canonical. Stop if it overrides the docs base to anything except `https://docs.stowplan.lasers.app/`. Do not mutate the environment.
 
 ## Verify and package
 
@@ -63,7 +67,7 @@ Stop on any failure. Do not weaken, skip, or rerun a narrower substitute for a f
 ## Publish the GitHub release
 
 1. Reconfirm `HEAD` matches the recorded and packaged commit and `origin/main` resolves to that commit.
-2. Create one annotated release tag at the recorded commit with message `stowplan <tag>`.
+2. Reconfirm the local annotated release tag dereferences to the recorded commit and its annotation subject equals the unprefixed release version.
 3. Push only that tag to `origin` without force. Verify the remote tag dereferences to the full recorded commit. Never force, move, delete, or recreate a release tag.
 4. Locate the exact Release workflow run triggered by the tag push, require its tag and head commit to match the recorded values, and poll it until completion. Provide concise progress updates at least once per minute.
 5. On workflow failure, stop and report the run URL plus the failing step and error. Do not create the release manually, bypass the workflow, or deploy Sites.
