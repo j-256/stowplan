@@ -7,6 +7,10 @@
     {
       "pattern": "live.stowplan.lasers.app",
       "custom_domain": true
+    },
+    {
+      "pattern": "stowplan.lasers.app/v1/*",
+      "zone_name": "lasers.app"
     }
   ],
   "compatibility_date": "2026-08-16",

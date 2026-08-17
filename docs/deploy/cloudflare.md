@@ -237,14 +237,18 @@ curl --fail https://YOUR_RELAY_ORIGIN/health
 
 The secret command reads the stored value interactively. Record the exact HTTPS origin printed by Wrangler or assigned as the relay's custom domain. The health response proves routing, not authenticated publish or workspace access.
 
-Configure the application with both values:
+For Sites on a Cloudflare-managed custom hostname, also route the application's `/v1/*` path to the relay Worker. Keep the relay custom domain for health checks and direct operator diagnostics. The checked-in `wrangler.live.jsonc` demonstrates both triggers for the official deployment; forks must replace both hostnames and the zone name.
+
+Configure Sites with the application origin and the shared secret:
 
 ```text
-LIVE_RELAY_URL=https://YOUR_RELAY_ORIGIN
+LIVE_RELAY_URL=https://YOUR_APPLICATION_ORIGIN
 LIVE_RELAY_SECRET=the-identical-shared-secret
 ```
 
-For Sites, add `LIVE_RELAY_URL` to both the build and runtime environments and add `LIVE_RELAY_SECRET` only as a runtime secret. For a direct Worker, install both runtime values through Wrangler or the dashboard and export `LIVE_RELAY_URL` while running `npm run build:cloudflare`. The build-time URL is required because `next.config.ts` admits the exact HTTPS and WebSocket origins in the browser CSP. Deploy the relay before the application so newly loaded clients never receive a capability for a missing origin.
+Sites applies a same-origin browser connection policy, so a distinct relay hostname is not a usable browser endpoint even when the packaged application emits a broader policy. The narrow Cloudflare route keeps `wss://YOUR_APPLICATION_HOST/v1/connect` same-origin while sending only the relay paths to the Durable Object Worker. Add both values as Sites runtime environment entries, mark only `LIVE_RELAY_SECRET` as secret, and redeploy the approved saved version.
+
+For a direct Worker or multi-process Node deployment, set `LIVE_RELAY_URL=https://YOUR_RELAY_ORIGIN` instead. Install both runtime values through Wrangler, the platform dashboard, or every Node process, and export the same URL while building the application. A distinct relay origin must be present during the build because `next.config.ts` admits its exact HTTPS and WebSocket origins in the browser CSP. Deploy the relay before the application so newly loaded clients never receive a capability for a missing origin.
 
 The conservative request model keeps three quota lanes explicit:
 
@@ -259,7 +263,7 @@ Application and relay Worker ingress share the account's Workers or Pages reques
 
 A five-second polling loop would issue approximately 17,000 application requests per day for one continuously open tab; six tabs would exceed a 100,000-request daily allowance before normal application traffic. This relay instead costs nothing in recurring request count while a connection remains healthy. Adjacent application writes are batched, control-plane fan-out is deduplicated by workspace, and relay publishing has a short timeout so a relay outage cannot hold open the primary mutation.
 
-To disable live collaboration, remove both application variables and rebuild the application so its CSP and capability route return to the no-relay configuration. Existing tabs may reconnect until the old build is replaced, so leave the relay deployed through that application rollback. Local command acceptance, the durable outbox, normal sync, and focus, visibility, online, and manual reconciliation remain available throughout. After the rebuilt application is active, the relay can be retired through the ordinary Cloudflare Worker rollback or deletion process.
+To disable live collaboration, remove both application variables and redeploy the application so its capability route returns to the no-relay configuration. Rebuild a deployment that compiled a distinct relay origin into its CSP to remove that origin as well. Existing tabs may reconnect until the replacement is active, so leave the relay deployed through that application rollback. Local command acceptance, the durable outbox, normal sync, and focus, visibility, online, and manual reconciliation remain available throughout. After the replacement is active, the relay can be retired through the ordinary Cloudflare Worker rollback or deletion process.
 
 ## 9. Back up, migrate, and build
 
