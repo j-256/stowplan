@@ -6,7 +6,9 @@ import {
   TERMS_OF_SERVICE_URL,
   USER_GUIDE_URL,
 } from "../src/client/external-links";
+import { AccountMenu } from "../src/client/account-menu";
 import RedirectKnownVisitor from "../src/client/redirect-known-visitor";
+import { WORKSPACE_LIST_PATH } from "../src/domain/app-url";
 import styles from "./page.module.css";
 
 const SUBHEAD = "Find what you packed without opening every box.";
@@ -40,6 +42,9 @@ export const metadata: Metadata = {
 
 export function Hero() {
   return <main className={styles.page}>
+    <header className={styles.topbar}>
+      <AccountMenu returnTo={WORKSPACE_LIST_PATH} />
+    </header>
     <section className={styles.hero}>
       <p className="eyebrow">Organize one space at a time</p>
       <h1>Stowplan</h1>

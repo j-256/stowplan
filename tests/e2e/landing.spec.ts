@@ -15,6 +15,35 @@ test.describe("landing page", () => {
     await expect(page).toHaveURL(/\/workspaces\/.*ws_demo/);
   });
 
+  test("keeps account sign-in available before any workspace is local", async ({
+    page,
+  }) => {
+    await page.goto("/?welcome");
+    const trigger = page.getByRole("button", {
+      name: /Open user menu/,
+    });
+    await expect(trigger).toBeVisible();
+    const triggerBox = await trigger.boundingBox();
+    const viewport = page.viewportSize();
+    expect(triggerBox).not.toBeNull();
+    expect(viewport).not.toBeNull();
+    expect(triggerBox!.x + triggerBox!.width).toBeGreaterThan(
+      viewport!.width / 2,
+    );
+    expect(triggerBox!.y).toBeLessThan(viewport!.height / 3);
+
+    await trigger.click();
+    const accountLink = page.getByRole("dialog", {
+      name: "User menu",
+    }).getByRole("link", {
+      name: "Sign in or connect",
+    });
+    await expect(accountLink).toHaveAttribute(
+      "href",
+      "/account?returnTo=%2Fworkspaces",
+    );
+  });
+
   test("redirects a returning visitor with local workspaces to the hub", async ({
     page,
   }) => {

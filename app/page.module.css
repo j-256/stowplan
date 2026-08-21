@@ -4,6 +4,11 @@
   padding: clamp(18px, 4vw, 48px);
 }
 
+.topbar {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .hero {
   padding: clamp(48px, 12vw, 128px) 0 clamp(32px, 7vw, 72px);
   text-align: center;

@@ -21,6 +21,10 @@ describe("landing hero", () => {
     expect(markup).toContain('href="/workspaces"');
   });
 
+  it("keeps account access available before a local workspace exists", () => {
+    expect(markup).toContain("Open user menu; checking account");
+  });
+
   it("shows all four value points", () => {
     expect(markup).toContain("Start before the system is perfect");
     expect(markup).toContain("Keep working without service");
