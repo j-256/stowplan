@@ -4,16 +4,6 @@ set -euo pipefail
 readonly EXPECTED_BRANCH="main"
 readonly EXPECTED_DOCS_URL="https://docs.stowplan.lasers.app/"
 readonly RETIRED_DOCS_URL="https://j-256.github.io/stowplan/"
-# shellcheck disable=SC2016
-readonly GENERATED_AGENTS_BLOCK='<!-- BEGIN:nextjs-agent-rules -->
-
-# This is NOT the Next.js you know
-
-This version has breaking changes \0342\0200\0224 APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file\0047s directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
-
-This block is written and re-added by `next dev` \0342\0200\0224 verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
-
-<!-- END:nextjs-agent-rules -->'
 
 script_directory="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 default_repository="$(git -C "${script_directory}/../../../.." rev-parse --show-toplevel)"
@@ -30,22 +20,9 @@ if [[ "$#" -gt 1 ]]; then
 fi
 
 cleanup_generated_agents() {
-  local current_status
-  local expected_agents
-  local temporary_directory
-
   [[ "${initially_clean}" == "1" ]] || return 0
-  current_status="$(git -C "${repository}" status --porcelain --untracked-files=all)"
-  [[ "${current_status}" == " M AGENTS.md" ]] || return 0
-
-  temporary_directory="$(mktemp -d /tmp/stowplan-release-agents.XXXXXX)"
-  expected_agents="${temporary_directory}/AGENTS.md"
-  git -C "${repository}" show HEAD:AGENTS.md >"${expected_agents}"
-  printf '\n%b\n' "${GENERATED_AGENTS_BLOCK}" >>"${expected_agents}"
-  if cmp -s "${expected_agents}" "${repository}/AGENTS.md"; then
-    git -C "${repository}" checkout HEAD -- AGENTS.md
-  fi
-  rm -rf "${temporary_directory}"
+  bash "${repository}/scripts/restore-next-generated-agents.sh" \
+    "${repository}"
 }
 
 trap cleanup_generated_agents EXIT
@@ -88,7 +65,7 @@ if [[ ! -x "${repository}/node_modules/.bin/vinext" ]]; then
   exit 69
 fi
 
-bash "${repository}/scripts/verify.sh"
+bash "${repository}/scripts/verify-ready.sh"
 cleanup_generated_agents
 
 post_verify_status="$(git -C "${repository}" status --porcelain --untracked-files=all)"

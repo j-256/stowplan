@@ -44,7 +44,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium webkit
-      - run: npm run test:e2e
+      - run: bash scripts/verify-browser.sh
       # Traces for retried attempts are the only evidence an intermittent
       # failure leaves behind, and the run that produced them is where they
       # would otherwise be discarded. Upload them even when the job passes,

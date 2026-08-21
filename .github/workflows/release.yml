@@ -14,7 +14,8 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
-      - run: bash scripts/verify.sh
+      - run: npx playwright install --with-deps chromium webkit
+      - run: npm run verify:ready
         env:
           DOCS_PAGES_BASE: /${{ github.event.repository.name }}/
       - run: bash scripts/deploy-checks.sh

@@ -1,13 +1,12 @@
 #!/bin/bash
-# Runs the full verification sequence shared by CI and release.
+# Runs the core verification sequence shared by CI and release
 #
-# CI and release must validate identically: a release that skips a check CI runs
-# can ship what CI would have rejected. Keeping the sequence here instead of
-# duplicated in each workflow makes that divergence impossible, and lets a
-# maintainer reproduce the exact CI run locally with one command.
+# Browser verification remains in scripts/verify-browser.sh so CI can run the
+# two expensive jobs concurrently. scripts/verify-ready.sh runs both against a
+# clean committed HEAD and records the exact verified commit
 #
 # Chain with scripts/deploy-checks.sh and scripts/release-artifacts.sh for the
-# additional release-only steps.
+# additional release-only steps
 set -euo pipefail
 
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

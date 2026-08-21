@@ -20,6 +20,8 @@
   },
   "scripts": {
     "install:ci": "bash scripts/install-ci.sh",
+    "install:hooks": "bash scripts/install-git-hooks.sh",
+    "verify:ready": "bash scripts/verify-ready.sh",
     "preversion": "bash scripts/preversion.sh",
     "predev": "bash scripts/dev-migrate.sh",
     "dev": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vite",

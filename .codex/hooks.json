@@ -1,0 +1,30 @@
+{
+  "description": "Require exact-commit verification before Stowplan is ready to push",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^Bash$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/verification_gate.py\"",
+            "timeout": 30,
+            "statusMessage": "Checking exact-commit verification"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/verification_gate.py\"",
+            "timeout": 30,
+            "statusMessage": "Checking ready-to-push verification"
+          }
+        ]
+      }
+    ]
+  }
+}

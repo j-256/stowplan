@@ -19,6 +19,6 @@ Read in this order: `README.md`, `AGENTS.md`, this architecture guide, `src/doma
 
 ## Change workflow
 
-State the invariant affected, write or extend a failing regression test, make the smallest domain change, test adapters and offline replay, then update user and maintainer docs in the same commit. For UI work, verify mobile first and avoid hover/drag-only interactions.
+State the invariant affected, write or extend a failing regression test, make the smallest domain change, test adapters and offline replay, then update user and maintainer docs in the same commit. For UI work, verify mobile first and avoid hover/drag-only interactions. Run focused tests before each logical commit. After the final commit, run `npm run verify:ready` and report readiness only when that exact clean `HEAD` passes; an amend or rebase invalidates the recorded proof.
 
 Generated directories (`node_modules`, `.next`, `.open-next`, `dist`, VitePress output, reports) do not belong in Git. Keep the worktree clean at handoff.

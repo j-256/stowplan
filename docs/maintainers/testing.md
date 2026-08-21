@@ -2,6 +2,18 @@
 
 ## Local gates
 
+The final ready-to-push gate runs after the final commit:
+
+```bash
+npm run verify:ready
+```
+
+It requires a clean worktree, installs the versioned pre-push hook, runs `scripts/verify.sh` and `scripts/verify-browser.sh`, rechecks that neither `HEAD` nor the worktree changed, and then records that exact commit at `<common-git-dir>/stowplan/verified-ready/<commit>.json`. The proof is commit-addressed, so amending, rebasing, or adding another commit requires the complete gate again. The pre-push hook checks the actual branch and annotated-tag commits supplied by Git and permits deletions without a proof. It refuses to overwrite an unrelated existing pre-push hook; resolve that hook explicitly before retrying, or run `npm run install:hooks` to test installation by itself.
+
+The project-local Codex hooks add an agent-specific guard: they reject `git push --no-verify`, reject Stowplan pushes unless `HEAD` is exact-verified and the worktree is clean, and continue a turn that tries to claim completion or push readiness before verification. Codex requires review and trust whenever a project hook definition is new or changes; inspect and trust this repository's hooks with `/hooks`. The Git hook remains the client-independent backstop, while both mechanisms are local workflow controls rather than a security boundary against a person deliberately disabling them.
+
+The component commands below are useful when diagnosing a failed final gate. The browser component is included explicitly so a local verification list cannot omit the matrix that CI runs:
+
 ```bash
 npm ci
 npm audit
@@ -18,6 +30,7 @@ npm run test:node-smoke
 npm run test:next-dev-smoke
 npm run build:cloudflare
 npm run build:live-relay
+bash scripts/verify-browser.sh
 npx wrangler deploy --dry-run --config wrangler.jsonc
 bash -n scripts/cloudflare-access.sh scripts/cloudflare-edge.sh scripts/github-pages.sh
 bash scripts/cloudflare-access.sh check

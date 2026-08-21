@@ -102,10 +102,10 @@ tests/               Domain, sync, adapter, offline, and auth tests
 
 ```bash
 npm ci
-bash scripts/verify.sh
+npm run verify:ready
 ```
 
-CI runs exactly this sequence, so a local pass reproduces it. CI and release also validate the deployment automation and build the release artifacts, which a release then publishes:
+Run the final gate after committing. It requires a clean worktree, installs the repository's pre-push hook, runs the core sequence and complete browser matrix, and records the exact verified commit in Git metadata. Amending or rebasing creates a different commit and requires another run. CI invokes the same core and browser scripts in parallel. Release validation also checks deployment automation and builds the artifacts a release publishes:
 
 ```bash
 bash scripts/deploy-checks.sh

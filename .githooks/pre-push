@@ -1,0 +1,23 @@
+#!/bin/bash
+# Managed by Stowplan local verification
+set -euo pipefail
+
+repository="$(git rev-parse --show-toplevel)"
+readonly repository
+
+while read -r local_ref local_oid _remote_ref _remote_oid; do
+  if [[ "${local_oid}" =~ ^0+$ ]]; then
+    continue
+  fi
+
+  commit="$(git rev-parse --verify "${local_oid}^{commit}" 2>/dev/null)" || {
+    echo "Push blocked: ${local_ref} does not resolve to a commit" >&2
+    exit 1
+  }
+
+  if ! python3 "${repository}/scripts/verification-state.py" \
+    check --quiet "${commit}"; then
+    echo "Push blocked: run npm run verify:ready for the exact commit being pushed" >&2
+    exit 1
+  fi
+done

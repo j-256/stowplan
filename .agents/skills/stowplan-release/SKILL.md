@@ -61,7 +61,7 @@ Run the repository-local preparation gate:
 bash "$(git rev-parse --show-toplevel)/.agents/skills/stowplan-release/scripts/prepare-release.sh" "$(git rev-parse --show-toplevel)"
 ```
 
-The gate runs the repository's complete verification sequence, removes only the exact Next development block mechanically appended to an initially clean `AGENTS.md`, requires the tree to return clean, validates the compiled documentation origin, and writes the Sites archive at `<repository-root>/work/stowplan-sites.tar.gz`.
+The gate runs the repository's complete core and browser verification sequence for the exact prepared `HEAD`, records that commit in Git metadata, removes only the exact Next development block mechanically appended to an initially clean `AGENTS.md`, requires the tree to return clean, validates the compiled documentation origin, and writes the Sites archive at `<repository-root>/work/stowplan-sites.tar.gz`.
 
 Stop on any failure. Do not weaken, skip, or rerun a narrower substitute for a failed gate.
 
