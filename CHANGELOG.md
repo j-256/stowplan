@@ -2,6 +2,14 @@
 
 All notable changes follow Keep a Changelog. Versions use Semantic Versioning.
 
+## [1.2.1] - 2026-08-21
+
+### Fixed
+
+- Made immediate server workspace deletion discoverable from owner workspace cards while preserving the guarded confirmation flow.
+- Distinguished Cloudflare Access from the required Stowplan sign-in and administrator role, with actionable recovery guidance when the app session is missing.
+- Kept account sign-in available from the welcome page before a workspace exists locally, returning authenticated users to their online workspace catalog.
+
 ## [1.2.0] - 2026-08-16
 
 ### Added
