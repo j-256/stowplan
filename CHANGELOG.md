@@ -2,6 +2,17 @@
 
 All notable changes follow Keep a Changelog. Versions use Semantic Versioning.
 
+## [1.2.2] - 2026-08-21
+
+### Changed
+
+- Added commit-addressed local verification and pre-push guards that require the complete core and browser gates to pass for the exact source or release tag being pushed.
+
+### Fixed
+
+- Kept workspace and administration routes inside one responsive application frame so navigation, theme, sidebar, and account controls remain available across route changes.
+- Made direct release-skill invocation enter the same authorized Stowplan publication workflow as a plain-language release request.
+
 ## [1.2.1] - 2026-08-21
 
 ### Fixed
