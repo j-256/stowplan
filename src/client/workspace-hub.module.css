@@ -300,6 +300,12 @@
   justify-content: flex-end;
 }
 
+@media (max-width: 900px) {
+  .toolbar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 @media (max-width: 760px) {
   .hub {
     padding:

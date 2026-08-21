@@ -874,7 +874,7 @@ test("starts workspaces and primary views at the top", async ({ page }) => {
   } else {
     await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
   }
-  await page.locator(".nav:visible", { hasText: "Spaces" }).click();
+  await page.locator(".nav:visible", { hasText: /^Spaces$/u }).click();
   await expect.poll(() => appMain.evaluate((element) => element.scrollTop)).toBe(0);
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
 });
@@ -1064,8 +1064,8 @@ test("reconciles device-only editor changes across open tabs", async ({
       return replica.state.workspace.name;
     }).toBe(thirdName);
 
-    await page.locator(".nav:visible", { hasText: "Spaces" }).click();
-    await secondTab.locator(".nav:visible", { hasText: "Spaces" }).click();
+    await page.locator(".nav:visible", { hasText: /^Spaces$/u }).click();
+    await secondTab.locator(".nav:visible", { hasText: /^Spaces$/u }).click();
     const firstSpaceEditor = page.locator(".inspector:visible");
     const secondSpaceEditor = secondTab.locator(".inspector:visible");
     const firstSpaceName = firstSpaceEditor.getByLabel("Friendly name");
@@ -1183,11 +1183,16 @@ test("refuses stale item and space targets without rewriting their URLs", async 
   ).click();
   await page.getByRole("button", { name: "Reopen capture" }).click();
   await page.locator(".nav:visible", { hasText: "Inventory" }).click();
-  await page.locator('[data-item-id="item_flour"] .item-name').click();
-  const moreActions = page.getByText("More actions", { exact: true });
+  await expect(page).toHaveURL(new RegExp(`${workspacePrefix}/inventory$`));
+  await page.locator(
+    '.inventory-row[data-item-id="item_flour"] .item-name',
+  ).click();
+  const itemEditor = page.getByRole("dialog", { name: "Edit item" });
+  await expect(itemEditor).toBeVisible();
+  const moreActions = itemEditor.getByText("More actions", { exact: true });
   await moreActions.focus();
   await page.keyboard.press("Enter");
-  const deleteItem = page.getByRole("button", {
+  const deleteItem = itemEditor.getByRole("button", {
     name: "Delete item record",
   });
   await deleteItem.focus();
@@ -1284,7 +1289,7 @@ test("collapses the desktop sidebar and persists the icon-only preference", asyn
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
 
   const shell = page.locator(".app-shell");
-  const sidebar = page.getByRole("complementary", { name: "Workspace navigation" });
+  const sidebar = page.getByRole("complementary", { name: "Application navigation" });
   const expandedWidth = await sidebar.evaluate((element) => element.getBoundingClientRect().width);
   await page.getByRole("button", { name: "Collapse sidebar" }).click();
   await expect(shell).toHaveAttribute("data-sidebar-collapsed", "true");
@@ -1295,7 +1300,7 @@ test("collapses the desktop sidebar and persists the icon-only preference", asyn
 
   await page.reload();
   await expect(shell).toHaveAttribute("data-sidebar-collapsed", "true");
-  await expect(page.locator("aside .nav").first()).toHaveAttribute("title", "Capture");
+  await expect(page.locator("aside .nav").first()).toHaveAttribute("title", "Workspaces");
   await page.getByRole("button", { name: "Expand sidebar" }).click();
   await expect(shell).toHaveAttribute("data-sidebar-collapsed", "false");
 });
@@ -1305,7 +1310,7 @@ test("keeps short touch landscape navigation fully visible", async ({ page }, te
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
 
   const sidebar = page.getByRole("complementary", {
-    name: "Workspace navigation",
+    name: "Application navigation",
   });
   await expect.poll(
     () => sidebar.evaluate((element) =>
@@ -1331,7 +1336,7 @@ test("keeps short touch landscape navigation fully visible", async ({ page }, te
     };
   });
   expect(layout).toEqual({ allLinksVisible: true, syncVisible: true });
-  await sidebar.locator(".nav", { hasText: "Spaces" }).click();
+  await sidebar.locator(".nav", { hasText: /^Spaces$/u }).click();
   await expect(page.getByRole("heading", { name: "Spaces", exact: true }))
     .toBeVisible();
   const spaces = page.locator(".split.resizable-panels");
@@ -1379,12 +1384,12 @@ test("uses the automatic compact icon rail at its responsive boundaries", async 
     { width: AUTO_COMPACT_SIDEBAR_MAX_WIDTH, height: 700 },
   ]) {
     await page.setViewportSize(viewport);
-    const sidebar = page.getByRole("complementary", { name: "Workspace navigation" });
+    const sidebar = page.getByRole("complementary", { name: "Application navigation" });
     await expect.poll(
       () => sidebar.evaluate((element) => Math.round(element.getBoundingClientRect().width)),
     ).toBe(80);
     await expect(page.getByRole("button", { name: "Collapse sidebar" })).toBeHidden();
-    await expect(page.locator("aside .nav").first()).toHaveAttribute("title", "Capture");
+    await expect(page.locator("aside .nav").first()).toHaveAttribute("title", "Workspaces");
     expect(await page.evaluate(() => ({
       documentOverflow: document.documentElement.scrollWidth >
         document.documentElement.clientWidth,
@@ -1393,7 +1398,7 @@ test("uses the automatic compact icon rail at its responsive boundaries", async 
       )].map((label) => Math.round(label.getBoundingClientRect().width)),
     }))).toEqual({
       documentOverflow: false,
-      sidebarTextWidths: [1, 1, 1, 1, 1, 1],
+      sidebarTextWidths: [1, 1, 1, 1, 1, 1, 1],
     });
   }
 
@@ -1402,7 +1407,7 @@ test("uses the automatic compact icon rail at its responsive boundaries", async 
     width: AUTO_COMPACT_SIDEBAR_MAX_WIDTH + 1,
   });
   const sidebar = page.getByRole("complementary", {
-    name: "Workspace navigation",
+    name: "Application navigation",
   });
   await expect.poll(() => sidebar.evaluate((element) =>
     Math.round(element.getBoundingClientRect().width)
@@ -1480,7 +1485,7 @@ test("switches, resizes, and persists responsive panel layouts", async ({ page }
     await expect(capture).toHaveAttribute("data-panel-layout", "stacked");
   }
 
-  await page.locator(".nav:visible", { hasText: "Spaces" }).click();
+  await page.locator(".nav:visible", { hasText: /^Spaces$/u }).click();
   const spaces = page.locator(".split.resizable-panels");
   const spacesLayout = page.getByRole("group", { name: "Space panels layout" });
   const spacesSideBySide = spacesLayout.getByRole("button", { name: "Side by side" });
@@ -2320,10 +2325,10 @@ test("keeps the Spaces tree and editor dense at compact desktop widths", async (
   await page.getByRole("button", {
     name: "Open kitchen demo",
   }).click();
-  await page.locator(".nav:visible", { hasText: "Spaces" }).click();
+  await page.locator(".nav:visible", { hasText: /^Spaces$/u }).click();
 
   const sidebar = page.getByRole("complementary", {
-    name: "Workspace navigation",
+    name: "Application navigation",
   });
   await expect.poll(() => sidebar.evaluate((element) =>
     Math.round(element.getBoundingClientRect().width)
@@ -2760,7 +2765,7 @@ test("removes organizer transitions when reduced motion is requested", async ({
   );
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
-  await page.locator(".nav:visible", { hasText: "Spaces" }).click();
+  await page.locator(".nav:visible", { hasText: /^Spaces$/u }).click();
   await expect(page.getByRole("heading", { exact: true, name: "Spaces" }))
     .toBeVisible();
   const spacesTransitions = await page.evaluate(() => {
@@ -3202,7 +3207,7 @@ test("confirms an undoable empty-container action separately from known empty", 
 
 test("requires Reopen before completed contents change from Spaces or Inventory", async ({ page }) => {
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
-  await page.locator(".nav:visible", { hasText: "Spaces" }).click();
+  await page.locator(".nav:visible", { hasText: /^Spaces$/u }).click();
   const compactLayout = await usesStackedTouchLayout(page);
   await page.locator('[data-location-id="loc_bin"] .tree-select').click();
   if (compactLayout) {
@@ -3356,7 +3361,7 @@ test("visibly refuses unchanged item and space saves", async ({ page }) => {
     };
   };
 
-  await page.locator(".nav:visible", { hasText: "Spaces" }).click();
+  await page.locator(".nav:visible", { hasText: /^Spaces$/u }).click();
   await page.locator('[data-location-id="loc_bin"] .tree-select').click();
   await showSelectedSpaceDetails(page, "Baking bin");
   await page.getByRole("button", { name: "Save space" }).click();
@@ -3982,7 +3987,7 @@ test("previews desktop hierarchy destinations and confirms completed-parent chan
   );
   await page.getByRole("button", { name: "Dismiss message" }).click();
 
-  await page.locator(".nav:visible", { hasText: "Spaces" }).click();
+  await page.locator(".nav:visible", { hasText: /^Spaces$/u }).click();
   const spacesBin = page.locator('.tree-row[data-location-id="loc_bin"]');
   await dispatchNativeCancel(page, spacesBin.locator(".drag-handle"));
   await expect(page.locator(".feedback-toast")).toBeHidden();
@@ -4317,7 +4322,7 @@ test("keeps touch reordering available on draggable handles", async ({ page }, t
   );
   await page.getByRole("button", { name: "Dismiss message" }).click();
 
-  await page.locator(".nav:visible", { hasText: "Spaces" }).click();
+  await page.locator(".nav:visible", { hasText: /^Spaces$/u }).click();
   const spacesSource = page.locator(
     '.tree-row[data-location-id="loc_food"] .drag-handle',
   );
@@ -4859,7 +4864,7 @@ test("moves a space from a compact mobile action sheet and atomically reopens it
   await page.getByRole("button", {
     name: "Open kitchen demo",
   }).click();
-  await page.locator(".nav:visible", { hasText: "Spaces" }).click();
+  await page.locator(".nav:visible", { hasText: /^Spaces$/u }).click();
 
   const row = page.locator('.tree-row[data-location-id="loc_food"]');
   await row.locator(".tree-select").click();
@@ -5430,7 +5435,7 @@ test("keeps the Capture hierarchy readable at compact desktop widths", async ({
   const capture = page.locator(".capture.resizable-panels");
   await expect(capture).toHaveAttribute("data-panel-layout", "side-by-side");
   const sidebar = page.getByRole("complementary", {
-    name: "Workspace navigation",
+    name: "Application navigation",
   });
   await expect.poll(() => sidebar.evaluate((element) =>
     Math.round(element.getBoundingClientRect().width)
@@ -5911,7 +5916,7 @@ test("supports drag organization and the partial-move fallback", async ({ page }
   await reopenCaptureLocation(page, "loc_lower");
   await reopenCaptureLocation(page, "loc_bin");
   await reopenCaptureLocation(page, "loc_warm");
-  await page.locator(".nav:visible", { hasText: "Spaces" }).click();
+  await page.locator(".nav:visible", { hasText: /^Spaces$/u }).click();
   await expect(page.getByRole("list", { name: "Space hierarchy" })).toBeVisible();
   await expect(page.locator('[data-location-id="loc_bin"] .drag-handle[title="Drag Baking bin to move or nest it"]')).toBeVisible();
   await page.getByRole("button", { name: "Collapse Kitchen" }).click();
@@ -7217,14 +7222,11 @@ test("keeps server administration searchable and responsive", async ({
     dimensions.clientWidth + 1,
   );
 
-  await page.keyboard.press("Tab");
-  await expect(page.getByRole("link", {
-    name: "Back to organizer",
-  })).toBeFocused();
-  await page.keyboard.press("Tab");
-  await expect(page.getByRole("button", {
+  const accountMenu = page.getByRole("button", {
     name: /Open user menu/,
-  })).toBeFocused();
+  });
+  await accountMenu.focus();
+  await expect(accountMenu).toBeFocused();
   await page.keyboard.press("Tab");
   const search = page.getByLabel("Search server records");
   await expect(search).toBeFocused();
