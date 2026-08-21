@@ -1,15 +1,18 @@
 ---
 name: stowplan-release
-description: Release the Stowplan main branch through its GitHub origin and OpenAI Sites production project, including release-equivalent verification, exact-source artifact packaging, non-force source and version-tag pushes, GitHub Release publication with an SBOM, Sites version save and deploy, and live browser smoke tests. Use only when the user explicitly invokes $stowplan-release.
+description: Prepare and release the Stowplan main branch through its GitHub origin and OpenAI Sites production project, including the changelog and Semantic Versioning lifecycle, release-equivalent verification, exact-source artifact packaging, non-force source and version-tag pushes, GitHub Release publication with an SBOM, Sites version save and deploy, and live browser smoke tests. Use only when the user explicitly invokes $stowplan-release.
 ---
 
 # Release Stowplan
 
-Release the clean `main` branch through GitHub and the public Stowplan Sites project, then verify both publication surfaces end to end.
+Prepare a version from the clean `main` branch, release it through GitHub and the public Stowplan Sites project, then verify both publication surfaces end to end.
 
-## Treat invocation as release authorization
+## Treat invocation as preparation and release authorization
 
-An explicit invocation authorizes all ordinary release writes in this workflow:
+An explicit invocation authorizes the narrowly scoped preparation and publication writes in this workflow:
+
+- Update `CHANGELOG.md` from the unreleased commits and commit only that file when a version is not already prepared
+- Run `npm version <major|minor|patch>` so npm creates the version commit and local annotated tag
 
 - Push the verified `main` commit to `origin` with an ordinary non-force push when needed
 - Push that same commit to the Sites source repository with an ordinary non-force push when needed
@@ -17,9 +20,9 @@ An explicit invocation authorizes all ordinary release writes in this workflow:
 - Save a Sites version with the exact verified archive
 - Deploy that saved version to public production
 
-Do not ask for duplicate confirmation before those actions. Invocation does not authorize creating or amending commits, merging, rebasing, force-pushing, changing environment variables, rolling back, deleting versions, or changing access and domain configuration.
+Do not ask for duplicate confirmation before those actions. Invocation does not authorize any other commit, amending, merging, rebasing, force-pushing, changing environment variables, rolling back, deleting or moving tags or versions, or changing access and domain configuration.
 
-Prepare the version before invoking this skill: update and commit `CHANGELOG.md`, then run `npm version <major|minor|patch>` from clean `main`. The repository's `preversion` lifecycle rejects other branches, and npm creates the version commit and local annotated tag with its default `%s` message and `v` prefix. Validate and push that tag in this workflow; never create or rewrite it here.
+Use the version increment named by the user when the invocation specifies `major`, `minor`, or `patch`; otherwise default to `patch`. If a complete unpublished npm-created version tag already exists at `HEAD`, resume that prepared release instead of incrementing it again. Never guess through partial or contradictory changelog, package-version, commit, or tag state.
 
 ## Load the release surfaces
 
@@ -33,15 +36,22 @@ Prepare the version before invoking this skill: update and commit `CHANGELOG.md`
 ## Preflight Git
 
 1. Require branch `main` and a completely clean tracked and untracked worktree. Ignored build outputs are allowed.
-2. Fetch `origin/main` without changing the checkout.
+2. Fetch `origin/main` and tags without changing the checkout.
 3. Require `origin/main` to equal `HEAD` or be an ancestor of `HEAD`. Stop if local `main` is behind or diverged.
-4. Record the full `HEAD` commit and do not permit it to change during the workflow.
-5. Read the release version from `package.json`, require the root versions in `package-lock.json` to match it, require a matching `CHANGELOG.md` version entry, and derive the release tag as `v<version>`. Require a stable Semantic Versioning release in `MAJOR.MINOR.PATCH` form.
-6. Require the `preversion` lifecycle to reject non-`main` branches and project npm configuration to set `git-tag-version=true`, `message=%s`, and `tag-version-prefix=v`.
-7. Require a local annotated release tag that dereferences to the recorded commit and whose annotation subject is the unprefixed release version. Stop and request a committed `npm version` update if it is absent or mismatched.
-8. Require the release tag to be absent from `origin` and GitHub Releases. Stop if either already exists; never move, delete, or recreate the tag.
-9. Inspect Sites project metadata and require the existing `stowplan` project, owner access, public mode, and custom live URL `https://stowplan.lasers.app`.
-10. Read Sites environment metadata without printing secret values. A missing `NEXT_PUBLIC_DOCS_URL` is valid because the source default is canonical. Stop if it overrides the docs base to anything except `https://docs.stowplan.lasers.app/`. Do not mutate the environment.
+4. Require the `preversion` lifecycle to reject non-`main` branches and project npm configuration to set `git-tag-version=true`, `message=%s`, and `tag-version-prefix=v`.
+5. Resolve the repository from `origin`, then inspect its stable version tags and GitHub Releases rather than assuming the package version is published or unpublished.
+6. Inspect Sites project metadata and require the existing `stowplan` project, owner access, public mode, and custom live URL `https://stowplan.lasers.app`.
+7. Read Sites environment metadata without printing secret values. A missing `NEXT_PUBLIC_DOCS_URL` is valid because the source default is canonical. Stop if it overrides the docs base to anything except `https://docs.stowplan.lasers.app/`. Do not mutate the environment.
+
+## Prepare or resume the version
+
+1. First check for a complete prepared release at `HEAD`: `package.json` and both root versions in `package-lock.json` contain the same stable `MAJOR.MINOR.PATCH` version, `CHANGELOG.md` has that version entry, and the local annotated `v<version>` tag dereferences to `HEAD` with the unprefixed version as its annotation subject. Resume it only when that tag is absent from both `origin` and GitHub Releases.
+2. Otherwise require the declared package version and its reachable tag to identify the latest published stable release, require at least one unreleased commit after it, and require no other unpublished stable version tag in that range. Stop on a partial prior preparation instead of amending commits or deleting, moving, or recreating a tag.
+3. Use the requested version increment, defaulting to `patch`, and derive the target version with npm's Semantic Versioning rules. Require the target version and `v<version>` tag to be absent from the changelog, local tags, `origin`, and GitHub Releases.
+4. Summarize the actual user-visible changes since the latest published tag in a dated Keep a Changelog entry for the target version. Use only the `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, and `Security` sections that the changes warrant; do not turn commit subjects into invented claims.
+5. Inspect the complete worktree and staged diffs, then stage and commit only `CHANGELOG.md` with subject `docs(release): add <version> changelog`. Require the worktree to be clean afterward.
+6. Run `npm version <major|minor|patch>` without flags that alter npm's configured commit or tag behavior. Require its version commit to change only `package.json` and `package-lock.json`, require all package versions to equal the target, and require the local annotated tag to dereference to the new `HEAD` with the unprefixed version as its annotation subject.
+7. Record the full prepared `HEAD` commit and do not permit it to change during verification or publication. Require the release tag to remain absent from `origin` and GitHub Releases.
 
 ## Verify and package
 
@@ -95,4 +105,4 @@ Use a new isolated browser session so an older client bundle cannot satisfy the 
 
 ## Finish
 
-Require the Git worktree to be clean. Report the released commit and tag, GitHub release URL and workflow result, SBOM attachment result, Sites version number, production URL, complete verification result, and live smoke-test result. Send a Hero notification for success and a Sosumi notification only when a real blocker needs attention.
+Require the Git worktree to be clean. Report whether the version was prepared or resumed, the released commit and tag, GitHub release URL and workflow result, SBOM attachment result, Sites version number, production URL, complete verification result, and live smoke-test result. Send a Hero notification for success and a Sosumi notification only when a real blocker needs attention.
