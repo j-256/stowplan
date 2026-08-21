@@ -7,6 +7,9 @@ import {
   workspacePath,
 } from "../domain/app-url";
 import {
+  SERVER_WORKSPACE_DELETION_FRAGMENT,
+} from "../shared/workspace-deletion";
+import {
   AccountMenu,
   type AccountMenuState,
 } from "./account-menu";
@@ -389,6 +392,8 @@ export function WorkspaceHub({
           workspaceId: card.id,
           workspaceLabel: card.name,
         });
+        const deletionPath =
+          `${accessPath}#${SERVER_WORKSPACE_DELETION_FRAGMENT}`;
         const unavailableOffline =
           card.presence === "server-only" && !online;
         const current = card.id === currentId;
@@ -441,6 +446,13 @@ export function WorkspaceHub({
                 </button>}
             {serverBacked && card.access.status === "active" &&
               <a href={accessPath}>Workspace access</a>}
+            {serverBacked &&
+              card.access.status === "active" &&
+              online &&
+              card.capabilities.delete &&
+              <a className="danger" href={deletionPath}>
+                Delete server workspace
+              </a>}
             {card.blocked > 0 &&
               <button
                 disabled={busyId === `recovery:${card.id}`}

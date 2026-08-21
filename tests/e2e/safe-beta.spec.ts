@@ -17,6 +17,9 @@ import {
   test,
 } from "./safe-beta-fixtures";
 import { ACCOUNT_CONTEXT_HEADER } from "../../src/shared/account-context";
+import {
+  SERVER_WORKSPACE_DELETION_FRAGMENT,
+} from "../../src/shared/workspace-deletion";
 
 const CHROMIUM_RESPONSIVE_PROJECTS = Object.freeze([
   "mobile-chromium",
@@ -2021,22 +2024,29 @@ test(
       workspace.summary.id,
       "viewer",
     );
-    await page.goto(workspacePath({
+    const accessPath = workspacePath({
       view: "access",
       workspaceId: workspace.summary.id,
       workspaceLabel: workspace.summary.name,
-    }));
-
-    const openDelete = page.getByRole("button", {
-      name: "Delete server workspace",
     });
-    await expect(openDelete).toBeVisible();
-    await seedRecoveryOutbox(page, workspace.summary.id);
-    await tabTo(page, openDelete);
-    await page.keyboard.press("Enter");
+    await page.goto("/workspaces");
+    const deleteLink = cardFor(page, workspace.summary.name).getByRole(
+      "link",
+      { name: "Delete server workspace" },
+    );
+    await expect(deleteLink).toHaveAttribute(
+      "href",
+      `${accessPath}#${SERVER_WORKSPACE_DELETION_FRAGMENT}`,
+    );
+    await deleteLink.click();
+    await expect(page).toHaveURL(
+      `${accessPath}#${SERVER_WORKSPACE_DELETION_FRAGMENT}`,
+    );
     const deleteDialog = page.getByRole("dialog", {
       name: `Delete ${workspace.summary.name} from the server?`,
     });
+    await expect(deleteDialog).toBeVisible();
+    await seedRecoveryOutbox(page, workspace.summary.id);
     await expect(deleteDialog).toContainText(
       "immediate and not recoverable",
     );

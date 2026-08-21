@@ -66,7 +66,7 @@ Any member can choose **Leave shared workspace** when another active owner remai
 
 **Remove from this device** is appropriate when another usable copy exists. If the workspace was never backed up, the confirmation warns that this browser may hold the only copy.
 
-**Delete server workspace** is owner-only, requires the exact workspace name, and has no server undelete path. Export first. An exported file remains a user-held copy, but it does not restore the deleted online workspace with its former identity or memberships.
+**Delete server workspace** is visible on each active server workspace's owner card in **Your workspaces**. It opens the guarded deletion flow with fresh server access state, requires the exact workspace name, and has no server undelete path. Export first. An exported file remains a user-held copy, but it does not restore the deleted online workspace with its former identity or memberships.
 
 ## If access changes while you are offline
 

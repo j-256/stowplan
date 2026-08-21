@@ -15,6 +15,9 @@ import {
   type WorkspaceRole,
 } from "../domain/workspace-access";
 import { GUEST_LINK_EXPIRY_HOURS } from "../shared/api-quotas";
+import {
+  SERVER_WORKSPACE_DELETION_FRAGMENT,
+} from "../shared/workspace-deletion";
 import { ModalDialog } from "./modal-dialog";
 import styles from "./workspace-access.module.css";
 
@@ -509,7 +512,14 @@ function WorkspaceAccessContent({
   const [pendingTransfer, setPendingTransfer] =
     useState<WorkspaceMember | null>(null);
   const [leaveOpen, setLeaveOpen] = useState(false);
-  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(() =>
+    data.access.role === "owner" &&
+    data.access.capabilities.delete &&
+    !terminalStatus &&
+    typeof window !== "undefined" &&
+    window.location.hash ===
+      `#${SERVER_WORKSPACE_DELETION_FRAGMENT}`
+  );
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const [oneTimeLink, setOneTimeLink] =
     useState<CreateWorkspaceGuestLinkResult | null>(null);
@@ -1467,7 +1477,10 @@ function WorkspaceAccessContent({
               </p>}
         </article>
         {canDelete &&
-          <article className={styles.dangerZone}>
+          <article
+            className={styles.dangerZone}
+            id={SERVER_WORKSPACE_DELETION_FRAGMENT}
+          >
             <h3>Delete server workspace</h3>
             <p>Deletion is immediate and not recoverable. It removes the server snapshot, memberships, and invite records.</p>
             <button

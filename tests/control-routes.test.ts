@@ -65,7 +65,10 @@ import { POST as postGuestConfirmation } from "../app/api/auth/guest/route";
 import { POST as postGuestInvitation } from "../app/api/auth/guest/[token]/route";
 import { POST as postOAuthStart } from "../app/api/auth/[provider]/start/route";
 import { ApiProblem } from "../src/server/api-problem";
-import { TurnstileVerificationError } from "../src/server/auth";
+import {
+  AuthorizationError,
+  TurnstileVerificationError,
+} from "../src/server/auth";
 
 function oversizedRequest(path: string): Request {
   return new Request(`https://stowplan.test${path}`, {
@@ -170,6 +173,37 @@ describe("control route request limits", () => {
       },
     });
   });
+
+  it.each([
+    [
+      new AuthorizationError("Authentication required", 401),
+      "AUTHENTICATION_REQUIRED",
+    ],
+    [
+      new AuthorizationError(
+        "Cloudflare Access identity must match the app session",
+        403,
+      ),
+      "ADMIN_REQUIRED",
+    ],
+  ])(
+    "returns coded private admin overview authorization failures",
+    async (failure, code) => {
+      mocks.authorizeAdmin.mockRejectedValueOnce(failure);
+
+      const response = await getAdminOverview(new Request(
+        "https://stowplan.test/api/admin/overview",
+      ));
+
+      expect(response.status).toBe(failure.status);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      await expect(response.json()).resolves.toEqual({
+        code,
+        error: failure.message,
+      });
+      expect(mocks.adminOverview).not.toHaveBeenCalled();
+    },
+  );
 
   it("keeps OAuth start redirects with one-time state uncached", async () => {
     const response = await postOAuthStart(
@@ -821,8 +855,14 @@ describe("control route request limits", () => {
 
     expect(response.status).toBe(500);
     expect(response.headers.get("cache-control")).toBe("no-store");
-    const body = await response.json() as { error: string };
-    expect(body.error).toBe("Could not load administrative data");
+    const body = await response.json() as {
+      code: string;
+      error: string;
+    };
+    expect(body).toEqual({
+      code: "INTERNAL_ERROR",
+      error: "Could not load administrative data",
+    });
     expect(JSON.stringify(body)).not.toContain("private_hash");
     expect(JSON.stringify(body)).not.toContain("SQLITE");
 

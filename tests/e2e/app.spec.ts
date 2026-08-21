@@ -6576,6 +6576,43 @@ test("surfaces a background backup failure on mobile", async ({ page }, testInfo
   );
 });
 
+test("distinguishes Cloudflare Access from Stowplan admin sign-in", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "desktop-chromium",
+    "One desktop project covers administrator sign-in recovery",
+  );
+  await page.route("**/api/admin/overview*", (route) => route.fulfill({
+    body: JSON.stringify({
+      code: "AUTHENTICATION_REQUIRED",
+      error: "Authentication required",
+    }),
+    contentType: "application/json",
+    status: 401,
+  }));
+
+  await page.goto("/admin");
+  const alert = page.getByRole("alert").filter({
+    hasText: "Stowplan sign-in required",
+  });
+  await expect(alert).toContainText(
+    "Cloudflare Access and Stowplan sign-in are separate",
+  );
+  await expect(alert).toContainText(
+    "Sign in with Google using the same email",
+  );
+  await expect(alert).not.toContainText(
+    "needs a configured server database plus an authenticated app administrator",
+  );
+  await expect(alert.getByRole("link", {
+    name: "Sign in to Stowplan",
+  })).toHaveAttribute("href", "/account?returnTo=/admin");
+  await expect(alert.getByRole("button", {
+    name: "Try again",
+  })).toBeEnabled();
+});
+
 test("keeps redacted post-ban accounts disabled in administration", async ({
   page,
 }, testInfo) => {

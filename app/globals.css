@@ -503,6 +503,7 @@
 .admin-filter-note button{min-height:44px}
 .admin-page section[id]{scroll-margin-top:16px}
 .admin-page section[id]:focus{outline:3px solid var(--clay);outline-offset:5px}
+.admin-error-actions{display:flex;flex-wrap:wrap;gap:8px}.admin-error-actions a,.admin-error-actions button{justify-content:center;margin:0;width:auto}.admin-error-actions a{border:1px solid var(--line);border-radius:10px;padding:10px 14px;text-decoration:none}.admin-error-actions a.primary{color:var(--panel)}
 .admin-inventory>a{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px;min-height:58px;padding:11px 13px;border-bottom:1px solid var(--line);color:var(--ink);text-decoration:none}
 .admin-inventory>a:last-child{border-bottom:0}
 .admin-inventory>a:hover{background:var(--sage2)}

@@ -11,6 +11,7 @@ import {
   useState,
 } from "react";
 import { AccountMenu } from "../../src/client/account-menu";
+import { FULL_DOCUMENTATION_URL } from "../../src/client/external-links";
 import { ModalDialog } from "../../src/client/modal-dialog";
 import { workspacePath } from "../../src/domain/app-url";
 import {
@@ -101,6 +102,20 @@ interface Overview {
   workspaces?: Row[];
 }
 
+interface AdminLoadProblem {
+  code: string | null;
+  message: string;
+}
+
+interface AdminLoadRecovery {
+  detail: string;
+  guideHref: string;
+  guideLabel: string;
+  primaryHref?: string;
+  primaryLabel?: string;
+  title: string;
+}
+
 type AdminResource =
   | "audit"
   | "deletions"
@@ -117,6 +132,12 @@ type OverviewListField = Exclude<
   keyof Overview,
   "databaseInventory" | "limits" | "listInfo" | "query"
 >;
+
+const ADMIN_PROBLEM_CODE = Object.freeze({
+  ADMIN_REQUIRED: "ADMIN_REQUIRED",
+  AUTHENTICATION_REQUIRED: "AUTHENTICATION_REQUIRED",
+  STORAGE_UNAVAILABLE: "STORAGE_UNAVAILABLE",
+});
 
 const OVERVIEW_FIELD_BY_RESOURCE = Object.freeze({
   audit: "audit",
@@ -266,12 +287,64 @@ function focusAdminFragment(): boolean {
   return true;
 }
 
+function fallbackAdminProblemCode(status: number): string | null {
+  if (status === 401) {
+    return ADMIN_PROBLEM_CODE.AUTHENTICATION_REQUIRED;
+  }
+  if (status === 403) return ADMIN_PROBLEM_CODE.ADMIN_REQUIRED;
+  if (status === 503) return ADMIN_PROBLEM_CODE.STORAGE_UNAVAILABLE;
+  return null;
+}
+
+function adminLoadRecovery(
+  problem: AdminLoadProblem,
+): AdminLoadRecovery {
+  if (
+    problem.code === ADMIN_PROBLEM_CODE.AUTHENTICATION_REQUIRED
+  ) {
+    return {
+      detail: "Cloudflare Access and Stowplan sign-in are separate. This browser does not have an active Stowplan app session. Sign in with Google using the same email, then Stowplan will return you here.",
+      guideHref:
+        `${FULL_DOCUMENTATION_URL}auth/cloudflare-access`,
+      guideLabel: "Why two sign-ins are required",
+      primaryHref: "/account?returnTo=/admin",
+      primaryLabel: "Sign in to Stowplan",
+      title: "Stowplan sign-in required",
+    };
+  }
+  if (problem.code === ADMIN_PROBLEM_CODE.ADMIN_REQUIRED) {
+    return {
+      detail: "Stowplan found an app session, but the database administrator role or Cloudflare Access identity check did not pass. Review the signed-in account, then retry with the same Google and Access email.",
+      guideHref: `${FULL_DOCUMENTATION_URL}guide/admin`,
+      guideLabel: "Review administrator requirements",
+      primaryHref: "/account?returnTo=/admin",
+      primaryLabel: "Review Stowplan account",
+      title: problem.message,
+    };
+  }
+  if (problem.code === ADMIN_PROBLEM_CODE.STORAGE_UNAVAILABLE) {
+    return {
+      detail: `${problem.message}. The admin control plane could not verify its required server state. Retry, then inspect the deployment if the problem continues.`,
+      guideHref: `${FULL_DOCUMENTATION_URL}deploy/cloudflare`,
+      guideLabel: "Open deployment guidance",
+      title: "Administrator service unavailable",
+    };
+  }
+  return {
+    detail: "Retry the request. If it still fails, inspect the administrator and deployment guidance before changing server state.",
+    guideHref: `${FULL_DOCUMENTATION_URL}guide/admin`,
+    guideLabel: "Open administrator guidance",
+    title: problem.message,
+  };
+}
+
 export default function AdminPage() {
   const router = useRouter();
   const [data, setData] = useState<Overview | null>(null);
   const [draftQuery, setDraftQuery] = useState("");
   const [query, setQuery] = useState("");
-  const [loadError, setLoadError] = useState("");
+  const [loadProblem, setLoadProblem] =
+    useState<AdminLoadProblem | null>(null);
   const [actionError, setActionError] = useState("");
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
@@ -303,12 +376,19 @@ export default function AdminPage() {
         },
       );
       const body = await response.json().catch(() => null) as
-        | (Overview & { error?: string })
+        | (Overview & { code?: string; error?: string })
         | null;
       if (!response.ok) {
-        throw new Error(
-          body?.error ?? `Could not load admin data (${response.status})`,
-        );
+        if (requestId !== loadRequest.current) return false;
+        setLoadProblem({
+          code: typeof body?.code === "string"
+            ? body.code
+            : fallbackAdminProblemCode(response.status),
+          message:
+            body?.error ??
+            `Could not load admin data (${response.status})`,
+        });
+        return false;
       }
       const responseAccountId = response.headers.get(
         ACCOUNT_CONTEXT_HEADER,
@@ -328,15 +408,17 @@ export default function AdminPage() {
       if (!body) throw new Error("Could not read the admin response");
       if (requestId !== loadRequest.current) return false;
       setData(body);
-      setLoadError("");
+      setLoadProblem(null);
       return true;
     } catch (reason) {
       if (requestId !== loadRequest.current) return false;
-      setLoadError(
-        reason instanceof Error && reason.message
-          ? reason.message
-          : "Could not load admin data",
-      );
+      setLoadProblem({
+        code: null,
+        message:
+          reason instanceof Error && reason.message
+            ? reason.message
+            : "Could not load admin data",
+      });
       return false;
     } finally {
       if (requestId === loadRequest.current) setLoading(false);
@@ -549,6 +631,9 @@ export default function AdminPage() {
       {pendingPage === resource ? "Loading..." : `Load more ${label}`}
     </button>;
   };
+  const loadRecovery = loadProblem
+    ? adminLoadRecovery(loadProblem)
+    : null;
 
   return <main className="admin-page">
     <header>
@@ -614,12 +699,28 @@ export default function AdminPage() {
         Clear
       </button>
     </p>}
-    {loadError && <div className="admin-error" role="alert">
-      <strong>{loadError}</strong>
-      {!data && <>
-        <p>The admin panel needs a configured server database plus an authenticated app administrator.</p>
-        <Link href="/account?returnTo=/admin">Sign in or inspect server setup</Link>
-        <Link href="/docs/">Open the testing guide</Link>
+    {loadProblem && <div className="admin-error" role="alert">
+      <strong>{!data && loadRecovery
+        ? loadRecovery.title
+        : loadProblem.message}</strong>
+      {!data && loadRecovery && <>
+        <p>{loadRecovery.detail}</p>
+        <div className="admin-error-actions">
+          {loadRecovery.primaryHref && loadRecovery.primaryLabel &&
+            <Link className="primary" href={loadRecovery.primaryHref}>
+              {loadRecovery.primaryLabel}
+            </Link>}
+          <button
+            disabled={loading}
+            onClick={() => void load(query)}
+            type="button"
+          >
+            {loading ? "Retrying..." : "Try again"}
+          </button>
+          <Link href={loadRecovery.guideHref}>
+            {loadRecovery.guideLabel}
+          </Link>
+        </div>
       </>}
     </div>}
     {actionError && <div className="admin-error" role="alert">

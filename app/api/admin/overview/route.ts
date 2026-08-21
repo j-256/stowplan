@@ -18,16 +18,17 @@ import {
 import { runtimeEnv } from "../../../../src/server/runtime";
 import { ACCOUNT_CONTEXT_HEADER } from "../../../../src/shared/account-context";
 
-const PRIVATE_RESPONSE_HEADERS = { "cache-control": "no-store" };
-
 export async function GET(request: Request) {
   let responseAccountId: string | null = null;
   try {
     const env = await runtimeEnv();
     if (!env.DB) {
-      return Response.json(
-        { error: "Database is not configured" },
-        { headers: PRIVATE_RESPONSE_HEADERS, status: 503 },
+      return apiProblemResponse(
+        new ApiProblem(
+          "STORAGE_UNAVAILABLE",
+          "Database is not configured",
+          503,
+        ),
       );
     }
     const user = await authorizeAdmin(env.DB, env, request);
@@ -54,16 +55,21 @@ export async function GET(request: Request) {
       );
     }
     const authorizationError = error instanceof AuthorizationError;
-    return withAccountContext(Response.json(
-      {
-        error: authorizationError
-          ? error.message
-          : "Could not load administrative data",
-      },
-      {
-        headers: PRIVATE_RESPONSE_HEADERS,
-        status: authorizationError ? error.status : 500,
-      },
-    ), responseAccountId);
+    return withAccountContext(
+      apiProblemResponse(
+        new ApiProblem(
+          authorizationError
+            ? error.status === 401
+              ? "AUTHENTICATION_REQUIRED"
+              : "ADMIN_REQUIRED"
+            : "INTERNAL_ERROR",
+          authorizationError
+            ? error.message
+            : "Could not load administrative data",
+          authorizationError ? error.status : 500,
+        ),
+      ),
+      responseAccountId,
+    );
   }
 }
