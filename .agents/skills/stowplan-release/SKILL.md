@@ -1,15 +1,15 @@
 ---
 name: stowplan-release
-description: Prepare and release the Stowplan main branch through its GitHub origin and OpenAI Sites production project, including the changelog and Semantic Versioning lifecycle, release-equivalent verification, exact-source artifact packaging, non-force source and version-tag pushes, GitHub Release publication with an SBOM, Sites version save and deploy, and live browser smoke tests. Use only when the user explicitly invokes $stowplan-release.
+description: Prepare and release the Stowplan main branch through its GitHub origin and OpenAI Sites production project, including the changelog and Semantic Versioning lifecycle, release-equivalent verification, exact-source artifact packaging, non-force source and version-tag pushes, GitHub Release publication with an SBOM, Sites version save and deploy, and live browser smoke tests. Use when the user asks to perform or resume a Stowplan release; do not treat questions, reviews, or investigations about the release process as authorization to publish.
 ---
 
 # Release Stowplan
 
 Prepare a version from the clean `main` branch, release it through GitHub and the public Stowplan Sites project, then verify both publication surfaces end to end.
 
-## Treat invocation as preparation and release authorization
+## Treat a direct release request as preparation and release authorization
 
-An explicit invocation authorizes the narrowly scoped preparation and publication writes in this workflow:
+A direct user request to perform or resume a Stowplan release, whether expressed as `$stowplan-release` or in ordinary language, authorizes the narrowly scoped preparation and publication writes in this workflow:
 
 - Update `CHANGELOG.md` from the unreleased commits and commit only that file when a version is not already prepared
 - Run `npm version <major|minor|patch>` so npm creates the version commit and local annotated tag
@@ -20,9 +20,9 @@ An explicit invocation authorizes the narrowly scoped preparation and publicatio
 - Save a Sites version with the exact verified archive
 - Deploy that saved version to public production
 
-Do not ask for duplicate confirmation before those actions. Invocation does not authorize any other commit, amending, merging, rebasing, force-pushing, changing environment variables, rolling back, deleting or moving tags or versions, or changing access and domain configuration.
+Do not ask for duplicate confirmation before those actions. The direct release request does not authorize any other commit, amending, merging, rebasing, force-pushing, changing environment variables, rolling back, deleting or moving tags or versions, or changing access and domain configuration.
 
-Use the version increment named by the user when the invocation specifies `major`, `minor`, or `patch`; otherwise default to `patch`. If a complete unpublished npm-created version tag already exists at `HEAD`, resume that prepared release instead of incrementing it again. Never guess through partial or contradictory changelog, package-version, commit, or tag state.
+Use the version increment named by the user when the release request specifies `major`, `minor`, or `patch`; otherwise default to `patch`. If a complete unpublished npm-created version tag already exists at `HEAD`, resume that prepared release instead of incrementing it again. Never guess through partial or contradictory changelog, package-version, commit, or tag state.
 
 ## Load the release surfaces
 
@@ -88,7 +88,7 @@ Stop on any failure. Do not weaken, skip, or rerun a narrower substitute for a f
 Treat the GitHub semantic version and Sites integer version number as independent identifiers. Do not compare or synchronize them; correlate both publications through the recorded full commit and report both versions.
 
 1. Save a new version using the exact project ID, verified full commit, and absolute archive path. Retain the returned opaque version ID and report its human-facing version number.
-2. Deploy only that saved version with the public Sites deployment tool. The explicit skill invocation is the required production approval.
+2. Deploy only that saved version with the public Sites deployment tool. The direct release request is the required production approval.
 3. Poll the exact deployment ID with the exact project and version IDs until `succeeded` or `failed`. Provide concise progress updates at least once per minute.
 4. On failure, stop and report the failure message plus the site, version number, and deployment ID. Do not roll back automatically.
 

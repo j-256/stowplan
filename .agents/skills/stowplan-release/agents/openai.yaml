@@ -1,6 +1,0 @@
-interface:
-  display_name: "Release Stowplan"
-  short_description: "Version and publish Stowplan"
-  default_prompt: "Use $stowplan-release to prepare the next Stowplan version, verify it, publish its GitHub release, deploy Sites, and smoke-test production."
-policy:
-  allow_implicit_invocation: false
