@@ -1,7 +1,6 @@
 .hub {
   margin: 0 auto;
   max-width: 92rem;
-  min-height: 100dvh;
   padding:
     max(1rem, env(safe-area-inset-top))
     max(1rem, env(safe-area-inset-right))
@@ -22,6 +21,11 @@
   max-width: 48rem;
 }
 
+.hub > header h2 {
+  font-size: clamp(1.35rem, 3vw, 1.8rem);
+  letter-spacing: -0.03em;
+}
+
 .headerActions,
 .actions,
 .dialogActions {
@@ -32,10 +36,6 @@
 
 .headerActions {
   justify-content: flex-end;
-}
-
-.accountAction {
-  margin-left: auto;
 }
 
 .guideAction {
@@ -319,29 +319,22 @@
     display: none;
   }
 
-  .hub > header h1 {
+  .hub > header h2 {
     font-size: 1.65rem;
     margin: 0;
   }
 
   .headerActions {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    display: flex;
     width: 100%;
   }
 
-  .accountAction {
-    grid-column: 2;
-    grid-row: 1;
-  }
-
   .guideAction {
-    grid-column: 1;
-    grid-row: 1;
+    flex: 1 1 auto;
   }
 
   .headerActions > button {
-    grid-column: 1 / -1;
+    flex: 1 1 auto;
   }
 
   .toolbar {

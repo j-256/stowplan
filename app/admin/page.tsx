@@ -10,7 +10,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { AccountMenu } from "../../src/client/account-menu";
 import { FULL_DOCUMENTATION_URL } from "../../src/client/external-links";
 import { ModalDialog } from "../../src/client/modal-dialog";
 import { workspacePath } from "../../src/domain/app-url";
@@ -635,17 +634,7 @@ export default function AdminPage() {
     ? adminLoadRecovery(loadProblem)
     : null;
 
-  return <main className="admin-page">
-    <header>
-      <div>
-        <p className="eyebrow">Server-enforced control plane</p>
-        <h1>Stowplan administration</h1>
-      </div>
-      <div className="admin-header-actions">
-        <Link href="/">Back to organizer</Link>
-        <AccountMenu returnTo="/admin" />
-      </div>
-    </header>
+  return <div className="admin-page">
     <form className="admin-toolbar" onSubmit={submitSearch}>
       <label>
         <span>Search server records</span>
@@ -2115,5 +2104,5 @@ export default function AdminPage() {
         </div>
       </ModalDialog>
     </>}
-  </main>;
+  </div>;
 }

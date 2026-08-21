@@ -314,11 +314,11 @@ export function AdminWorkspaceInspector({
   };
 
   if (deletion) {
-    return <main className={styles.page}>
+    return <div className={styles.page}>
       <header className={styles.header}>
         <div>
           <p className={styles.eyebrow}>Global control plane</p>
-          <h1>Server workspace deleted</h1>
+          <h2>Server workspace deleted</h2>
         </div>
         <Link href="/admin#admin-deletions">Back to administration</Link>
       </header>
@@ -350,16 +350,16 @@ export function AdminWorkspaceInspector({
           changes, and guest redemption from recreating this workspace ID.
         </p>
       </section>
-    </main>;
+    </div>;
   }
 
-  return <main className={styles.page}>
+  return <div className={styles.page}>
     <header className={styles.header}>
       <div>
         <p className={styles.eyebrow}>Audited global control plane</p>
-        <h1>
+        <h2>
           {inspection?.state.workspace.name || "Workspace inspection"}
-        </h1>
+        </h2>
       </div>
       <Link href="/admin#admin-workspaces">Back to administration</Link>
     </header>
@@ -599,5 +599,5 @@ export function AdminWorkspaceInspector({
         </button>
       </div>
     </ModalDialog>
-  </main>;
+  </div>;
 }

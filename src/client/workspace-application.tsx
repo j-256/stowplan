@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import {
+  type MouseEvent,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -23,8 +24,6 @@ import {
   Menu,
   Moon,
   PackagePlus,
-  PanelLeftClose,
-  PanelLeftOpen,
   Search,
   Settings,
   Share2,
@@ -38,10 +37,7 @@ import {
   createEmptyState,
   newId,
 } from "../domain/factories";
-import type {
-  ThemePreference,
-  WorkspaceState,
-} from "../domain/types";
+import type { WorkspaceState } from "../domain/types";
 import {
   normalizeWorkspaceAccessState,
   workspaceReadOnlyReason,
@@ -63,13 +59,15 @@ import {
   STOWPLAN_HISTORY_EVENT,
   STOWPLAN_HISTORY_OWNER_ATTRIBUTE,
 } from "./browser-history-bridge";
-import {
-  PREFERENCE_STORAGE_ERROR_EVENT,
-  preferenceStorageUnavailable,
-  readPreference,
-  writePreference,
-} from "./preference-storage";
 import { AccountMenu } from "./account-menu";
+import {
+  ApplicationNavigationLink,
+  ApplicationShell,
+  ApplicationThemeToggle,
+  PreferenceStorageBanner,
+  type ApplicationNavigationItem,
+} from "./application-shell";
+import { useApplicationShellPreferences } from "./application-shell-preferences";
 import {
   backupNotice,
   backupPresentation,
@@ -98,7 +96,6 @@ import {
   stateWorkspacePath,
 } from "./workspace-view-helpers";
 import type {
-  AppliedTheme,
   FeedbackDetail,
   GuidanceFocus,
   GuidanceTarget,
@@ -156,29 +153,6 @@ const ITEM_MODAL_HISTORY_STATE = Object.freeze({
 
 const DISMISS_FEEDBACK_EVENT = "stowplan:feedback-dismiss";
 const FEEDBACK_EVENT = "stowplan:feedback";
-const SIDEBAR_COLLAPSED_STORAGE_KEY = "stowplan-sidebar-collapsed";
-const THEME_STORAGE_KEY = "stowplan-theme";
-const THEME_PREFERENCES = new Set<ThemePreference>([
-  "dark",
-  "light",
-  "system",
-]);
-
-function isThemePreference(value: string | null): value is ThemePreference {
-  return value !== null && THEME_PREFERENCES.has(value as ThemePreference);
-}
-
-function applyThemePreference(theme: ThemePreference): AppliedTheme {
-  const appliedTheme = theme === "dark" || (
-    theme === "system" &&
-    matchMedia("(prefers-color-scheme:dark)").matches
-  )
-    ? "dark"
-    : "light";
-  document.documentElement.dataset.theme = appliedTheme;
-  return appliedTheme;
-}
-
 function BackupStatusIcon({
   presentation,
 }: {
@@ -260,11 +234,16 @@ export function WorkspaceApplication({
   const [inventoryLocationId, setInventoryLocationId] = useState<string | null>(null);
   const [inventoryItemId, setInventoryItemId] = useState<string | null>(null);
   const [showWelcome, setShowWelcome] = useState(false);
-  const [theme, setTheme] = useState<ThemePreference>("system");
-  const [appliedTheme, setAppliedTheme] = useState<AppliedTheme>("light");
-  const [themeReady, setThemeReady] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [sidebarReady, setSidebarReady] = useState(false);
+  const {
+    appliedTheme,
+    preferenceStorageMessageDismissed,
+    preferencesSessionOnly,
+    selectTheme,
+    setPreferenceStorageMessageDismissed,
+    setSidebarCollapsed,
+    sidebarCollapsed,
+    theme,
+  } = useApplicationShellPreferences();
   const [workspaceNotice, setWorkspaceNotice] = useState("");
   const [
     dismissedBackupMessageKey,
@@ -277,11 +256,6 @@ export function WorkspaceApplication({
   const [jumpPaletteOpen, setJumpPaletteOpen] = useState(false);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [feedback, setFeedback] = useState<FeedbackDetail | null>(null);
-  const [preferencesSessionOnly, setPreferencesSessionOnly] = useState(false);
-  const [
-    preferenceStorageMessageDismissed,
-    setPreferenceStorageMessageDismissed,
-  ] = useState(false);
   const [guidanceTarget, setGuidanceTarget] = useState<GuidanceTarget | null>(null);
   const [routeStatus, setRouteStatus] = useState<"blocked" | "loading" | "ready">("loading");
   const routeRequest = useRef(0);
@@ -309,57 +283,8 @@ export function WorkspaceApplication({
     }
   }, []);
 
-  useLayoutEffect(() => {
-    /* eslint-disable react-hooks/set-state-in-effect -- hydrate device-only preferences after the server-consistent first render */
-    const saved = readPreference(THEME_STORAGE_KEY) as ThemePreference | null;
-    const nextTheme = isThemePreference(saved) ? saved : "system";
-    setTheme(nextTheme);
-    setAppliedTheme(applyThemePreference(nextTheme));
-    setThemeReady(true);
-    /* eslint-enable react-hooks/set-state-in-effect */
-  }, []);
   useEffect(() => {
-    /* eslint-disable react-hooks/set-state-in-effect -- hydrate device-only preferences after the server-consistent first render */
-    setSidebarCollapsed(
-      readPreference(SIDEBAR_COLLAPSED_STORAGE_KEY) === "true",
-    );
-    if (preferenceStorageUnavailable()) setPreferencesSessionOnly(true);
-    setSidebarReady(true);
-    /* eslint-enable react-hooks/set-state-in-effect */
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => undefined);
-  }, []);
-  useEffect(() => {
-    if (!themeReady) return;
-    writePreference(THEME_STORAGE_KEY, theme);
-    if (theme !== "system") return;
-    const media = matchMedia("(prefers-color-scheme:dark)");
-    const applySystemTheme = () => {
-      setAppliedTheme(applyThemePreference("system"));
-    };
-    media.addEventListener("change", applySystemTheme);
-    return () => media.removeEventListener("change", applySystemTheme);
-  }, [theme, themeReady]);
-  useEffect(() => {
-    if (!sidebarReady) return;
-    writePreference(
-      SIDEBAR_COLLAPSED_STORAGE_KEY,
-      String(sidebarCollapsed),
-    );
-  }, [sidebarCollapsed, sidebarReady]);
-  useEffect(() => {
-    const receivePreferenceStorageError = () =>
-      setPreferencesSessionOnly(true);
-    addEventListener(
-      PREFERENCE_STORAGE_ERROR_EVENT,
-      receivePreferenceStorageError,
-    );
-    /* eslint-disable react-hooks/set-state-in-effect -- storage can fail before child and parent effects subscribe */
-    if (preferenceStorageUnavailable()) setPreferencesSessionOnly(true);
-    /* eslint-enable react-hooks/set-state-in-effect */
-    return () => removeEventListener(
-      PREFERENCE_STORAGE_ERROR_EVENT,
-      receivePreferenceStorageError,
-    );
   }, []);
   useEffect(() => {
     const receiveFeedback = (event: Event) => {
@@ -906,16 +831,29 @@ export function WorkspaceApplication({
     setRouteStatus("ready");
     if (canonicalPath) writePath(canonicalPath);
   };
-
-  if (routeStatus === "loading") {
-    return <div className="loading">Opening the requested workspace view…</div>;
-  }
+  const tabPath = (nextView: View) => state
+    ? stateWorkspacePath(state, {
+        locationId:
+          nextView === "capture" || nextView === "spaces"
+            ? current?.id
+            : nextView === "inventory"
+              ? validInventoryLocationId
+              : null,
+        view: nextView,
+      })
+    : WORKSPACE_LIST_PATH;
+  const selectView = (nextView: View) => {
+    if (!state) return;
+    setGuidanceTarget(null);
+    setInventoryItemId(null);
+    setView(nextView);
+    setMobileMoreOpen(false);
+    setShowWelcome(false);
+    setRouteStatus("ready");
+    scrollAppToTop();
+    writePath(tabPath(nextView));
+  };
   const workspaceHub = <WorkspaceHub
-    accountState={{
-      configured: backupConfigured,
-      ready: authenticationReady,
-      user: account,
-    }}
     backupConfigured={backupConfigured}
     cards={hubCards}
     catalogError={catalogError}
@@ -938,40 +876,96 @@ export function WorkspaceApplication({
     onStart={start}
     signedIn={signedIn}
   />;
-  if (!state) {
-    return <>{workspaceHub}{workspaceNotice &&
-      <DismissibleWorkspaceNotice
+  const hubNavigation: ApplicationNavigationItem[] = [
+    {
+      active: routeStatus !== "loading" && (showWelcome || !state),
+      href: WORKSPACE_LIST_PATH,
+      icon: Home,
+      label: "Workspaces",
+      onClick: (event) => followAppLink(event, openWorkspaceMenu),
+    },
+    ...(state
+      ? nav.map((entry) => ({
+          active: false,
+          href: tabPath(entry.id),
+          icon: entry.icon,
+          label: entry.label,
+          onClick: (event: MouseEvent<HTMLAnchorElement>) =>
+            followAppLink(event, () => selectView(entry.id)),
+        }))
+      : []),
+    ...(account?.globalRole === "admin"
+      ? [{
+          active: false,
+          href: "/admin",
+          icon: ShieldCheck,
+          label: "Administration",
+        }]
+      : []),
+  ];
+  if (routeStatus === "loading" || !state || showWelcome) {
+    return <ApplicationShell
+      eyebrow={state?.workspace.name ?? "Your organizer"}
+      headerActions={<>
+        <ApplicationThemeToggle
+          appliedTheme={appliedTheme}
+          className="header-mobile-secondary icon"
+          onChange={selectTheme}
+        />
+        <AccountMenu
+          accountState={{
+            configured: backupConfigured,
+            ready: authenticationReady,
+            user: account,
+          }}
+          returnTo={WORKSPACE_LIST_PATH}
+        />
+      </>}
+      mobileNavigation={<nav
+        aria-label="Primary application navigation"
+        className="bottom application-bottom"
+      >
+        <ApplicationNavigationLink
+          active={routeStatus !== "loading" && (showWelcome || !state)}
+          href={WORKSPACE_LIST_PATH}
+          icon={Home}
+          label="Workspaces"
+          onClick={(event) => followAppLink(event, openWorkspaceMenu)}
+        />
+        {state && phonePrimaryNav.map((entry) =>
+          <ApplicationNavigationLink
+            active={false}
+            href={tabPath(entry.id)}
+            icon={entry.icon}
+            key={entry.id}
+            label={entry.label}
+            onClick={(event) =>
+              followAppLink(event, () => selectView(entry.id))
+            }
+          />
+        )}
+      </nav>}
+      navigation={hubNavigation}
+      onSidebarCollapsedChange={setSidebarCollapsed}
+      sidebarCollapsed={sidebarCollapsed}
+      title="Workspaces"
+    >
+      {preferencesSessionOnly &&
+        !preferenceStorageMessageDismissed &&
+        <PreferenceStorageBanner
+          onDismiss={() => setPreferenceStorageMessageDismissed(true)}
+        />}
+      {workspaceNotice && <DismissibleWorkspaceNotice
         message={workspaceNotice}
         onDismiss={() => setWorkspaceNotice("")}
-        onboarding
-      />}</>;
+      />}
+      {routeStatus === "loading"
+        ? <div className="application-loading" role="status">
+            Opening the requested workspace view...
+          </div>
+        : workspaceHub}
+    </ApplicationShell>;
   }
-  if (showWelcome) {
-    return <>{workspaceHub}{workspaceNotice &&
-      <DismissibleWorkspaceNotice
-        message={workspaceNotice}
-        onDismiss={() => setWorkspaceNotice("")}
-        onboarding
-      />}</>;
-  }
-  const tabPath = (nextView: View) => stateWorkspacePath(state, {
-    locationId:
-      nextView === "capture" || nextView === "spaces"
-        ? current?.id
-        : nextView === "inventory"
-          ? validInventoryLocationId
-          : null,
-    view: nextView,
-  });
-  const selectView = (nextView: View) => {
-    setGuidanceTarget(null);
-    setInventoryItemId(null);
-    setView(nextView);
-    setMobileMoreOpen(false);
-    setRouteStatus("ready");
-    scrollAppToTop();
-    writePath(tabPath(nextView));
-  };
   const selectLocation = (id: string) => {
     setSelected(id);
     if (view === "capture" || view === "spaces") {
@@ -1079,10 +1073,6 @@ export function WorkspaceApplication({
     : feedback?.tone === "info"
       ? Info
       : AlertCircle;
-  const selectTheme = (nextTheme: ThemePreference) => {
-    setTheme(nextTheme);
-    setAppliedTheme(applyThemePreference(nextTheme));
-  };
   const themeToggleLabel = appliedTheme === "dark"
     ? "Dark theme active. Switch to light theme"
     : "Light theme active. Switch to dark theme";
@@ -1158,31 +1148,110 @@ export function WorkspaceApplication({
     accessMessageKey !== dismissedAccessMessageKey,
   );
   const readOnly = Boolean(readOnlyReason);
-  return <div className="app-shell" data-sidebar-collapsed={sidebarCollapsed}>
-    <aside aria-label="Workspace navigation">
-      <Brand />
-      <nav>
-        {nav.map((entry) => <Nav key={entry.id} {...entry} active={entry.id === view} href={tabPath(entry.id)} select={() => selectView(entry.id)} />)}
-        {account?.globalRole === "admin" && <a
-          className="nav"
-          href="/admin"
-          title="Administration"
+  const workspaceNavigation: ApplicationNavigationItem[] = [
+    {
+      active: false,
+      href: WORKSPACE_LIST_PATH,
+      icon: Home,
+      label: "Workspaces",
+      onClick: (event) => followAppLink(event, openWorkspaceMenu),
+    },
+    ...nav.map((entry) => ({
+      active: entry.id === view,
+      href: tabPath(entry.id),
+      icon: entry.icon,
+      label: entry.label,
+      onClick: (event: MouseEvent<HTMLAnchorElement>) =>
+        followAppLink(event, () => selectView(entry.id)),
+    })),
+    ...(account?.globalRole === "admin"
+      ? [{
+          active: false,
+          href: "/admin",
+          icon: ShieldCheck,
+          label: "Administration",
+        }]
+      : []),
+  ];
+  return <>
+    <ApplicationShell
+      eyebrow={state.workspace.name}
+      headerActions={<>
+        <button
+          aria-keyshortcuts="Control+K Meta+K"
+          aria-label="Search ⌘ / Ctrl K and jump"
+          className="jump-trigger"
+          onClick={() => setJumpPaletteOpen(true)}
+          type="button"
         >
-          <ShieldCheck aria-hidden="true" />
-          <span>Administration</span>
-        </a>}
-      </nav>
-      <button
-        className="sidebar-toggle"
-        type="button"
-        aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-        title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-        onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+          <Search aria-hidden="true" />
+          <span>Search</span>
+          <kbd>⌘ / Ctrl K</kbd>
+        </button>
+        <a
+          aria-label="Workspaces and backup status"
+          className="header-mobile-secondary icon"
+          href={WORKSPACE_LIST_PATH}
+          onClick={(event) => followAppLink(event, openWorkspaceMenu)}
+        >
+          <Home aria-hidden="true" />
+        </a>
+        <button
+          aria-label="Share this view"
+          className="header-mobile-secondary icon"
+          onClick={() => void shareCurrentView()}
+          type="button"
+        >
+          <Share2 aria-hidden="true" />
+        </button>
+        <ApplicationThemeToggle
+          appliedTheme={appliedTheme}
+          className="header-mobile-secondary icon"
+          onChange={selectTheme}
+        />
+        <AccountMenu
+          accountState={{
+            configured: backupConfigured,
+            ready: authenticationReady,
+            user: account,
+          }}
+          returnTo={canonicalPath ?? WORKSPACE_LIST_PATH}
+          workspaceId={state.workspace.id}
+        />
+      </>}
+      mobileNavigation={<nav
+        aria-label="Primary workspace navigation"
+        className="bottom"
       >
-        {sidebarCollapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
-        <span>{sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}</span>
-      </button>
-      <a
+        {phonePrimaryNav.map((entry) => <ApplicationNavigationLink
+          active={entry.id === view}
+          href={tabPath(entry.id)}
+          icon={entry.icon}
+          key={entry.id}
+          label={entry.label}
+          onClick={(event) =>
+            followAppLink(event, () => selectView(entry.id))
+          }
+        />)}
+        <button
+          aria-current={PHONE_MORE_VIEWS.includes(view) ? "page" : undefined}
+          aria-expanded={mobileMoreOpen}
+          aria-haspopup="dialog"
+          aria-label="More"
+          className="mobile-more-trigger nav"
+          data-active={PHONE_MORE_VIEWS.includes(view)}
+          onClick={() => setMobileMoreOpen(true)}
+          ref={mobileMoreTrigger}
+          type="button"
+        >
+          <Menu aria-hidden="true" />
+          <span>More</span>
+        </button>
+      </nav>}
+      navigation={workspaceNavigation}
+      onSidebarCollapsedChange={setSidebarCollapsed}
+      sidebarCollapsed={sidebarCollapsed}
+      sidebarFooter={<a
         className="sync"
         href={backupReviewPath}
         aria-label={`Review workspace backup statuses: ${syncStatus.label}`}
@@ -1193,65 +1262,11 @@ export function WorkspaceApplication({
       >
         <BackupStatusIcon presentation={syncStatus} />
         <span>{syncStatus.label}</span>
-      </a>
-    </aside>
-    <main tabIndex={-1}>
-      <header>
-        <div>
-          <p className="eyebrow">{state.workspace.name}</p>
-          <h1>
-            {view === "access"
-              ? "Workspace access"
-              : nav.find((entry) => entry.id === view)?.label}
-          </h1>
-        </div>
-        <div className="header-actions">
-          <button
-            aria-keyshortcuts="Control+K Meta+K"
-            aria-label="Search ⌘ / Ctrl K and jump"
-            className="jump-trigger"
-            onClick={() => setJumpPaletteOpen(true)}
-          >
-            <Search />
-            <span>Search</span>
-            <kbd>⌘ / Ctrl K</kbd>
-          </button>
-          <a
-            aria-label="Workspaces and backup status"
-            className="header-mobile-secondary icon"
-            href={WORKSPACE_LIST_PATH}
-            onClick={(event) => followAppLink(event, openWorkspaceMenu)}
-          >
-            <Home />
-          </a>
-          <button
-            aria-label="Share this view"
-            className="header-mobile-secondary icon"
-            onClick={() => void shareCurrentView()}
-          >
-            <Share2 />
-          </button>
-          <button
-            aria-label={themeToggleLabel}
-            className="header-mobile-secondary icon"
-            onClick={() => selectTheme(
-              appliedTheme === "dark" ? "light" : "dark",
-            )}
-            title={themeToggleLabel}
-          >
-            {appliedTheme === "dark" ? <Moon /> : <Sun />}
-          </button>
-          <AccountMenu
-            accountState={{
-              configured: backupConfigured,
-              ready: authenticationReady,
-              user: account,
-            }}
-            returnTo={canonicalPath ?? WORKSPACE_LIST_PATH}
-            workspaceId={state.workspace.id}
-          />
-        </div>
-      </header>
+      </a>}
+      title={view === "access"
+        ? "Workspace access"
+        : nav.find((entry) => entry.id === view)?.label ?? "Workspace"}
+    >
       {!showBackupMessage && <a
         className="mobile-sync-status"
         data-attention={syncStatus.state === "blocked" || syncStatus.offline
@@ -1317,18 +1332,9 @@ export function WorkspaceApplication({
       </section>}
       {preferencesSessionOnly &&
         !preferenceStorageMessageDismissed &&
-        <section className="preference-storage-banner" role="status">
-        <Info />
-        <span><strong>Preferences are session-only</strong><small>Theme, sidebar, and panel choices will reset after reload because browser preference storage is unavailable.</small></span>
-        <button
-          aria-label="Dismiss preference storage message"
-          className="icon small"
-          onClick={() => setPreferenceStorageMessageDismissed(true)}
-          type="button"
-        >
-          <X />
-        </button>
-      </section>}
+        <PreferenceStorageBanner
+          onDismiss={() => setPreferenceStorageMessageDismissed(true)}
+        />}
       {workspaceNotice &&
         <DismissibleWorkspaceNotice
           message={workspaceNotice}
@@ -1407,7 +1413,7 @@ export function WorkspaceApplication({
       {!readOnly && view === "plan" && <Planner state={state} commit={dispatch} openGuidanceTarget={openGuidanceTarget} />}
       {!readOnly && view === "activity" && <History state={state} commit={dispatch} />}
       {!readOnly && view === "settings" && <Preferences state={state} commit={dispatch} theme={theme} setTheme={selectTheme} openMenu={openWorkspaceMenu} returnTo={canonicalPath ?? tabPath("settings")} serverBacked={authorization?.kind === "server"} />}
-    </main>
+    </ApplicationShell>
     {feedback && <output
       className="feedback-toast"
       data-tone={feedback.tone}
@@ -1436,13 +1442,23 @@ export function WorkspaceApplication({
           aria-label="More workspace destinations"
           className="mobile-more-destinations"
         >
-          {phoneMoreNav.map((entry) => <Nav
-            key={entry.id}
-            {...entry}
+          {phoneMoreNav.map((entry) => <ApplicationNavigationLink
             active={entry.id === view}
             href={tabPath(entry.id)}
-            select={() => selectView(entry.id)}
+            icon={entry.icon}
+            key={entry.id}
+            label={entry.label}
+            onClick={(event) =>
+              followAppLink(event, () => selectView(entry.id))
+            }
           />)}
+          {account?.globalRole === "admin" &&
+            <ApplicationNavigationLink
+              active={false}
+              href="/admin"
+              icon={ShieldCheck}
+              label="Administration"
+            />}
         </nav>
         <div className="mobile-more-actions">
           <a
@@ -1502,30 +1518,7 @@ export function WorkspaceApplication({
         </button>
       </div>
     </ModalDialog>
-    <nav aria-label="Primary workspace navigation" className="bottom">
-      {phonePrimaryNav.map((entry) => <Nav
-        key={entry.id}
-        {...entry}
-        active={entry.id === view}
-        href={tabPath(entry.id)}
-        select={() => selectView(entry.id)}
-      />)}
-      <button
-        aria-current={PHONE_MORE_VIEWS.includes(view) ? "page" : undefined}
-        aria-expanded={mobileMoreOpen}
-        aria-haspopup="dialog"
-        aria-label="More"
-        className="mobile-more-trigger nav"
-        data-active={PHONE_MORE_VIEWS.includes(view)}
-        onClick={() => setMobileMoreOpen(true)}
-        ref={mobileMoreTrigger}
-        type="button"
-      >
-        <Menu aria-hidden="true" />
-        <span>More</span>
-      </button>
-    </nav>
-  </div>;
+  </>;
 }
 
 function isItemModalHistoryEntry(value: unknown): boolean {
@@ -1556,11 +1549,4 @@ function scrollAppToTop(): void {
     left: 0,
     top: 0,
   });
-}
-
-function Brand() {
-  return <div className="brand" aria-label="Stowplan"><b>S</b><span><strong>Stowplan</strong><small>Know where everything lives</small></span></div>;
-}
-function Nav({ label, icon: Icon, active, href, select }: { label: string; icon: typeof Boxes; active: boolean; href: string; select: () => void }) {
-  return <a className="nav" data-active={active} aria-current={active ? "page" : undefined} href={href} title={label} onClick={(event) => followAppLink(event, select)}><Icon /><span>{label}</span></a>;
 }

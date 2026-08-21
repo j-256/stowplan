@@ -3,16 +3,11 @@
 import { X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  WORKSPACE_LIST_PATH,
   workspacePath,
 } from "../domain/app-url";
 import {
   SERVER_WORKSPACE_DELETION_FRAGMENT,
 } from "../shared/workspace-deletion";
-import {
-  AccountMenu,
-  type AccountMenuState,
-} from "./account-menu";
 import {
   workspaceHubCardMatches,
   type WorkspaceHubCard,
@@ -39,7 +34,6 @@ const CARD_STATE_COPY = Object.freeze({
 });
 
 interface WorkspaceHubProps {
-  accountState: AccountMenuState;
   backupConfigured: boolean | null;
   cards: readonly WorkspaceHubCard[];
   catalogError: string | null;
@@ -119,7 +113,6 @@ function HubMessage({
 }
 
 export function WorkspaceHub({
-  accountState,
   backupConfigured,
   cards,
   catalogError,
@@ -269,7 +262,7 @@ export function WorkspaceHub({
     </button>}
   </section>;
 
-  return <main className={styles.hub}>
+  return <div className={styles.hub}>
     <header>
       <div>
         <p className="eyebrow">
@@ -277,7 +270,7 @@ export function WorkspaceHub({
             ? "Organize one space at a time"
             : "All your workspaces"}
         </p>
-        <h1 ref={headingRef} tabIndex={-1}>Your workspaces</h1>
+        <h2 ref={headingRef} tabIndex={-1}>Your workspaces</h2>
         <p>{firstRun
           ? "Try a ready-made kitchen or create a workspace for your own rooms, cabinets, drawers, boxes, and bins."
           : "Open work saved in this browser, find shared workspaces after sign-in, and review backup status in one place."}</p>
@@ -306,11 +299,6 @@ export function WorkspaceHub({
         >
           User guide
         </a>
-        <AccountMenu
-          accountState={accountState}
-          className={styles.accountAction}
-          returnTo={WORKSPACE_LIST_PATH}
-        />
       </div>
     </header>
 
@@ -590,5 +578,5 @@ export function WorkspaceHub({
         </button>
       </div>
     </ModalDialog>
-  </main>;
+  </div>;
 }

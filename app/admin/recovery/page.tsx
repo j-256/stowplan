@@ -78,10 +78,10 @@ export default function AdminRecoveryPage() {
     }
   };
 
-  return <main className="onboarding">
+  return <div className="admin-recovery-page">
     <section>
       <p className="eyebrow">Break-glass administration</p>
-      <h1>Recover global-admin authority</h1>
+      <h2>Recover global-admin authority</h2>
       {account?.adminAccessRequired
         ? <p>
           This path requires an existing Stowplan app session, the independent Cloudflare Access gate, and a temporary recovery token. A successful recovery promotes only the signed-in app account, retains that exact recovery session, and revokes every other active session for every global-admin account.
@@ -142,5 +142,5 @@ export default function AdminRecoveryPage() {
         <Link href="/account">Return to account settings</Link>
       </p>
     </section>
-  </main>;
+  </div>;
 }

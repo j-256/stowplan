@@ -410,6 +410,8 @@ test("initializes OpenNext bindings for next dev and awaits runtime context fail
 });
 
 const organizerSourceFiles = Object.freeze([
+  "application-shell-preferences.ts",
+  "application-shell.tsx",
   "capture-view.tsx",
   "inventory-view.tsx",
   "item-editor.tsx",
@@ -511,6 +513,29 @@ test("ships task-oriented item, plan, and workspace controls", () => {
   assert.match(replica, /The server did not acknowledge this change/);
   assert.match(store, /BACKUP_UNAVAILABLE_SESSION_KEY/);
   assert.match(store, /BACKUP_RETRY_INTERVAL_MS/);
+});
+
+test("keeps workspace and administration destinations inside the application shell", () => {
+  const workspaceApplication = readFileSync(
+    new URL("../src/client/workspace-application.tsx", import.meta.url),
+    "utf8",
+  );
+  const adminLayout = readFileSync(
+    new URL("../app/admin/layout.tsx", import.meta.url),
+    "utf8",
+  );
+  const adminPage = readFileSync(
+    new URL("../app/admin/page.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(workspaceApplication, /<ApplicationShell/);
+  assert.doesNotMatch(
+    workspaceApplication,
+    /if \(showWelcome\) \{\s+return <>\{workspaceHub\}/,
+  );
+  assert.match(adminLayout, /<AdminApplicationShell>/);
+  assert.match(adminPage, /return <div className="admin-page">/);
 });
 
 test("guards restore commit boundaries and label deep links", () => {
