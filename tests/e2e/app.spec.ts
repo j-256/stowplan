@@ -2976,11 +2976,29 @@ test("searches and jumps with Control or Command K", async ({ page }, testInfo) 
 
   await page.keyboard.press(primaryShortcut);
   await expect(palette).toBeVisible();
+  const firstOption = palette.getByRole("option").first();
+  const keyboardOption = palette.getByRole("option").nth(1);
+  await keyboardOption.hover();
+  await expect(keyboardOption).toHaveAttribute("data-active", "true");
   await search.press("Tab");
-  await expect(palette.getByRole("option").first()).toBeFocused();
+  await expect(firstOption).toBeFocused();
   await page.keyboard.press("ArrowDown");
-  await expect(palette.getByRole("option").nth(1)).toBeFocused();
-  await expect(palette.getByRole("option").nth(1)).toHaveAttribute(
+  await expect(keyboardOption).toBeFocused();
+  // Passive hover entry must not override a keyboard-selected option
+  await keyboardOption.evaluate((option) => {
+    const relatedTarget = option.parentElement?.querySelector(
+      '[role="option"]',
+    );
+    option.dispatchEvent(new MouseEvent("mouseout", {
+      bubbles: true,
+      relatedTarget,
+    }));
+  });
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => resolve());
+  }));
+  await expect(keyboardOption).toBeFocused();
+  await expect(keyboardOption).toHaveAttribute(
     "data-active",
     "true",
   );

@@ -323,7 +323,7 @@ export function JumpPalette({
             data-kind={result.kind}
             onClick={() => choose(result)}
             onFocus={() => setActiveIndex(index)}
-            onMouseEnter={() => setActiveIndex(index)}
+            onPointerMove={() => setActiveIndex(index)}
           >
             <span className="jump-result-icon"><Icon /></span>
             <span><strong>{result.label}</strong><small>{result.detail}</small></span>
