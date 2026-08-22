@@ -196,15 +196,21 @@ test("offers the temporary Access migration handoff only when enabled", async ({
   }));
   await page.goto("/account");
 
-  const migrationRequest = page.waitForRequest(
-    request => new URL(request.url()).pathname ===
+  const migrationResponse = page.waitForResponse(
+    response => new URL(response.url()).pathname ===
       "/api/auth/access",
   );
   await page.getByRole("button", {
     name: "Recover existing account",
   }).click();
 
-  await expect((await migrationRequest).method()).toBe("POST");
+  await expect(
+    (await migrationResponse).request().method(),
+  ).toBe("POST");
+  await expect(page).toHaveURL("/");
+  await expect(page.getByRole("heading", {
+    name: "Stowplan",
+  })).toBeVisible();
 });
 
 test("keeps Terms acceptance separate from persistent Google sign-in", async ({
