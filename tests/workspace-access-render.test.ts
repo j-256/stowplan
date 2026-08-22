@@ -22,7 +22,12 @@ import { ReadOnlyWorkspace } from "../src/client/read-only-workspace";
 import {
   applyConfirmedTerminalAccessInMemory,
 } from "../src/client/store";
+import {
+  SERVER_DELETION_OUTBOX_ERROR,
+  type LocalReplica,
+} from "../src/client/local-replica";
 import { createDemoState } from "../src/domain/demo";
+import { createEnvelope } from "../src/domain/factories";
 import {
   capabilitiesForWorkspaceRole,
   serverWorkspaceAccess,
@@ -433,12 +438,29 @@ describe("workspace access surface", () => {
       accessRevision: 7,
       membershipRevision: 4,
     });
+    const pending = createEnvelope(state, {
+      type: "workspace.rename",
+      name: "Pending recovery rename",
+    });
+    const blocked = createEnvelope(state, {
+      type: "workspace.rename",
+      name: "Blocked recovery rename",
+    });
+    const existingRefusal =
+      "Workspace rename: the server rejected this edit after access changed";
     const replica = {
       authorization,
-      outbox: [],
+      outbox: [
+        { envelope: pending, status: "pending" as const },
+        {
+          envelope: blocked,
+          error: existingRefusal,
+          status: "blocked" as const,
+        },
+      ],
       state,
       updatedAt: state.workspace.updatedAt,
-    };
+    } satisfies LocalReplica;
     const deleted = serverWorkspaceAccess("owner", {
       accountId: owner.userId,
       accessRevision: 8,
@@ -465,7 +487,24 @@ describe("workspace access surface", () => {
       status: "deleted",
     });
     expect(next?.state).toBe(state);
-    expect(next?.outbox).toBe(replica.outbox);
+    expect(next?.outbox).toEqual([
+      {
+        envelope: pending,
+        error: `workspace rename: ${SERVER_DELETION_OUTBOX_ERROR}`,
+        status: "blocked",
+      },
+      {
+        envelope: blocked,
+        error: existingRefusal,
+        status: "blocked",
+      },
+    ]);
+    expect(next?.outbox).not.toBe(replica.outbox);
+    expect(next?.outbox[1]).toBe(replica.outbox[1]);
+    expect(replica.outbox.map((entry) => entry.status)).toEqual([
+      "pending",
+      "blocked",
+    ]);
     expect(replica.authorization).toBe(authorization);
     expect(applyConfirmedTerminalAccessInMemory(
       replica,

@@ -75,4 +75,6 @@ Viewers and editors can inspect and export data they are allowed to read, but th
 
 Leaving a shared workspace or deleting its online copy does not silently erase the device copy. Stowplan offers to keep it read-only, export it, or remove it.
 
+After server deletion is confirmed, changes that were still waiting for upload become refused changes with a deletion-specific recovery reason because that online workspace can no longer accept them. Changes that were already refused keep their original server messages. The full recovery bundle preserves both kinds in their original order.
+
 Server workspace deletion is immediate and has no server undelete path. Read [Workspaces and sharing](/guide/collaboration) before choosing among the lifecycle actions.

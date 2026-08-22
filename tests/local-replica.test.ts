@@ -29,8 +29,10 @@ import {
   replicaVersionMatches,
   replaceReplica,
   replaceReplicaIfUnchanged,
+  SERVER_DELETION_OUTBOX_ERROR,
   selectPendingSyncBatch,
   setActiveServerWorkspaceCatalogAccount,
+  writeConfirmedServerDeletion,
   writeReplica,
   writeServerWorkspaceCatalog,
   writeServerWorkspaceCatalogIfUnchanged,
@@ -828,6 +830,91 @@ describe("local replica", () => {
         role: "viewer",
       },
     });
+  });
+
+  it("makes confirmed deletion win an access race and blocks pending work", async () => {
+    const state = createEmptyState("Deletion recovery");
+    const accountId = "user_owner";
+    const summary = serverSummary(state, "owner", {
+      accountId,
+    });
+    const authorization = serverWorkspaceAccess("owner", {
+      accountId,
+      accessRevision: summary.accessRevision,
+      membershipRevision: summary.membershipRevision,
+    });
+    const pending = createEnvelope(state, {
+      type: "workspace.rename",
+      name: "Pending recovery rename",
+    });
+    const blocked = createEnvelope(state, {
+      type: "workspace.rename",
+      name: "Blocked recovery rename",
+    });
+    const existingRefusal =
+      "Workspace rename: the server rejected this edit after access changed";
+    await writeReplica({
+      authorization,
+      outbox: [
+        {
+          accountId,
+          envelope: pending,
+          status: "pending",
+        },
+        {
+          accountId,
+          envelope: blocked,
+          error: existingRefusal,
+          status: "blocked",
+        },
+      ],
+      serverSummary: summary,
+      state,
+      updatedAt: state.workspace.updatedAt,
+    });
+    await mutateWorkspaceReplica(state.workspace.id, (current) => ({
+      ...current,
+      authorization: serverWorkspaceAccess("owner", {
+        accountId,
+        accessRevision: summary.accessRevision,
+        membershipRevision: summary.membershipRevision,
+        status: "unknown",
+      }),
+    }));
+    const deleted = serverWorkspaceAccess("owner", {
+      accountId,
+      accessRevision: summary.accessRevision + 1,
+      membershipRevision: summary.membershipRevision + 1,
+      status: "deleted",
+    });
+
+    const updated = await writeConfirmedServerDeletion(
+      state.workspace.id,
+      deleted,
+      summary,
+    );
+
+    expect(updated?.authorization).toMatchObject({
+      accountId,
+      status: "deleted",
+    });
+    expect(updated?.outbox).toEqual([
+      {
+        accountId,
+        envelope: pending,
+        error: `workspace rename: ${SERVER_DELETION_OUTBOX_ERROR}`,
+        status: "blocked",
+      },
+      {
+        accountId,
+        envelope: blocked,
+        error: existingRefusal,
+        status: "blocked",
+      },
+    ]);
+    expect(selectPendingSyncBatch(updated?.outbox ?? [], accountId))
+      .toEqual([]);
+    expect((await readReplica())?.outbox).toEqual(updated?.outbox);
   });
 
   it("rebases only commands queued behind known same-tab changes", () => {

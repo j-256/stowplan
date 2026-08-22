@@ -37,6 +37,8 @@ const DATABASE_NAME = "stowplan-v1";
 const DATABASE_STORE = "records";
 const ACTIVE_CATALOG_ACCOUNT_KEY = "catalog-account:active";
 const CATALOG_KEY_PREFIX = "catalog:";
+const SERVER_DELETION_RECOVERY_REASON =
+  "server workspace was deleted before this local change was backed up";
 
 function skipUnlessProject(
   testInfo: TestInfo,
@@ -2097,7 +2099,12 @@ test(
     };
     expect(recovery.format).toBe("stowplan-recovery-v1");
     expect(recovery.replica?.outbox).toEqual([
-      expect.objectContaining({ status: "pending" }),
+      expect.objectContaining({
+        error: expect.stringContaining(
+          SERVER_DELETION_RECOVERY_REASON,
+        ),
+        status: "blocked",
+      }),
       expect.objectContaining({
         error: expect.stringContaining(
           "server rejected this edit after access changed",
@@ -2127,7 +2134,7 @@ test(
       "The server copy was deleted. Export this retained device copy first if you need to keep it.",
     );
     await expect(retainedRemovalDialog).toContainText(
-      /(?:0 pending and 2 blocked|1 pending and 1 blocked)/u,
+      "0 pending and 2 blocked",
     );
     await retainedRemovalDialog.getByRole("button", {
       name: "Cancel",
@@ -2137,8 +2144,10 @@ test(
     expect(local?.authorization?.status).toBe("deleted");
     expect(local?.state.workspace.id).toBe(workspace.summary.id);
     expect(local?.outbox).toHaveLength(2);
-    expect(local?.outbox.filter(entry => entry.status === "blocked").length)
-      .toBeGreaterThanOrEqual(1);
+    expect(local?.outbox.filter(entry => entry.status === "pending"))
+      .toHaveLength(0);
+    expect(local?.outbox.filter(entry => entry.status === "blocked"))
+      .toHaveLength(2);
     expect(local?.outbox.filter(entry =>
       entry.status === "blocked" &&
       typeof entry.error === "string" &&
@@ -2146,8 +2155,11 @@ test(
     )).toHaveLength(
       local?.outbox.filter(entry => entry.status === "blocked").length ?? 0,
     );
-    expect(local?.outbox.map(entry => entry.error).join(" ")).toMatch(
-      /(?:not found or is inaccessible|server rejected this edit)/u,
+    expect(local?.outbox[0]?.error).toContain(
+      SERVER_DELETION_RECOVERY_REASON,
+    );
+    expect(local?.outbox[1]?.error).toContain(
+      "server rejected this edit after access changed",
     );
     await page.reload();
     await expect(page.getByRole("heading", {
@@ -2157,9 +2169,10 @@ test(
     const reloaded = await readActiveReplica(page);
     expect(reloaded?.authorization?.status).toBe("deleted");
     expect(reloaded?.outbox).toHaveLength(2);
-    expect(
-      reloaded?.outbox.filter(entry => entry.status === "blocked").length,
-    ).toBeGreaterThanOrEqual(1);
+    expect(reloaded?.outbox.filter(entry => entry.status === "pending"))
+      .toHaveLength(0);
+    expect(reloaded?.outbox.filter(entry => entry.status === "blocked"))
+      .toHaveLength(2);
     const deletedSnapshot = await context.request.get(
       `${safeBeta.origin}/api/snapshot?workspaceId=${encodeURIComponent(
         workspace.summary.id,

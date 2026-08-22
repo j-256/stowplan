@@ -27,6 +27,8 @@ const CATALOG_KEY_PREFIX = "catalog:";
 const WORKSPACE_KEY_PREFIX = "workspace:";
 const LEGACY_OUTBOX_ACCOUNT_ERROR =
   "This queued change predates account-scoped access. It was retained for recovery and must be reviewed before reapplying it.";
+export const SERVER_DELETION_OUTBOX_ERROR =
+  "The server workspace was deleted before this local change was backed up. It was retained for recovery.";
 const WORKSPACE_CAPABILITY_KEYS = Object.freeze([
   "delete",
   "leave",
@@ -153,7 +155,22 @@ export function selectPendingSyncBatch(
   return batch;
 }
 
-export function scopeOutboxForWorkspaceAccess(
+function blockPendingOutboxAfterServerDeletion(
+  outbox: readonly OutboxEntry[],
+): OutboxEntry[] {
+  return outbox.map((entry) =>
+    entry.status === "pending"
+      ? {
+          ...entry,
+          error:
+            `${entry.envelope.command.type.replaceAll(".", " ")}: ${SERVER_DELETION_OUTBOX_ERROR}`,
+          status: "blocked" as const,
+        }
+      : entry
+  );
+}
+
+function scopeOutboxForWorkspaceAccount(
   outbox: readonly OutboxEntry[],
   current: WorkspaceAccessState,
   candidate: WorkspaceAccessState,
@@ -191,6 +208,21 @@ export function scopeOutboxForWorkspaceAccess(
         }
       : entry
   );
+}
+
+export function scopeOutboxForWorkspaceAccess(
+  outbox: readonly OutboxEntry[],
+  current: WorkspaceAccessState,
+  candidate: WorkspaceAccessState,
+): OutboxEntry[] {
+  const scoped = scopeOutboxForWorkspaceAccount(
+    outbox,
+    current,
+    candidate,
+  );
+  return candidate.kind === "server" && candidate.status === "deleted"
+    ? blockPendingOutboxAfterServerDeletion(scoped)
+    : scoped;
 }
 
 const workspaceKey = (workspaceId: string) =>
@@ -1111,6 +1143,101 @@ export class WorkspaceAuthorizationConflictError extends Error {
   }
 }
 
+function normalizeReplicaServerSummary(
+  workspaceId: string,
+  serverSummary: ServerWorkspaceSummary | null | undefined,
+): ServerWorkspaceSummary | null | undefined {
+  if (serverSummary === undefined || serverSummary === null) {
+    return serverSummary;
+  }
+  const normalized = normalizeServerWorkspaceSummary(serverSummary);
+  if (!normalized) {
+    throw new Error("Invalid server workspace summary");
+  }
+  if (normalized.id !== workspaceId) {
+    throw new Error("Server workspace summary does not match the local replica");
+  }
+  return normalized;
+}
+
+function resolveReplicaServerSummary(
+  current: ServerWorkspaceSummary | null,
+  candidate: ServerWorkspaceSummary | null | undefined,
+): ServerWorkspaceSummary | null {
+  if (candidate === undefined) return current;
+  if (candidate === null) return null;
+  return !current ||
+      !workspaceAccountIdsMatch(
+        candidate.accountId,
+        current.accountId,
+      ) ||
+      compareServerWorkspaceSummaries(candidate, current) >= 0
+    ? candidate
+    : current;
+}
+
+export function applyConfirmedServerDeletion(
+  current: LocalReplica,
+  authorization: WorkspaceAccessState,
+  serverSummary?: ServerWorkspaceSummary | null,
+): LocalReplica {
+  const candidate = normalizeWorkspaceAccessState(authorization);
+  if (candidate.kind !== "server" || candidate.status !== "deleted") {
+    throw new Error("Confirmed server deletion requires deleted access");
+  }
+  const existing = normalizeWorkspaceAccessState(current.authorization);
+  const nextAuthorization = existing.kind === "server" &&
+      existing.status === "deleted" &&
+      workspaceAccountIdsMatch(existing.accountId, candidate.accountId)
+    ? normalizeWorkspaceAccessState({
+        ...candidate,
+        accessRevision: Math.max(
+          candidate.accessRevision,
+          existing.accessRevision,
+        ),
+        membershipRevision: Math.max(
+          candidate.membershipRevision,
+          existing.membershipRevision,
+        ),
+      })
+    : candidate;
+  const currentServer = current.serverSummary
+    ? normalizeServerWorkspaceSummary(current.serverSummary)
+    : null;
+  const normalizedServer = normalizeReplicaServerSummary(
+    current.state.workspace.id,
+    serverSummary,
+  );
+  return {
+    ...current,
+    authorization: nextAuthorization,
+    outbox: scopeOutboxForWorkspaceAccess(
+      current.outbox,
+      existing,
+      nextAuthorization,
+    ),
+    serverSummary: resolveReplicaServerSummary(
+      currentServer,
+      normalizedServer,
+    ),
+  };
+}
+
+export async function writeConfirmedServerDeletion(
+  workspaceId: string,
+  authorization: WorkspaceAccessState,
+  serverSummary?: ServerWorkspaceSummary | null,
+): Promise<LocalReplica | null> {
+  return mutateWorkspaceReplica(
+    workspaceId,
+    (current) => applyConfirmedServerDeletion(
+      current,
+      authorization,
+      serverSummary,
+    ),
+  );
+}
+
 export async function writeWorkspaceAuthorizationIfUnchanged(
   workspaceId: string,
   authorization: WorkspaceAccessState,
@@ -1119,15 +1246,10 @@ export async function writeWorkspaceAuthorizationIfUnchanged(
 ): Promise<LocalReplica | null> {
   const candidate = normalizeWorkspaceAccessState(authorization);
   const expectedAccess = normalizeWorkspaceAccessState(expected);
-  const normalizedServer = serverSummary === undefined || serverSummary === null
-    ? serverSummary
-    : normalizeServerWorkspaceSummary(serverSummary);
-  if (serverSummary && !normalizedServer) {
-    throw new Error("Invalid server workspace summary");
-  }
-  if (normalizedServer && normalizedServer.id !== workspaceId) {
-    throw new Error("Server workspace summary does not match the local replica");
-  }
+  const normalizedServer = normalizeReplicaServerSummary(
+    workspaceId,
+    serverSummary,
+  );
   return mutateWorkspaceReplica(workspaceId, (current) => {
     const currentAccess = normalizeWorkspaceAccessState(
       current.authorization,
@@ -1141,21 +1263,10 @@ export async function writeWorkspaceAuthorizationIfUnchanged(
     const currentServer = current.serverSummary
       ? normalizeServerWorkspaceSummary(current.serverSummary)
       : null;
-    const nextServer = normalizedServer === undefined
-      ? currentServer
-      : normalizedServer === null
-        ? null
-        : !currentServer ||
-            !workspaceAccountIdsMatch(
-              normalizedServer.accountId,
-              currentServer.accountId,
-            ) ||
-            compareServerWorkspaceSummaries(
-              normalizedServer,
-              currentServer,
-            ) >= 0
-          ? normalizedServer
-          : currentServer;
+    const nextServer = resolveReplicaServerSummary(
+      currentServer,
+      normalizedServer,
+    );
     return {
       ...current,
       authorization: candidate,

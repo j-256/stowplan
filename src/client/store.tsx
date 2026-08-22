@@ -24,6 +24,7 @@ import {
 import {
   activateOrInsertServerWorkspaceReplica,
   activateWorkspaceReplica,
+  applyConfirmedServerDeletion,
   canRebaseQueuedCommand,
   clearActiveServerWorkspaceCatalogAccount,
   deleteWorkspaceReplica,
@@ -39,6 +40,7 @@ import {
   replaceReplicaIfUnchanged,
   selectPendingSyncBatch,
   setActiveServerWorkspaceCatalogAccount,
+  writeConfirmedServerDeletion,
   writeReplica,
   writeServerWorkspaceCatalogIfUnchanged,
   writeWorkspaceAuthorizationIfUnchanged,
@@ -235,26 +237,7 @@ export function applyConfirmedTerminalAccessInMemory(
   ) {
     return current;
   }
-  const existing = normalizeWorkspaceAccessState(current.authorization);
-  const next = existing.kind === "server" &&
-      existing.status === "deleted" &&
-      workspaceAccountIdsMatch(existing.accountId, candidate.accountId)
-    ? normalizeWorkspaceAccessState({
-        ...candidate,
-        accessRevision: Math.max(
-          candidate.accessRevision,
-          existing.accessRevision,
-        ),
-        membershipRevision: Math.max(
-          candidate.membershipRevision,
-          existing.membershipRevision,
-        ),
-      })
-    : candidate;
-  return {
-    ...current,
-    authorization: next,
-  };
+  return applyConfirmedServerDeletion(current, candidate);
 }
 
 function syncReceipts(value: unknown): SyncReceipt[] {
@@ -1681,23 +1664,30 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
     const operation = mutationQueue.current.then(async () => {
       const current = await readWorkspaceReplica(workspaceId);
       if (!current) return;
-      const expected = normalizeWorkspaceAccessState(
-        current.authorization,
-      );
       let next: LocalReplica | null;
-      try {
-        next = await writeWorkspaceAuthorizationIfUnchanged(
+      if (confirmedDeletion) {
+        next = await writeConfirmedServerDeletion(
           workspaceId,
           candidate,
-          expected,
           summary,
         );
-      } catch (error) {
-        if (error instanceof WorkspaceAuthorizationConflictError) {
-          if (confirmedDeletion) throw error;
-          return;
+      } else {
+        const expected = normalizeWorkspaceAccessState(
+          current.authorization,
+        );
+        try {
+          next = await writeWorkspaceAuthorizationIfUnchanged(
+            workspaceId,
+            candidate,
+            expected,
+            summary,
+          );
+        } catch (error) {
+          if (error instanceof WorkspaceAuthorizationConflictError) {
+            return;
+          }
+          throw error;
         }
-        throw error;
       }
       if (next) {
         setReplica((active) => {

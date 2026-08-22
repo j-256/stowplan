@@ -15,9 +15,11 @@ import {
   applySuccessfulSyncResponse,
   inaccessibleWorkspaceAccess,
 } from "../src/client/sync-reconciliation";
-import type {
-  LocalReplica,
-  OutboxEntry,
+import {
+  applyConfirmedServerDeletion,
+  SERVER_DELETION_OUTBOX_ERROR,
+  type LocalReplica,
+  type OutboxEntry,
 } from "../src/client/local-replica";
 
 function summary(
@@ -224,6 +226,61 @@ describe("client sync reconciliation", () => {
       ),
       status: "blocked",
     });
+  });
+
+  it("keeps confirmed deletion terminal after a late sync refusal", () => {
+    const { first, replica } = editedReplica();
+    const accountId = "usr_editor";
+    const attemptedAt = "2026-07-25T00:04:00.000Z";
+    const deleted = applyConfirmedServerDeletion(
+      {
+        ...replica,
+        authorization: serverWorkspaceAccess("editor", {
+          accessRevision: 2,
+          accountId,
+          membershipRevision: 4,
+        }),
+        outbox: replica.outbox.map((entry) => ({
+          ...entry,
+          accountId,
+        })),
+      },
+      serverWorkspaceAccess("editor", {
+        accessRevision: 3,
+        accountId,
+        membershipRevision: 5,
+        status: "deleted",
+      }),
+    );
+    const inaccessible = inaccessibleWorkspaceAccess(
+      deleted.authorization,
+      accountId,
+      attemptedAt,
+    );
+
+    const next = applyRefusedSyncResponse(
+      deleted,
+      [first],
+      [],
+      "Workspace was not found or is inaccessible",
+      attemptedAt,
+      true,
+      { authorization: inaccessible, summary: null },
+    );
+
+    expect(next.authorization).toMatchObject({
+      accessRevision: 3,
+      membershipRevision: 5,
+      status: "deleted",
+    });
+    expect(next.outbox).toEqual(deleted.outbox);
+    expect(next.outbox).toHaveLength(2);
+    for (const entry of next.outbox) {
+      expect(entry).toMatchObject({
+        error: expect.stringContaining(SERVER_DELETION_OUTBOX_ERROR),
+        status: "blocked",
+      });
+    }
   });
 
   it("commits canonical server state and authorization after success", () => {
