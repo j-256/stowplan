@@ -2,7 +2,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { PlaywrightTestConfig } from "@playwright/test";
 import { describe, expect, it } from "vitest";
-import config from "../playwright.config";
+import config, {
+  PLAYWRIGHT_WORKER_LIMITS,
+} from "../playwright.config";
 
 const FULL_CHROMIUM_CHANNEL = "chromium";
 const IN_PROCESS_GPU_ARGUMENT = "--in-process-gpu";
@@ -43,6 +45,17 @@ describe("Playwright browser process isolation", () => {
         IN_PROCESS_GPU_ARGUMENT,
       );
     }
+  });
+
+  it("bounds concurrent full-browser launches", () => {
+    expect(PLAYWRIGHT_WORKER_LIMITS).toEqual({
+      ci: 1,
+      local: 4,
+    });
+    expect([
+      PLAYWRIGHT_WORKER_LIMITS.ci,
+      PLAYWRIGHT_WORKER_LIMITS.local,
+    ]).toContain(config.workers);
   });
 
   it("leaves WebKit on its standard browser channel", () => {

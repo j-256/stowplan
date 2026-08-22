@@ -5,6 +5,10 @@ const E2E_DATABASE_PATH =
   `${TEST_OUTPUT_DIRECTORY}/stowplan-e2e.sqlite`;
 const E2E_IDENTITY_DIGEST_KEY =
   "playwright-identity-digest-key-at-least-32-bytes";
+export const PLAYWRIGHT_WORKER_LIMITS = Object.freeze({
+  ci: 1,
+  local: 4,
+});
 const FULL_CHROMIUM_CHANNEL = "chromium";
 const CHROMIUM_LAUNCH_ARGUMENTS = [
   // Trust the ephemeral E2E certificate so service workers run under HTTPS
@@ -21,6 +25,9 @@ export default defineConfig({
   fullyParallel: false,
   retries: process.env.CI ? 2 : 0,
   reporter: process.env.CI ? "github" : "list",
+  workers: process.env.CI
+    ? PLAYWRIGHT_WORKER_LIMITS.ci
+    : PLAYWRIGHT_WORKER_LIMITS.local,
   use: {
     baseURL: "https://localhost:3100",
     ignoreHTTPSErrors: true,
