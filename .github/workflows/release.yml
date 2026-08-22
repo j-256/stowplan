@@ -14,10 +14,17 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
-      - run: npx playwright install --with-deps chromium webkit
+      - run: npx playwright install --with-deps --no-shell chromium webkit
       - run: npm run verify:ready
         env:
           DOCS_PAGES_BASE: /${{ github.event.repository.name }}/
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-traces
+          path: test-results/**/trace.zip
+          if-no-files-found: ignore
+          retention-days: 30
       - run: bash scripts/deploy-checks.sh
       - run: bash scripts/release-artifacts.sh
       - name: Create GitHub release

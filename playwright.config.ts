@@ -5,13 +5,13 @@ const E2E_DATABASE_PATH =
   `${TEST_OUTPUT_DIRECTORY}/stowplan-e2e.sqlite`;
 const E2E_IDENTITY_DIGEST_KEY =
   "playwright-identity-digest-key-at-least-32-bytes";
+const FULL_CHROMIUM_CHANNEL = "chromium";
 const CHROMIUM_LAUNCH_ARGUMENTS = [
   // Trust the ephemeral E2E certificate so service workers run under HTTPS
   "--ignore-certificate-errors",
-  // Remove the separate GPU-process startup path implicated by issue 20
-  "--in-process-gpu",
 ];
 const CHROMIUM_USE = {
+  channel: FULL_CHROMIUM_CHANNEL,
   launchOptions: { args: CHROMIUM_LAUNCH_ARGUMENTS },
 };
 

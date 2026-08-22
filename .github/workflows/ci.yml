@@ -43,7 +43,7 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
-      - run: npx playwright install --with-deps chromium webkit
+      - run: npx playwright install --with-deps --no-shell chromium webkit
       - run: bash scripts/verify-browser.sh
       # Traces for retried attempts are the only evidence an intermittent
       # failure leaves behind, and the run that produced them is where they
