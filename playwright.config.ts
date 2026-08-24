@@ -21,7 +21,7 @@ const CHROMIUM_USE = {
 
 export default defineConfig({
   outputDir: TEST_OUTPUT_DIRECTORY,
-  testDir: "tests/e2e",
+  testDir: "test/e2e",
   fullyParallel: false,
   retries: process.env.CI ? 2 : 0,
   reporter: process.env.CI ? "github" : "list",

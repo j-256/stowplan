@@ -14,7 +14,7 @@ export default defineConfig({
     }),
   ],
   test: {
-    include: ["tests/live-relay/**/*.worker-test.ts"],
+    include: ["test/live-relay/**/*.worker-test.ts"],
     reporters: ["default"],
   },
 });

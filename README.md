@@ -95,7 +95,7 @@ docs/                VitePress user, operator, maintainer, and agent docs
 cloudflare/          Parameterized Access, WAF, and rate-limit desired state
 worker/              Hibernating live-collaboration relay for Cloudflare
 scripts/             Build, smoke, deployment, and reconciliation automation
-tests/               Domain, sync, adapter, offline, and auth tests
+test/                Domain, sync, adapter, offline, and auth tests
 ```
 
 ## Verify

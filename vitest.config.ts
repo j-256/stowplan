@@ -13,7 +13,7 @@ export default defineConfig({
             },
         },
         environment: "node",
-        include: ["tests/**/*.test.ts"],
+        include: ["test/**/*.test.ts"],
         reporters: ["default"],
     },
 });

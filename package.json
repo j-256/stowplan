@@ -34,7 +34,7 @@
     "test": "npm run check:docs-cover && npm run typecheck && npm run lint && npm run test:unit && npm run build && npm run test:render",
     "test:unit": "vitest run",
     "test:live-relay": "vitest run --config vitest.live.config.ts",
-    "test:render": "node --test tests/rendered-html.test.mjs",
+    "test:render": "node --test test/rendered-html.test.mjs",
     "test:node-smoke": "node scripts/smoke-node.mjs",
     "test:next-dev-smoke": "node scripts/smoke-next-dev.mjs",
     "test:e2e": "playwright test",
