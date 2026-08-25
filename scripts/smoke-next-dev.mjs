@@ -1,11 +1,27 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { GUEST_LINK_EXPIRY_HOURS } from "../src/shared/quotas.js";
 
-const origin = "http://127.0.0.1:3000";
+async function availablePort() {
+  const server = createServer();
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  assert(address && typeof address === "object");
+  await new Promise((resolve, reject) => {
+    server.close(error => error ? reject(error) : resolve());
+  });
+  return address.port;
+}
+
+const port = await availablePort();
+const origin = `http://127.0.0.1:${port}`;
 const workspaceId = `ws_next_d1_smoke_${process.pid}`;
 const workspaceName = `Next D1 smoke ${process.pid}`;
 const workspaceReturnTo = `/workspaces/${workspaceId}/inventory`;
@@ -103,7 +119,7 @@ if (migration.status !== 0) {
 }
 
 console.log("Starting Next development server with OpenNext bindings…");
-const child = spawn("bash", ["scripts/sites-env.sh", "--", "./node_modules/.bin/next", "dev", "--hostname", "127.0.0.1", "--port", "3000"], {
+const child = spawn("bash", ["scripts/sites-env.sh", "--", "./node_modules/.bin/next", "dev", "--hostname", "127.0.0.1", "--port", String(port)], {
   cwd: process.cwd(),
   env: {
     ...process.env,
