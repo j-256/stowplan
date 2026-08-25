@@ -29,6 +29,10 @@ group "full dependency audit"
 npm audit
 endgroup
 
+group "documentation cover"
+npm run check:docs-cover
+endgroup
+
 group "typecheck"
 npm run typecheck
 endgroup

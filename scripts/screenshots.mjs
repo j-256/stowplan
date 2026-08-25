@@ -22,7 +22,7 @@
 import { chromium } from 'playwright';
 import { spawn } from 'node:child_process';
 import { request as httpsRequest } from 'node:https';
-import { mkdirSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -31,6 +31,7 @@ const ROOT = join(HERE, '..');
 // Not docs/: that directory is the VitePress documentation site. README images
 // live in a dedicated screenshots/ directory at the repo root.
 const OUT = process.argv[2] || join(ROOT, 'screenshots');
+const COVER = join(ROOT, 'docs', 'screenshots', 'cover.png');
 
 // playwright-node-server.mjs guards that STOWPLAN_SQLITE_PATH resolves under
 // ./test-results, so the throwaway db has to live there (not a tmpdir).
@@ -221,6 +222,12 @@ async function main() {
       }
 
       await context.close();
+    }
+
+    if (process.argv[2] === undefined) {
+      mkdirSync(dirname(COVER), { recursive: true });
+      copyFileSync(join(OUT, 'plan.png'), COVER);
+      console.log('  wrote docs/screenshots/cover.png');
     }
 
     await browserInstance.close();
