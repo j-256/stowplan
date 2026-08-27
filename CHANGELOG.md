@@ -2,6 +2,17 @@
 
 All notable changes follow Keep a Changelog. Versions use Semantic Versioning.
 
+## [1.2.3] - 2026-08-27
+
+### Added
+
+- Added a verified product cover image to the project documentation.
+
+### Fixed
+
+- Preserved queued local changes after server workspace deletion as inspectable refused work with a deletion-specific recovery reason, without allowing a late response to replace the terminal deletion state.
+- Kept Search and jump keyboard focus aligned with its highlighted result when the list moves beneath a stationary pointer.
+
 ## [1.2.2] - 2026-08-21
 
 ### Changed
