@@ -1,11 +1,11 @@
-FROM node:24.18.1-alpine AS build
+FROM node:26.8.1-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
 RUN npm run build:next && cp -R public .next/standalone/public && mkdir -p .next/standalone/.next && cp -R .next/static .next/standalone/.next/static && npm prune --omit=dev
 
-FROM node:24.18.1-alpine
+FROM node:26.8.1-alpine
 ENV NODE_ENV=production PORT=3000 STOWPLAN_SQLITE_PATH=/data/stowplan.sqlite
 WORKDIR /app
 COPY --from=build /app .
