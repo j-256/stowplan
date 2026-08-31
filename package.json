@@ -47,12 +47,16 @@
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
     "docs:check": "node scripts/check-docs-build.mjs",
+    "docs:publish:stamp": "node scripts/docs-publication.mjs stamp",
+    "docs:publish:verify": "node scripts/docs-publication.mjs verify",
     "docs:preview": "vitepress preview docs",
     "build:next": "bash scripts/sites-env.sh -- bash scripts/with-clean-next-output.sh -- next build",
     "build:cloudflare": "bash scripts/sites-env.sh -- opennextjs-cloudflare build",
     "build:live-relay": "wrangler deploy --dry-run --outdir .live-relay-dist --config wrangler.live.jsonc",
     "preview:cloudflare": "bash scripts/sites-env.sh -- opennextjs-cloudflare build && bash scripts/sites-env.sh -- opennextjs-cloudflare preview",
     "deploy:cloudflare": "bash scripts/sites-env.sh -- opennextjs-cloudflare build && bash scripts/sites-env.sh -- opennextjs-cloudflare deploy",
+    "deploy:docs": "wrangler deploy --config wrangler.docs.jsonc",
+    "deploy:docs:dry-run": "wrangler deploy --dry-run --config wrangler.docs.jsonc --outdir .wrangler/docs-dry-run",
     "deploy:live-relay": "wrangler deploy --config wrangler.live.jsonc"
   },
   "dependencies": {

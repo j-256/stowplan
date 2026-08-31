@@ -20,8 +20,14 @@ endgroup() {
 group "deployment script syntax"
 bash -n \
   scripts/cloudflare-access.sh \
-  scripts/cloudflare-edge.sh \
-  scripts/github-pages.sh
+  scripts/cloudflare-edge.sh
+endgroup
+
+group "documentation Worker"
+DOCS_BASE=/ npm run docs:build
+DOCS_BASE=/ npm run docs:check
+npm run docs:publish:stamp -- --revision "$(git rev-parse HEAD)"
+npm run deploy:docs:dry-run
 endgroup
 
 group "cloudflare access desired state"

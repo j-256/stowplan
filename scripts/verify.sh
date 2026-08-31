@@ -12,9 +12,9 @@ set -euo pipefail
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${project_root}"
 
-# GitHub Pages serves the docs under the repository name; workflows override
-# this so the path follows a rename. Root-hosted docs get the same validation
-docs_pages_base="${DOCS_PAGES_BASE:-/stowplan/}"
+# Keep a project-subpath build for portable static hosts alongside the
+# canonical root-hosted documentation Worker build
+docs_subpath_base="${DOCS_SUBPATH_BASE:-/stowplan/}"
 
 # Collapsible sections keep a failure locatable in one combined log. Outside
 # Actions these are inert markers, so local runs stay readable
@@ -45,14 +45,19 @@ group "unit and integration tests"
 npm run test:coverage
 endgroup
 
-group "docs build (${docs_pages_base})"
-DOCS_BASE="${docs_pages_base}" npm run docs:build
-DOCS_BASE="${docs_pages_base}" npm run docs:check
+group "docs compatibility build (${docs_subpath_base})"
+DOCS_BASE="${docs_subpath_base}" npm run docs:build
+DOCS_BASE="${docs_subpath_base}" npm run docs:check
 endgroup
 
 group "docs build (/)"
 DOCS_BASE=/ npm run docs:build
 DOCS_BASE=/ npm run docs:check
+endgroup
+
+group "documentation Worker dry run"
+npm run docs:publish:stamp -- --revision "$(git rev-parse HEAD)"
+npm run deploy:docs:dry-run
 endgroup
 
 group "sites build"

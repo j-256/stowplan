@@ -23,6 +23,8 @@ npm run test:coverage
 npm run test:live-relay
 DOCS_BASE=/stowplan/ npm run docs:build && DOCS_BASE=/stowplan/ npm run docs:check
 DOCS_BASE=/ npm run docs:build && DOCS_BASE=/ npm run docs:check
+npm run docs:publish:stamp -- --revision "$(git rev-parse HEAD)"
+npm run deploy:docs:dry-run
 npm run build
 npm run test:render
 npm run build:next
@@ -32,7 +34,7 @@ npm run build:cloudflare
 npm run build:live-relay
 bash scripts/verify-browser.sh
 npx wrangler deploy --dry-run --config wrangler.jsonc
-bash -n scripts/cloudflare-access.sh scripts/cloudflare-edge.sh scripts/github-pages.sh
+bash -n scripts/cloudflare-access.sh scripts/cloudflare-edge.sh
 bash scripts/cloudflare-access.sh check
 bash scripts/cloudflare-edge.sh check
 npm sbom --omit=dev --sbom-format cyclonedx > stowplan-sbom.cdx.json
@@ -87,7 +89,7 @@ Stowplan pins the newest Node 24 LTS patch in `.nvmrc` as the deployment default
 3. Run every gate above from a clean checkout.
 4. Verify Google plus production Turnstile, ordinary-user, guest, disabled, banned, session-revocation, quota, circuit, and Access-protected database-admin paths with operator credentials.
 5. Check light/dark/system, reduced motion, keyboard-only, screen-reader labels, phone and tablet orientations, compact desktop, and wide desktop.
-6. Build docs with `/stowplan/` and `/` bases; inspect generated links.
+6. Build docs with `/stowplan/` and `/` bases, dry-run the documentation Worker, and inspect generated links.
 7. Generate truthful screenshots from the final build.
 8. Generate an SBOM, review licenses, update and commit the changelog, then run `npm version <major|minor|patch>` from clean `main`. The `preversion` lifecycle rejects every other branch, and project npm configuration preserves npm's default version commit and annotated `v` tag format.
 9. Verify `AUTH_ACCESS_MIGRATION_ENABLED` and `AUTH_ADMIN_RECOVERY_TOKEN` are absent or disabled outside an approved migration or recovery window, the retired email-list setting is not used as authority, and the admin inventory reports zero active pre-Google sessions before Account leaves the Access perimeter.

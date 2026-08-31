@@ -25,11 +25,13 @@
 | `NEXT_PUBLIC_DOCS_URL` | no | build/client | Independently hosted full documentation link |
 | `NEXT_PUBLIC_PRIVACY_POLICY_URL` | public deployment | build/client | Privacy policy linked from the app and sign-in surface |
 | `NEXT_PUBLIC_TERMS_OF_SERVICE_URL` | public deployment | build/client | Terms linked from the app and required sign-in agreement |
-| `DOCS_BASE` | docs build | build | `/repo/` for project Pages, `/` for root hosts |
+| `DOCS_BASE` | docs build | build | `/` for the canonical documentation Worker, or `/repo/` for compatible project-subpath hosts |
 | `DOCS_APPLICATION_URL` | no | docs build | Application origin used by the docs site's direct demo links |
 | `DOCS_PRIVACY_POLICY_URL` | public deployment | docs build | Privacy policy linked from documentation; defaults to `/privacy` on `DOCS_APPLICATION_URL` |
 | `DOCS_TERMS_OF_SERVICE_URL` | public deployment | docs build | Terms linked from documentation; defaults to `/terms` on `DOCS_APPLICATION_URL` |
-| `DOCS_REPOSITORY_URL` | no | docs build | Source link; the Pages workflow derives it for forks |
+| `DOCS_REPOSITORY_URL` | no | docs build | Source link; the documentation workflow derives it for forks |
+| `CLOUDFLARE_ACCOUNT_ID` | docs deployment | GitHub environment variable | Account that owns the assets-only documentation Worker |
+| `CLOUDFLARE_WORKERS_DEPLOY_TOKEN` | docs deployment | GitHub environment secret | Account-owned Workers Scripts Write token used only to publish the documentation Worker |
 
 Commit only `.env.example`-style names and harmless defaults. OAuth secrets, session values, guest URLs, Access assertions, and exported production data are secrets.
 

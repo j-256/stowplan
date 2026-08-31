@@ -11,6 +11,6 @@ The domain, planner, command/history engine, sync protocol, and `SnapshotStore` 
 | [Railway](/deploy/railway) | SQLite Railway Volume | Compatible recipe | Volume available on free/trial; usage limits apply |
 | [Render](/deploy/render) | SQLite persistent disk | Compatible recipe | Persistent disks require a paid service |
 
-The documentation site is independent: GitHub Pages is canonical and costs no Worker requests; Cloudflare Pages or any static host is compatible.
+The documentation site is independent: the official host uses an assets-only [Cloudflare Worker](/deploy/documentation-worker), while Cloudflare Pages or any static host remains compatible for forks.
 
 Every deployment needs HTTPS in production because session cookies are `Secure`. Persist the database, set `AUTH_BASE_URL`, configure at least one identity adapter, publish an operator-specific Privacy Policy and reviewed Terms, and test `/api/health`, login, local capture, sync, export, and admin access before inviting users. The included official-host legal documents are not reusable by another operator because infrastructure, retention, contact details, service promises, and legal responsibilities differ.

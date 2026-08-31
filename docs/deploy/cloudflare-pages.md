@@ -1,6 +1,6 @@
 # Cloudflare Pages documentation
 
-Cloudflare Pages is an optional static-docs host; the build output is ordinary HTML/CSS/JS.
+Cloudflare Pages is an optional static-docs host for forks; the official documentation uses the assets-only [Cloudflare Worker](/deploy/documentation-worker). The build output is ordinary HTML/CSS/JS.
 
 Dashboard settings:
 

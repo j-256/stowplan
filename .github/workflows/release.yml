@@ -17,7 +17,7 @@ jobs:
       - run: npx playwright install --with-deps --no-shell chromium webkit
       - run: npm run verify:ready
         env:
-          DOCS_PAGES_BASE: /${{ github.event.repository.name }}/
+          DOCS_SUBPATH_BASE: /${{ github.event.repository.name }}/
       - if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:

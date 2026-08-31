@@ -114,7 +114,7 @@ bash scripts/release-artifacts.sh
 
 Both need no credentials and reach no network, so they run on every push rather than first executing when a tag is already published.
 
-The GitHub Pages workflow derives the deployment base from the Pages site metadata; the release gate validates both the project subpath and domain root. The application production deployment is Sites, while GitHub Pages serves the canonical documentation at `docs.stowplan.lasers.app`. The [Cloudflare runbook](https://docs.stowplan.lasers.app/deploy/cloudflare) separates reproducible Sites artifact preparation and connector handoff from direct Cloudflare bootstrap, Access, WAF, rate-limit, migration, secret, deploy, backup, and recovery commands.
+The documentation workflow builds and validates an assets-only Cloudflare Worker, then deploys the exact verified artifact through a protected environment. The release gate still validates both the project subpath and domain root for portable static hosting. The application production deployment is Sites, while Worker `stowplan-docs` serves the canonical documentation at `docs.stowplan.lasers.app`. The [Cloudflare runbook](https://docs.stowplan.lasers.app/deploy/cloudflare) separates reproducible Sites artifact preparation and connector handoff from direct Cloudflare bootstrap, Access, WAF, rate-limit, migration, secret, deploy, backup, and recovery commands.
 
 ## Security and privacy
 

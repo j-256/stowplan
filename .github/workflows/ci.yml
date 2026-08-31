@@ -21,7 +21,7 @@ jobs:
       - run: npm ci
       - run: bash scripts/verify.sh
         env:
-          DOCS_PAGES_BASE: /${{ github.event.repository.name }}/
+          DOCS_SUBPATH_BASE: /${{ github.event.repository.name }}/
       # Exercise the release-only scripts on every push so a break surfaces
       # here rather than when a tag is already published. Both are offline and
       # need no credentials; neither publishes anything
