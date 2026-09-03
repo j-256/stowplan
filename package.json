@@ -102,6 +102,7 @@
     "@esbuild-kit/core-utils": {
       "esbuild": "0.25.12"
     },
+    "browserslist": "4.28.8",
     "fast-uri": "3.1.7",
     "glob@12.0.0": {
       "minimatch": "10.2.6"
@@ -113,6 +114,7 @@
       "brace-expansion": "2.1.4"
     },
     "postcss": "8.5.24",
+    "qs": "6.16.0",
     "sharp": "0.35.3",
     "undici": "7.29.0",
     "vitepress": {
