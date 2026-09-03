@@ -5,6 +5,7 @@ All responses containing workspace or administrative data use `Cache-Control: no
 | Endpoint | Method | Auth | Purpose |
 |---|---|---|---|
 | `/api/health` | GET | none | Process/storage readiness |
+| `/api/version` | GET | none | Read the deployed package version as uncached plain text |
 | `/api/workspaces` | GET | active session | List only the caller's active workspace memberships |
 | `/api/workspaces/:workspaceId/access` | GET | workspace member | Read the caller's role, capabilities, workspace summary, guest-link policy, and owner-only quota usage |
 | `/api/workspaces/:workspaceId/members` | GET | workspace owner | List and search members |
