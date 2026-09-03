@@ -2,6 +2,12 @@
 
 All notable changes follow Keep a Changelog. Versions use Semantic Versioning.
 
+## [1.2.5] - 2026-09-03
+
+### Added
+
+- Added an uncached `/api/version` endpoint that reports the deployed package version as plain text.
+
 ## [1.2.4] - 2026-09-03
 
 ### Changed
