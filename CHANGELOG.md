@@ -2,6 +2,21 @@
 
 All notable changes follow Keep a Changelog. Versions use Semantic Versioning.
 
+## [1.2.4] - 2026-09-03
+
+### Changed
+
+- Moved public documentation delivery from GitHub Pages to a revision-verified Cloudflare Worker while retaining the canonical documentation domain and portable root and subpath builds.
+- Updated supported application and build dependencies and expanded Dependabot coverage for grouped dependency and GitHub Actions updates.
+
+### Fixed
+
+- Restored Node 26 container builds with a Debian-based image that supplies Bash and glibc for project scripts and workerd.
+
+### Security
+
+- Updated `fast-uri` to 3.1.7 to address CVE-2026-75931 and pinned patched `browserslist` and `qs` resolutions so the complete npm audit reports no vulnerabilities.
+
 ## [1.2.3] - 2026-08-27
 
 ### Added
