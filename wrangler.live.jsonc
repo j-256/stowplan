@@ -3,6 +3,21 @@
   "name": "stowplan-live",
   "main": "worker/live-relay.ts",
   "workers_dev": false,
+  "preview_urls": false,
+  "limits": {
+    "cpu_ms": 250,
+    "subrequests": 10
+  },
+  "ratelimits": [
+    {
+      "name": "LIVE_WORKSPACE_RATE_LIMITER",
+      "namespace_id": "256004",
+      "simple": {
+        "limit": 600,
+        "period": 60
+      }
+    }
+  ],
   "routes": [
     {
       "pattern": "live.stowplan.lasers.app",

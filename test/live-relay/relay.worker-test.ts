@@ -46,6 +46,19 @@ async function publish(value: LiveNotification): Promise<Response> {
   }), env);
 }
 
+function rejectingRateLimitEnv(keys: string[]) {
+  return {
+    LIVE_RELAY_SECRET: SECRET,
+    LIVE_WORKSPACE_RATE_LIMITER: {
+      async limit({ key }: { key: string }) {
+        keys.push(key);
+        return { success: false };
+      },
+    } as RateLimit,
+    WORKSPACES: env.WORKSPACES,
+  };
+}
+
 async function connect(input: {
   accessRevision?: number;
   connectionId: string;
@@ -148,6 +161,34 @@ describe("live relay Worker", () => {
       },
     ), env);
     expect(mismatched.status).toBe(401);
+  });
+
+  it("rate limits authenticated traffic by workspace before Durable Object work", async () => {
+    const workspaceId = "ws_rate_limited";
+    const keys: string[] = [];
+    const body = JSON.stringify(notification({ workspaceId }));
+    const timestamp = String(Date.now());
+    const signature = await signLiveRelayRequest(body, timestamp, SECRET);
+    const response = await relay.fetch(new Request(
+      "https://relay.example/v1/publish",
+      {
+        body,
+        headers: {
+          "content-type": "application/json",
+          [LIVE_RELAY_SIGNATURE_HEADER]: signature,
+          [LIVE_RELAY_TIMESTAMP_HEADER]: timestamp,
+        },
+        method: "POST",
+      },
+    ), rejectingRateLimitEnv(keys));
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get("retry-after")).toBe("60");
+    await expect(response.json()).resolves.toEqual({
+      code: "RATE_LIMITED",
+      error: "Live workspace traffic is temporarily rate limited",
+    });
+    expect(keys).toEqual([`publish:${workspaceId}`]);
   });
 
   it("fans out revision signals while suppressing the source connection", async () => {

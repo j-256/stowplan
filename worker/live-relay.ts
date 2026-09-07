@@ -17,6 +17,7 @@ import {
 
 export interface LiveRelayEnv {
   LIVE_RELAY_SECRET: string;
+  LIVE_WORKSPACE_RATE_LIMITER: RateLimit;
   WORKSPACES: DurableObjectNamespace<WorkspaceLiveRoom>;
 }
 
@@ -41,6 +42,9 @@ const INTERNAL_WORKSPACE_ID_HEADER = "x-live-workspace-id";
 const LIVE_CLOSE_INVALID_MESSAGE = 4400;
 const LIVE_CLOSE_ACCESS_REVOKED = 4403;
 const LIVE_CLOSE_WORKSPACE_DELETED = 4410;
+const LIVE_RATE_LIMIT_RETRY_SECONDS = 60;
+
+type LiveRateLimitedOperation = "connect" | "publish";
 
 function responseProblem(
   code: string,
@@ -52,6 +56,30 @@ function responseProblem(
     {
       headers: { "cache-control": "no-store" },
       status,
+    },
+  );
+}
+
+async function enforceWorkspaceRateLimit(
+  env: LiveRelayEnv,
+  operation: LiveRateLimitedOperation,
+  workspaceId: string,
+): Promise<Response | null> {
+  const result = await env.LIVE_WORKSPACE_RATE_LIMITER.limit({
+    key: `${operation}:${workspaceId}`,
+  });
+  if (result.success) return null;
+  return Response.json(
+    {
+      code: "RATE_LIMITED",
+      error: "Live workspace traffic is temporarily rate limited",
+    },
+    {
+      headers: {
+        "cache-control": "no-store",
+        "retry-after": String(LIVE_RATE_LIMIT_RETRY_SECONDS),
+      },
+      status: 429,
     },
   );
 }
@@ -346,6 +374,12 @@ async function connect(
       401,
     );
   }
+  const rateLimited = await enforceWorkspaceRateLimit(
+    env,
+    "connect",
+    capability.workspaceId,
+  );
+  if (rateLimited) return rateLimited;
   const id = env.WORKSPACES.idFromName(capability.workspaceId);
   return env.WORKSPACES.get(id).fetch(
     new Request("https://workspace.internal/connect", {
@@ -411,6 +445,12 @@ async function publish(
       400,
     );
   }
+  const rateLimited = await enforceWorkspaceRateLimit(
+    env,
+    "publish",
+    notification.workspaceId,
+  );
+  if (rateLimited) return rateLimited;
   const id = env.WORKSPACES.idFromName(notification.workspaceId);
   return env.WORKSPACES.get(id).fetch(
     new Request("https://workspace.internal/publish", {

@@ -6,6 +6,7 @@ declare global {
   namespace Cloudflare {
     interface Env {
       LIVE_RELAY_SECRET: string;
+      LIVE_WORKSPACE_RATE_LIMITER: RateLimit;
       WORKSPACES: DurableObjectNamespace<WorkspaceLiveRoom>;
     }
   }
