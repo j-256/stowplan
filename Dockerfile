@@ -1,11 +1,11 @@
-FROM node:26.8.1-bookworm-slim AS build
+FROM node:26.8.2-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
 RUN npm run build:next && cp -R public .next/standalone/public && mkdir -p .next/standalone/.next && cp -R .next/static .next/standalone/.next/static && npm prune --omit=dev
 
-FROM node:26.8.1-bookworm-slim
+FROM node:26.8.2-bookworm-slim
 ENV NODE_ENV=production PORT=3000 STOWPLAN_SQLITE_PATH=/data/stowplan.sqlite
 WORKDIR /app
 COPY --from=build /app .
