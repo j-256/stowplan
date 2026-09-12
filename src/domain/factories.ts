@@ -149,7 +149,7 @@ export function createEnvelope<T extends Command>(
     command: T,
     options: Partial<Pick<
         CommandEnvelope<T>,
-        "actorId" | "authorization" | "deviceId" | "id" | "timestamp"
+        "actorId" | "authorization" | "deviceId" | "expectations" | "id" | "timestamp"
     >> = {},
 ): CommandEnvelope<T> {
     return {
@@ -160,7 +160,9 @@ export function createEnvelope<T extends Command>(
         baseRevision: state.workspace.revision,
         command,
         deviceId: options.deviceId ?? "local-device",
-        expectations: expectationsForCommand(state, command),
+        expectations: options.expectations === undefined
+            ? expectationsForCommand(state, command)
+            : structuredClone(options.expectations),
         id: options.id ?? newId("cmd"),
         timestamp: options.timestamp ?? nowIso(),
         workspaceId: state.workspace.id,

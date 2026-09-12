@@ -34,6 +34,11 @@ const patchPaths: Record<string, Set<string>> = {
         "archivedAt",
         "category",
         "constraints",
+        "constraints.avoidHumidity",
+        "constraints.avoidWarmth",
+        "constraints.foodOnly",
+        "constraints.keepTogether",
+        "constraints.requiredTags",
         "description",
         "dimensions",
         "frequency",
@@ -209,6 +214,11 @@ function validPatchValue(target: string, path: string, value: unknown, id: strin
     if (path === "dimensions") return validDimensions(value);
     if (path === "conditions") return validConditions(value);
     if (path === "constraints") return validConstraints(value);
+    if (["constraints.avoidHumidity", "constraints.avoidWarmth", "constraints.foodOnly"].includes(path)) {
+        return typeof value === "boolean";
+    }
+    if (path === "constraints.keepTogether") return value === null || typeof value === "string";
+    if (path === "constraints.requiredTags") return isStringArray(value);
     if (path === "frequency") {
         return ["daily", "weekly", "monthly", "rarely"].includes(String(value));
     }

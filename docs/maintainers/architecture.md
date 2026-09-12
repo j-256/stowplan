@@ -62,6 +62,14 @@ The Sites manifest binds D1 as `DB`. `db/schema.ts` is the typed collaboration s
 
 Workspace snapshot schema 2 names the item's searchable free-text field `description`. Normalization upgrades schema 1 `notes` values in live items, retained whole-record and field history, queued item commands, and field expectations before validation or application. Adapters, local replicas, imports, restores, recovery bundles, and command application share that normalization path so an offline schema 1 edit keeps its conflict and undo meaning.
 
+## Bulk inventory editing
+
+`src/domain/bulk-edit.ts` converts opt-in shared edits into per-item `item.bulkUpdate` changes. Category, frequency, and tags are allowed top-level fields; placement requirements are partial constraint changes. Tag operations resolve separately against each selected record, and records with no actual change are omitted. Preview applies the real command to an isolated state and displays its meaningful item patches, affected plans, and completed spaces.
+
+The command validates the entire batch, rejects duplicate or unavailable targets, and reopens only completed spaces containing changed items after explicit confirmation. It emits one Activity entry with field-level item patches, capture-status patches, and affected-plan invalidation. Constraint patches and expectations address the individual supported leaves; snapshot and history validation allow and type-check those leaf paths. Names, quantities, descriptions, dimensions, units, and item placement are outside this command's edit scope.
+
+Expectations protect the selected fields, item location and archive state, and affected space capture and archive state. The view passes the reviewed expectations through `Commit` and command construction; the local mutation queue must not regenerate them from a newer state, including when earlier commands in that queue could otherwise be rebased. Unrelated field changes may merge, while conflicting changes refuse the whole batch. The accepted command follows normal IndexedDB persistence, workspace authorization, sync quotas, retry deduplication, and recovery without a bulk-specific endpoint or database migration. Older clients must load a build supporting the command and its constraint history paths before editing a workspace containing those changes.
+
 ## CSV bulk onboarding
 
 `src/domain/csv-import.ts` is the runtime-neutral boundary for bounded CSV parsing, header guesses, active-location matching, row normalization, and import planning. It has no browser, React, SQL, Node, or Cloudflare dependency. The client decodes UTF-8 bytes with fatal error handling and keeps the raw file outside IndexedDB and network requests.

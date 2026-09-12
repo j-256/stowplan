@@ -78,6 +78,8 @@ Quota and circuit tests assert both the preflight response and the transaction-t
 
 The release gate audits the complete dependency tree and fails on every reported severity. Production packages and development tooling can both process inputs, contact services, or expose local servers during builds, so keep every reported advisory resolved and run tooling only against trusted source on localhost or in isolated CI.
 
+Bulk-edit regressions cover no-op selection, tag operations, per-item and per-constraint expectations, explicit completed-space reopening, atomic refusal, history validation and reversal, and independent later fields. Node SQLite and D1 adapter tests persist the same queued command, deduplicate its replay, and retain a refused batch. Browser coverage exercises the edit/review/save flow offline, selection filtering, cancellation and focus restoration, accessibility, responsive overflow, undo, and stale review after another tab edits a selected field.
+
 ## Version policy
 
 Stowplan pins the newest Node 24 LTS patch in `.nvmrc` as the deployment default, verifies the oldest supported Node 24 runtime used by Sites, and also verifies Node 26 in CI. Both supported Node lines use npm 11 because the committed lockfile depends on its peer-dependency layout. ESLint stays on the newest 9.x release until the React/JSX plugins bundled by `eslint-config-next` accept ESLint 10; TypeScript stays on the newest 6.x release accepted by `typescript-eslint`; and Vinext remains the Sites-preview adapter until its 1.x line is stable. The canonical Cloudflare build is OpenNext, so a preview-adapter pre-release never blocks a production dependency update.

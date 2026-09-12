@@ -62,12 +62,17 @@ import type {
 const CsvImportDialog = dynamic(
   () => import("./csv-import-dialog").then((module) => module.CsvImportDialog),
 );
+const BulkEditDialog = dynamic(
+  () => import("./bulk-edit-dialog").then((module) => module.BulkEditDialog),
+);
 
 export function Inventory({ state, commit, editing, editFocus, locationFilter, onEditingChange, onLocationFilterChange, onOpenLocation }: { state: WorkspaceState; commit: Commit; editing: string | null; editFocus?: GuidanceFocus; locationFilter: string; onEditingChange: (id: string | null) => void; onLocationFilterChange: (id: string) => void; onOpenLocation: (id: string) => void }) {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [sortBy, setSortBy] = useState<"location" | "name" | "quantity">("name");
   const [selected, setSelected] = useState<string[]>([]);
+  const [bulkEditSelection, setBulkEditSelection] = useState<string[] | null>(null);
+  const bulkEditTrigger = useRef<HTMLButtonElement | null>(null);
   const [moveDestinationId, setMoveDestinationId] = useState("");
   const [pendingBulkMove, setPendingBulkMove] =
     useState<PendingItemBulkMove | null>(null);
@@ -410,7 +415,7 @@ export function Inventory({ state, commit, editing, editFocus, locationFilter, o
       <div>
         <p className="eyebrow">Everything, regardless of container</p>
         <h2>All item records</h2>
-        <p>Search the whole workspace, then select records for an explicit move. Filter to one container only when physical order matters.</p>
+        <p>Search the whole workspace, then select records to edit or move together. Filter to one container only when physical order matters.</p>
       </div>
       <b>{shown.length} records</b>
     </div>
@@ -460,16 +465,44 @@ export function Inventory({ state, commit, editing, editFocus, locationFilter, o
       <span><strong>{filteredLocation.name} is read-only</strong><small>Reopen capture before editing, moving, or reordering its item records.</small></span>
       <button type="button" onClick={reopenFilteredCapture}><RotateCcw /> Reopen capture</button>
     </div>}
-    <p className="drag-hint">{filteredCaptureComplete ? "This completed container is available for review. Reopen capture to change its records." : canReorder ? `Showing one container. Drag handles or arrow buttons reorder ${shown.length} records here; use Edit / move to change containers.` : locationFilter && query.trim() ? "Search results are sorted for review. Clear the search before changing physical order." : "Showing all inventory. Select one or more records to move them, or use Edit / move for details and partial quantities."}</p>
+    <p className="drag-hint">{filteredCaptureComplete ? "This completed container is available for review. Reopen capture to change its records." : canReorder ? `Showing one container. Drag handles or arrow buttons reorder ${shown.length} records here; use Edit / move to change containers.` : locationFilter && query.trim() ? "Search results are sorted for review. Clear the search before changing physical order." : "Showing all inventory. Select records to edit or move together, or use Edit / move for details and partial quantities."}</p>
+    {shown.length > 0 && <div className="inventory-selection-toolbar">
+      <button
+        onClick={() => {
+          setSelected(activeSelection.length === shown.length ? [] : [...shownIds]);
+          setMoveDestinationId("");
+        }}
+        type="button"
+      >{activeSelection.length === shown.length ? "Clear selection" : `Select all ${countLabel(shown.length, "result")}`}</button>
+    </div>}
     <section className="panel inventory">{shown.map(inventoryRow)}{shown.length === 0 && <Empty title="No matching records" text="Clear a filter or capture something new." />}</section>
     {activeSelection.length > 0 && <div className="floating">
       <b>{activeSelection.length} selected</b>
+      <button
+        aria-haspopup="dialog"
+        onClick={() => { dismissFeedback(); setBulkEditSelection([...activeSelection]); }}
+        ref={bulkEditTrigger}
+        type="button"
+      >Edit selected</button>
       <select aria-label="Move selected items" name="bulkMoveDestination" value={moveDestinationId} onChange={(event) => { if (event.target.value) moveSelected(event.target.value); else setMoveDestinationId(""); }}>
         <option value="">Move to…</option>
         {locationOptions.map(({ depth, location }) => <option disabled={selectedItems.length > 0 && selectedItems.every((item) => item.locationId === location.id)} value={location.id} key={location.id}>{`${"  ".repeat(depth)}${depth ? "↳ " : ""}${location.code} · ${location.name}`}</option>)}
       </select>
       <button onClick={() => { setSelected([]); setMoveDestinationId(""); }}>Clear</button>
     </div>}
+    {bulkEditSelection && <BulkEditDialog
+      commit={commit}
+      itemIds={bulkEditSelection}
+      onClose={() => setBulkEditSelection(null)}
+      onSaved={(count) => {
+        setBulkEditSelection(null);
+        setSelected([]);
+        setMoveDestinationId("");
+        showFeedback(`${countLabel(count, "item record")} updated`, "success");
+      }}
+      returnFocusRef={bulkEditTrigger}
+      state={state}
+    />}
     <ModalDialog
       busy={bulkMoveBusy}
       description={pendingBulkMove && pendingBulkMoveDestination

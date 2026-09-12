@@ -164,6 +164,36 @@ export function expectationsForCommand(
         return [itemExpectation(item, "")];
     }
 
+    if (command.type === "item.bulkUpdate") {
+        const locationIds = new Set<string>();
+        const expectations = command.updates.flatMap(({ id, changes }) => {
+            const item = state.items.find((candidate) => candidate.id === id);
+            if (!item) return [];
+            locationIds.add(item.locationId);
+            return [
+                itemExpectation(item, "locationId"),
+                itemExpectation(item, "archivedAt"),
+                ...Object.keys(changes).flatMap((path): FieldExpectation[] =>
+                    path === "constraints"
+                        ? Object.keys(changes.constraints ?? {}).map((key) => ({
+                            id,
+                            target: "item",
+                            path: `constraints.${key}`,
+                            value: json(item.constraints[key as keyof typeof item.constraints]),
+                        }))
+                        : [itemExpectation(item, path as keyof ItemRecord)]
+                ),
+            ];
+        });
+        return [
+            ...expectations,
+            ...state.locations.filter((location) => locationIds.has(location.id)).flatMap((location) => [
+                locationExpectation(location, "captureStatus"),
+                locationExpectation(location, "archivedAt"),
+            ]),
+        ];
+    }
+
     if (command.type === "item.bulkCreate") {
         const locationIds = new Set(
             command.items.map((item) => item.locationId),

@@ -376,6 +376,23 @@ describe("synchronization", () => {
         expect(second.snapshot.workspace.revision).toBe(1);
     });
 
+    it("authorizes bulk editing for an editor and refuses the entire batch for a viewer", async () => {
+        const initial = editableDemoState();
+        const command = createEnvelope(initial, {
+            type: "item.bulkUpdate",
+            reopenCompletedParents: true,
+            updates: initial.items.slice(0, 2).map((item) => ({ id: item.id, changes: { category: "Camping" } })),
+        });
+        const options = { authorization: { basis: { membershipRevision: 11, workspaceAccessRevision: 7 }, userId: "usr_editor" } } as const;
+        const editor = new AuthorizedMemorySnapshotStore(initial);
+        const accepted = await synchronize(editor, initial.workspace.id, [command], options);
+        expect(accepted.receipts[0]?.status).toBe("applied");
+        expect(accepted.snapshot.items.slice(0, 2).every((item) => item.category === "Camping")).toBe(true);
+        const viewer = new AuthorizedMemorySnapshotStore(initial, "viewer");
+        await expect(synchronize(viewer, initial.workspace.id, [command], options)).rejects.toThrow(WorkspaceSyncAuthorizationError);
+        expect((await viewer.load(initial.workspace.id))?.items).toEqual(initial.items);
+    });
+
     it("authorizes and deduplicates an atomic bulk import", async () => {
         const initial = editableDemoState();
         const store = new AuthorizedMemorySnapshotStore(initial);

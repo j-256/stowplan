@@ -47,6 +47,10 @@ const itemChangeKeys = new Set([
     "tags",
     "unit",
 ]);
+const bulkItemChangeKeys = new Set(["category", "constraints", "frequency", "tags"]);
+const bulkConstraintChangeKeys = new Set([
+    "avoidHumidity", "avoidWarmth", "foodOnly", "keepTogether", "requiredTags",
+]);
 const locationKinds = new Set([
     "area",
     "bin",
@@ -127,6 +131,7 @@ function assertAllowedChanges(
     changes: unknown,
     allowed: Set<string>,
     entity: "item" | "location",
+    action = `${entity}.update`,
 ): asserts changes is Record<string, unknown> {
     if (!isRecord(changes)) {
         throw new DomainError("INVALID_CHANGES", `${entity} changes must be an object`);
@@ -137,7 +142,7 @@ function assertAllowedChanges(
     if (unknown) {
         throw new DomainError(
             "INVALID_CHANGES",
-            `${unknown} cannot be changed through ${entity}.update`,
+            `${unknown} cannot be changed through ${action}`,
         );
     }
 }
@@ -1385,6 +1390,77 @@ function normalPatches(
                 ...itemIds,
                 ...destinationIds,
             ],
+        };
+    }
+
+    if (command.type === "item.bulkUpdate") {
+        if (!Array.isArray(command.updates) || !command.updates.length) {
+            throw new DomainError("EMPTY_BULK_UPDATE", "Select at least one item to edit");
+        }
+        if (
+            command.reopenCompletedParents !== undefined &&
+            typeof command.reopenCompletedParents !== "boolean"
+        ) {
+            throw new DomainError(
+                "INVALID_REOPEN_CONFIRMATION",
+                "Completed-space confirmation must be true or false",
+            );
+        }
+        const seen = new Set<string>();
+        const changedItems: ItemRecord[] = [];
+        const itemPatches: FieldPatch[] = [];
+        for (const update of command.updates) {
+            if (!isRecord(update) || typeof update.id !== "string" || !update.id.trim()) {
+                throw new DomainError("INVALID_BULK_UPDATE", "Every item edit needs an item ID and changes");
+            }
+            if (seen.has(update.id)) {
+                throw new DomainError("DUPLICATE_ITEM_ID", "Edited item IDs must be unique");
+            }
+            seen.add(update.id);
+            const item = requireActiveItem(state, update.id);
+            requireActiveLocation(state, item.locationId);
+            assertAllowedChanges(update.changes, bulkItemChangeKeys, "item", command.type);
+            if ("constraints" in update.changes) {
+                assertAllowedChanges(update.changes.constraints, bulkConstraintChangeKeys, "item", command.type);
+            }
+            const next = {
+                ...clone(item),
+                ...clone(update.changes),
+                constraints: { ...clone(item.constraints), ...clone(update.changes.constraints ?? {}) },
+            };
+            validateItem(state, next);
+            const entries = Object.entries(update.changes).flatMap<readonly [string, unknown]>(([path, value]) =>
+                path === "constraints"
+                    ? Object.entries(value as Record<string, unknown>).map(([key, leaf]) => [`constraints.${key}`, leaf] as const)
+                    : [[path, value] as const]
+            ).filter(([path, value]) => !equal(readPath(item, path), value));
+            if (!entries.length) continue;
+            changedItems.push(item);
+            itemPatches.push(
+                ...entries.map(([path, value]) => patch("item", item.id, path, readPath(item, path), value)),
+                patch("item", item.id, "updatedAt", item.updatedAt, envelope.timestamp),
+                patch("item", item.id, "version", item.version, nextItemVersion(item)),
+            );
+        }
+        if (!changedItems.length) {
+            throw new DomainError(NO_CHANGES_ERROR, "No changes to save for the selected items");
+        }
+        const locationIds = [...new Set(changedItems.map((item) => item.locationId))];
+        if (!command.reopenCompletedParents) {
+            assertCaptureContentsEditable(state, locationIds.map((locationId) => ({
+                action: captureContentActions.updateItem,
+                locationId,
+            })));
+        }
+        const reopened = locationIds.some((id) => completeCaptureStatuses.has(requireActiveLocation(state, id).captureStatus));
+        return {
+            label: `Updated ${changedItems.length} item record${changedItems.length === 1 ? "" : "s"}${reopened ? " and reopened affected spaces" : ""}`,
+            patches: [
+                ...planInvalidationPatches(state, changedItems.map((item) => item.id), locationIds),
+                ...itemPatches,
+                ...bulkMoveCaptureProgressPatches(state, locationIds, null, envelope.timestamp),
+            ],
+            subjectIds: [...changedItems.map((item) => item.id), ...locationIds],
         };
     }
 

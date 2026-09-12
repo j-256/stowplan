@@ -7,6 +7,7 @@ import { validateImportSnapshot } from "../domain/import";
 import type {
   Command,
   CommandAuthorizationBasis,
+  FieldExpectation,
   SyncReceipt,
   WorkspaceState,
 } from "../domain/types";
@@ -293,7 +294,7 @@ interface StoreValue {
   catalogError: string | null;
   catalogHasMore: boolean;
   catalogLoading: boolean;
-  dispatch: (command: Command) => Promise<void>;
+  dispatch: (command: Command, expectations?: FieldExpectation[]) => Promise<void>;
   hubCards: WorkspaceHubCard[];
   initialize: (state: WorkspaceState) => Promise<void>;
   lastSyncAttemptAt: string | null;
@@ -1325,7 +1326,7 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
     clearSchedule();
   }, [clearRetry, clearSchedule]);
 
-  const dispatch = useCallback((command: Command) => {
+  const dispatch = useCallback((command: Command, expectations?: FieldExpectation[]) => {
     const visibleState = replica?.state;
     if (!visibleState) return Promise.resolve();
     const workspaceId = visibleState.workspace.id;
@@ -1350,6 +1351,7 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
         : undefined;
     const envelope = createEnvelope(visibleState, command, {
       authorization: commandAuthorization,
+      expectations,
     });
     const priorCommandIds = [...queuedCommandIds.current];
     queuedCommandIds.current.add(envelope.id);
@@ -1364,7 +1366,7 @@ export function StowplanProvider({ children }: { children: React.ReactNode }) {
               confirmedTerminalAccess.current.get(workspaceId),
             ),
           );
-          const effectiveEnvelope = canRebaseQueuedCommand(
+          const effectiveEnvelope = expectations === undefined && canRebaseQueuedCommand(
             current.state,
             envelope.baseRevision,
             priorCommandIds,

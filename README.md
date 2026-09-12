@@ -50,6 +50,7 @@ A mobile-first, local-first organizer for rooms, cabinets, drawers, boxes, bins,
 - Multiple local workspaces are preserved; scanner-safe guest links open shared workspaces without erasing the current one.
 - Hierarchical moves are cycle-safe; partial quantities split/merge; bulk moves are atomic.
 - CSV inventory onboarding parses files locally, maps columns and destinations, previews invalid rows and capacity, and commits one undoable atomic change.
+- Bulk inventory editing previews category, tags, usage frequency, and placement requirements across selected records, then saves the reviewed changes and confirmed space reopening as one undoable action.
 - Item and space editors expose structured attributes, conditions, dimensions, partial moves, archive/delete review, drag-and-drop, and equivalent touch/keyboard controls.
 - Plans account for warmth, humidity, food safety, dimensions, grouping, access, distance, and whole-container moves.
 - Field-level history supports selected undo/reapply ("plucking") and batch undo/redo without overwriting newer same-field edits.

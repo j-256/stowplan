@@ -3,7 +3,7 @@ import type {
   FieldExpectation,
 } from "../domain/types";
 
-export type Commit = (command: Command) => Promise<void>;
+export type Commit = (command: Command, expectations?: FieldExpectation[]) => Promise<void>;
 
 export type LocationHierarchyCommand = Extract<
   Command,

@@ -20,6 +20,16 @@ The item editor can:
 
 Select several records to move them to one destination together. Records already at that destination stay put. Moving a partial quantity creates a separate record at the destination; equivalent records combine.
 
+## Edit several records together
+
+Select item checkboxes in Inventory, or filter the list and choose **Select all results**, then choose **Edit selected**. Selection applies only to the results shown; changing the search or location filter clears it.
+
+Every field starts unchanged. Choose **Change category**, set a usage frequency, or add, remove, replace, or clear tags. Tag entries are comma-separated and match the existing spelling and capitalization. Expand **Placement requirements** to change individual warmth, humidity, or food-safe requirements, set or clear a keep-together group, or adjust required space tags. Adding tags preserves the other tags on each item; replacing or clearing tags changes the entire tag list. Setting one placement requirement preserves the others.
+
+Choose **Review changes** to inspect each changed item's before and after values. Matching records stay unchanged. The preview names completed spaces that need to reopen and requires explicit confirmation before saving. Affected move plans are discarded so they can be regenerated from the edited information. If a selected field or affected space changes during review, refresh the preview and check it again before saving. An unrelated description edit can be preserved alongside the batch.
+
+The final **Save items** action saves all reviewed edits on this device together, even offline. One Activity entry reverses the edited fields, space reopening, and affected plan status while preserving unrelated later fields. Canceling or closing the editor saves nothing. See [Activity](/guide/activity) for undo and conflict behavior.
+
 ## Import many records
 
 Choose **Import CSV** in the Inventory toolbar to add records from a spreadsheet without replacing existing inventory. The file stays on the device while you map item fields and either choose one destination or resolve values from a location column. Review valid and invalid rows, capacity, and any completed spaces that must reopen before committing one undoable Activity change.

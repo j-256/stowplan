@@ -86,6 +86,11 @@ export interface ItemRecord {
     version: number;
 }
 
+export type ItemBulkChanges = Partial<Pick<
+    ItemRecord,
+    "category" | "frequency" | "tags"
+>> & { constraints?: Partial<ItemConstraints> };
+
 export interface PlanWeights {
     accessibility: number;
     capacity: number;
@@ -215,6 +220,11 @@ export type Command =
           reopenCompletedParents?: boolean;
       }
     | { type: "item.update"; id: string; changes: Partial<Omit<ItemRecord, "id" | "createdAt">> }
+    | {
+          type: "item.bulkUpdate";
+          updates: { id: string; changes: ItemBulkChanges }[];
+          reopenCompletedParents?: boolean;
+      }
     | { type: "item.reorder"; id: string; order: number }
     | { type: "item.delete"; id: string }
     | {
