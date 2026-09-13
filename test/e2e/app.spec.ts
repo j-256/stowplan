@@ -2630,6 +2630,11 @@ test("aligns header controls and immediately toggles the applied system theme", 
   await page.getByRole("button", {
     name: "Open kitchen demo",
   }).click();
+  await expect(page).toHaveURL(/\/workspaces\/[^/]+\/capture(?:\/|$)/u);
+  await expect(page.getByRole("heading", {
+    name: "Capture",
+    exact: true,
+  })).toBeVisible();
 
   const root = page.locator("html");
   const mobile = (page.viewportSize()?.width ?? 0) <= 760;
