@@ -2,6 +2,24 @@
 
 All notable changes follow Keep a Changelog. Versions use Semantic Versioning.
 
+## [1.2.6] - 2026-09-13
+
+### Added
+
+- Added bulk inventory editing for categories, usage frequency, tags, and placement requirements, with selection across filtered results, per-item change review, explicit completed-space reopening, offline saves, and a single undo action.
+
+### Changed
+
+- Updated application and development dependencies within the supported runtime and peer-compatibility ranges.
+
+### Fixed
+
+- Bounded live-collaboration relay traffic and per-invocation resource use.
+
+### Security
+
+- Updated Sharp and js-yaml to patched releases and refreshed the associated native image-processing dependencies.
+
 ## [1.2.5] - 2026-09-03
 
 ### Added
