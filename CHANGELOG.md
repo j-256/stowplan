@@ -2,6 +2,16 @@
 
 All notable changes follow Keep a Changelog. Versions use Semantic Versioning.
 
+## [1.2.7] - 2026-09-13
+
+### Added
+
+- Added move planning within selected areas and pinned item or space placements, with searchable selection sheets, saved scope summaries, and protection against indirect movement inside containers.
+
+### Changed
+
+- Made phone planning readiness a compact summary with a focused details sheet, and preserved keyboard focus when moving between nested plan dialogs.
+
 ## [1.2.6] - 2026-09-13
 
 ### Added
