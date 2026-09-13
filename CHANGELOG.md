@@ -2,6 +2,21 @@
 
 All notable changes follow Keep a Changelog. Versions use Semantic Versioning.
 
+## [1.2.8] - 2026-09-13
+
+### Added
+
+- Added guided conflict review with individual device or online field choices, ordered queue review, explicit skips, and guarded local saves that preserve independent online edits.
+
+### Changed
+
+- Made recovery easier to scan with colored choice cards, device and cloud icons, a visible review progress indicator, and expandable queue, context, and advanced tools.
+
+### Fixed
+
+- Recognized already accepted recovery commands from retained receipts even after their detailed history has been compacted.
+- Made responsive header checks wait for workspace navigation to finish before measuring controls.
+
 ## [1.2.7] - 2026-09-13
 
 ### Added
