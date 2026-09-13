@@ -55,7 +55,7 @@ A mobile-first, local-first organizer for rooms, cabinets, drawers, boxes, bins,
 - Plans account for warmth, humidity, food safety, dimensions, grouping, access, distance, and whole-container moves.
 - Plan within selected areas and pin items or whole spaces to keep settled placements in place, including during container moves.
 - Field-level history supports selected undo/reapply ("plucking") and batch undo/redo without overwriting newer same-field edits.
-- Blocked offline work remains inspectable and exportable; an explicit recovery flow can rebase unresolved commands or reset to an authorized server copy.
+- Blocked offline work remains inspectable and exportable; guided recovery compares device and online values, reviews field choices in queue order, and saves an authorized, guarded replay. Whole-queue reapply and reset remain available.
 - Public Google sign-in is protected by Managed Turnstile; Cloudflare Access remains an independent admin-only perimeter around database-authorized administration.
 - Short one-time guest URLs, opaque revocable sessions, bounded public resource allocation, workspace roles, and an audited admin panel are built in.
 - Production runs on Sites with a Sites-managed D1 binding. Direct Cloudflare Workers + D1, Node 24 + SQLite, and containers remain reproducible alternative composition roots.

@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Cloud, Download, Layers, ShieldCheck } from "lucide-react";
 import { applyCommand } from "../../src/domain/commands";
-import { createEnvelope } from "../../src/domain/factories";
+import { createEnvelope, newId } from "../../src/domain/factories";
 import { previewImport } from "../../src/domain/import";
 import { workspacePath } from "../../src/domain/app-url";
 import type {
@@ -16,6 +17,9 @@ import {
   workspaceReadOnlyReason,
 } from "../../src/domain/workspace-access";
 import { parseRecoveryUpload } from "../../src/client/recovery-bundle";
+import { ConflictReviewDialog } from "../../src/client/conflict-review-dialog";
+import { projectRecoveryReview, recoveryCommandWasApplied, type RecoveryReviewDecision } from "../../src/client/conflict-review";
+import reviewStyles from "../../src/client/conflict-review.module.css";
 import {
   canUseLocalRecoveryWrite,
   canUseRecoveryCapability,
@@ -38,6 +42,8 @@ import {
   responseMatchesAccount,
 } from "../../src/shared/account-context";
 
+const QUEUE_PAGE_SIZE = 20;
+
 function download(name: string, value: unknown) {
   let url: string | null = null;
   try {
@@ -54,9 +60,6 @@ function download(name: string, value: unknown) {
   } finally {
     if (url) URL.revokeObjectURL(url);
   }
-}
-function wasApplied(state: WorkspaceState, commandId: string) {
-  return state.activities.some((activity) => activity.commandId === commandId) || state.audit.some((event) => event.id === `audit_${commandId}`);
 }
 function countLabel(
   count: number,
@@ -122,6 +125,10 @@ export default function Recovery() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [storageError, setStorageError] = useState("");
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewError, setReviewError] = useState("");
+  const [queueLimit, setQueueLimit] = useState(QUEUE_PAGE_SIZE);
+  const reviewWriteInFlight = useRef(false);
   const refresh = async () => setReplica(await readReplica());
   const saveExport = (
     name: string,
@@ -493,6 +500,69 @@ export default function Recovery() {
       setBusy(false);
     }
   };
+  const saveReviewedChoices = async (decisions: RecoveryReviewDecision[]) => {
+    if (!replica || !serverSnapshot || !accountId || busy || reviewWriteInFlight.current ||
+      !canUseRecoveryCapability(serverSnapshot, accountId, accountReady, "write") ||
+      !canUseLocalRecoveryWrite(replica, accountId, accountReady) ||
+      exportedVersion !== replicaVersion(replica) || !exportAcknowledged) return;
+    reviewWriteInFlight.current = true;
+    setBusy(true);
+    setReviewError("");
+    try {
+      const latestServer = await loadServerSnapshot(replica.state.workspace.id);
+      if (!canUseRecoveryCapability(latestServer, accountId, accountReady, "write")) {
+        setServerSnapshot(latestServer);
+        setReviewOpen(false);
+        throw new Error("Write access changed. The device queue was kept; restore editor access before trying again.");
+      }
+      if (latestServer.state.workspace.revision !== serverSnapshot.state.workspace.revision) {
+        setServerSnapshot(latestServer);
+        setReviewError("The online copy changed. Nothing was saved and the choices were cleared. Review the refreshed values.");
+        return;
+      }
+      const timestamp = new Date().toISOString();
+      const reviewed = projectRecoveryReview(replica, latestServer.state, decisions, {
+        accountId,
+        actorId: accountId,
+        authorization: commandAuthorization(latestServer),
+        createCommandId: () => newId("cmd"),
+        timestamp,
+      });
+      if (reviewed.next) throw new Error("Finish reviewing every queued change before saving.");
+      const next: LocalReplica = {
+        authorization: latestServer.authorization,
+        lastSyncAttemptAt: replica.lastSyncAttemptAt,
+        lastSyncError: null,
+        lastSyncedAt: reviewed.outbox.length ? replica.lastSyncedAt : timestamp,
+        outbox: reviewed.outbox,
+        serverSummary: latestServer.workspace,
+        state: reviewed.state,
+        updatedAt: timestamp,
+      };
+      await writeReplicaIfUnchanged(next, replica);
+      setReplica(next);
+      setReviewOpen(false);
+      setConfirmation("");
+      setExportedVersion(null);
+      setExportAcknowledged(false);
+      setMessage(`Reviewed choices saved on this device: ${reviewed.outbox.length} to reapply, ${reviewed.skippedCommandIds.length} kept online, ${reviewed.acceptedCommandIds.length} already backed up. Return to Stowplan to back up the reviewed changes.`);
+    } catch (error) {
+      const detail = `Nothing was changed: ${error instanceof Error ? error.message : "the reviewed choices could not be saved"}`;
+      setReviewError(detail);
+      setMessage(detail);
+      const latestLocal = await readReplica().catch(() => replica);
+      if (!replicaVersionMatches(latestLocal, replica)) {
+        setReplica(latestLocal);
+        setReviewOpen(false);
+        setServerSnapshot(null);
+        setExportedVersion(null);
+        setExportAcknowledged(false);
+      }
+    } finally {
+      reviewWriteInFlight.current = false;
+      setBusy(false);
+    }
+  };
   const resetToServer = async () => {
     if (
       !replica ||
@@ -619,7 +689,7 @@ export default function Recovery() {
       }
       let state = structuredClone(latestServer.state);
       const outbox: OutboxEntry[] = [];
-      for (const entry of replica.outbox.filter((candidate) => !wasApplied(latestServer.state, candidate.envelope.id))) {
+      for (const entry of replica.outbox.filter((candidate) => !recoveryCommandWasApplied(latestServer.state, candidate.envelope.id))) {
         const envelope = createEnvelope(state, entry.envelope.command, {
           actorId: entry.envelope.actorId,
           authorization: commandAuthorization(latestServer),
@@ -709,7 +779,7 @@ export default function Recovery() {
     "manageAccess",
   );
 
-  return <main aria-busy={busy} className="admin-page recovery-page">
+  return <main aria-busy={busy} className={`admin-page recovery-page ${reviewStyles.page}`}>
     <header>
       <div>
         <p className="eyebrow">Inspect before changing anything</p>
@@ -717,13 +787,18 @@ export default function Recovery() {
       </div>
       <Link href="/">Back</Link>
     </header>
+    <ol className={reviewStyles.steps} aria-label="Recovery steps">
+      <li data-complete={exportAcknowledged}><Download aria-hidden="true" /><span>1. Save a copy</span></li>
+      <li data-complete={serverSnapshot !== null}><Cloud aria-hidden="true" /><span>2. Compare</span></li>
+      <li><ShieldCheck aria-hidden="true" /><span>3. Review</span></li>
+    </ol>
     {readOnlyReason && <section role="status">
       <h2>Read-only workspace</h2>
       <p>{readOnlyReason} Inspection and export remain available, but reset, reapply, and matching-workspace restore are disabled.</p>
     </section>}
     <section>
-      <h2>Device recovery bundle</h2>
-      <p className="muted">This export includes the current workspace plus pending or blocked commands and their errors. Export it before any reset.</p>
+      <h2 className={reviewStyles.sectionTitle}><Download aria-hidden="true" />Device recovery bundle</h2>
+      <p className="muted">Save this workspace and every queued change before choosing what to keep.</p>
       <button disabled={!replica || busy} onClick={() => {
         if (!replica) return;
         saveExport(
@@ -738,15 +813,16 @@ export default function Recovery() {
             setExportAcknowledged(false);
           },
         );
-      }}>Export full recovery bundle</button>
+      }}><Download aria-hidden="true" />Export full recovery bundle</button>
       {replica && exportedVersion === replicaVersion(replica) && <label>
         <input disabled={busy} name="exportAcknowledged" type="checkbox" checked={exportAcknowledged} onChange={(event) => setExportAcknowledged(event.target.checked)} /> I saved this recovery file somewhere I can reopen it.
       </label>}
     </section>
     <section>
-      <h2>Device queue <small>{replica?.outbox.length ?? 0} changes</small></h2>
+      <details className={reviewStyles.queueDetails}>
+      <summary><Layers aria-hidden="true" />Device queue <small>{replica?.outbox.length ?? 0} changes</small></summary>
       <div className="admin-table recovery-queue">
-        {replica?.outbox.map((entry) => <div key={entry.envelope.id}>
+        {replica?.outbox.slice(0, queueLimit).map((entry) => <div key={entry.envelope.id}>
           <span>
             <strong>{recoveryCommandLabel(replica, entry)}</strong>
             <small>Command: {entry.envelope.command.type} · {new Date(entry.envelope.timestamp).toLocaleString()} · {entry.envelope.id}</small>
@@ -756,16 +832,25 @@ export default function Recovery() {
         </div>)}
         {replica && replica.outbox.length === 0 && <p className="muted">No local changes are waiting for backup or review.</p>}
       </div>
+      {replica && replica.outbox.length > queueLimit && <button onClick={() => setQueueLimit(queueLimit + QUEUE_PAGE_SIZE)} type="button">Show more queued changes ({replica.outbox.length - queueLimit})</button>}
+      </details>
     </section>
     <section>
-      <h2>Compare with the server</h2>
-      <p className="muted">Loading a server copy is read-only. Reset and reapply remain disabled until you export the current bundle, confirm that you saved it, and type the exact confirmation. Stowplan rechecks server access and revision before either action.</p>
+      <h2 className={reviewStyles.sectionTitle}><Cloud aria-hidden="true" />Compare with the server</h2>
+      <p className="muted">Load the online copy, then choose which device changes to keep. Loading changes neither copy.</p>
       {!accountReady && <p role="status">Confirming the signed-in account. Server recovery actions remain disabled.</p>}
       {accountReady && !accountId && <p className="warning" role="status">Sign in to compare with or change the server copy. Device inspection and export remain available.</p>}
-      <button disabled={!replica || !accountReady || !accountId || busy} onClick={() => void fetchServer()}>Load authorized server copy</button>
+      <button disabled={!replica || !accountReady || !accountId || busy} onClick={() => void fetchServer()}><Cloud aria-hidden="true" />Load authorized server copy</button>
       {serverSnapshot && replica && <>
         <p className="muted">Server role: <strong>{serverSnapshot.authorization.role}</strong></p>
         {!serverWriteAllowed && <p className="warning" role="status">This server role does not allow reset or reapply. The device queue remains inspectable and exportable.</p>}
+        <div className={reviewStyles.reviewAction}>
+          <button className="primary" disabled={!serverWriteAllowed || replica.outbox.length === 0 || busy || exportedVersion !== replicaVersion(replica) || !exportAcknowledged} onClick={() => { setReviewError(""); setReviewOpen(true); }} type="button"><ShieldCheck aria-hidden="true" />Review queued changes</button>
+          <small>{exportedVersion !== replicaVersion(replica) || !exportAcknowledged ? "Export the current recovery bundle and confirm you saved it." : "Choose device or online values, one change at a time."}</small>
+        </div>
+        <details className={reviewStyles.advanced}>
+        <summary>Reset or reapply the whole queue</summary>
+        <p className="muted">These actions replace the device result as a whole. Stowplan rechecks access and both copies before saving.</p>
         <div className="preview-grid">
           <span><b>{replica.state.workspace.revision}</b>device revision</span>
           <span><b>{serverSnapshot.state.workspace.revision}</b>server revision</span>
@@ -778,10 +863,12 @@ export default function Recovery() {
           <button disabled={!serverWriteAllowed || replica.outbox.length === 0 || busy || exportedVersion !== replicaVersion(replica) || !exportAcknowledged || confirmation !== "REAPPLY"} onClick={() => void reapply()}>Reapply queued work on server copy</button>
           <button className="danger" disabled={!serverWriteAllowed || busy || exportedVersion !== replicaVersion(replica) || !exportAcknowledged || confirmation !== "RESET"} onClick={() => void resetToServer()}>Reset this device to server copy</button>
         </div>
+        </details>
       </>}
     </section>
     <section>
-      <h2>Restore a portable JSON backup</h2>
+      <details className={reviewStyles.advanced}>
+      <summary>Restore a portable JSON backup</summary>
       <p className="muted">Restoring the matching server workspace is owner-only and uses compare-and-swap protection. Opening a separate local copy creates a new workspace ID, works offline, and never erases another device workspace.</p>
       <label className="file">Choose JSON backup
         <input disabled={busy} name="backupFile" type="file" accept="application/json" onChange={(event) => {
@@ -852,7 +939,17 @@ export default function Recovery() {
           <button disabled={!confirmed || busy} onClick={() => void restoreCopy()}>Open as separate local copy</button>
         </div>
       </>}
+      </details>
     </section>
     {message && <output aria-live="polite">{message}</output>}
+    {reviewOpen && replica && serverSnapshot && <ConflictReviewDialog
+      key={JSON.stringify([replica.updatedAt, replica.state.workspace.revision, serverSnapshot.state.workspace.revision, serverSnapshot.authorization.accessRevision, serverSnapshot.authorization.membershipRevision])}
+      busy={busy}
+      error={reviewError}
+      onClose={() => { if (!reviewWriteInFlight.current) setReviewOpen(false); }}
+      onSave={saveReviewedChoices}
+      replica={replica}
+      server={serverSnapshot.state}
+    />}
   </main>;
 }

@@ -1,0 +1,90 @@
+.review { display: grid; align-content: start; gap: 12px; min-width: 0; }
+.page { max-width: 980px; }
+.page :global([aria-modal="true"]) { align-content: start; }
+.page > section { padding: 18px; }
+.page > section > p { font-size: 13px; line-height: 1.5; }
+.page > section button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+.page > section svg, .sectionTitle svg, .steps svg { width: 19px; height: 19px; flex: none; }
+.sectionTitle { display: flex; align-items: center; gap: 8px; }
+.sectionTitle svg { color: var(--sage); }
+.steps { padding: 0; margin: 0 0 18px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; list-style: none; }
+.steps li { display: flex; gap: 7px; align-items: center; justify-content: center; padding: 10px 7px; border-radius: 10px; border: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+.steps li[data-complete="true"] { color: var(--sage); background: var(--sage2); border-color: var(--sage); }
+.queueDetails > summary { display: flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; font-weight: 650; }
+.queueDetails > summary small { margin-left: auto; }
+.queueDetails :global(.recovery-queue) { margin-top: 10px; }
+.queueDetails :global(.recovery-queue) small { overflow-wrap: anywhere; }
+.advanced > summary { min-height: 44px; cursor: pointer; align-content: center; font-weight: 650; font-size: 13px; }
+.advanced > p { font-size: 12px; line-height: 1.5; color: var(--muted); }
+.advanced > label { display: grid; gap: 8px; margin: 14px 0; }
+.advanced > label > input:not([type="checkbox"]):not([type="file"]) { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 11px; min-height: 44px; }
+.reviewAction { display: grid; gap: 8px; margin: 15px 0; }
+.reviewAction small { font-size: 12px; }
+.review svg { width: 18px; height: 18px; flex: none; }
+.review h3, .review p { margin: 0; }
+.review h3 { font-size: 18px; overflow-wrap: anywhere; }
+.review button { display: inline-flex; gap: 6px; align-items: center; justify-content: center; }
+.progress { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11px; color: var(--sage); }
+.progress > span { display: inline-flex; align-items: center; gap: 5px; }
+.progress > button { margin-left: auto; padding: 8px; font-size: 12px; color: var(--muted); }
+.review progress { width: 100%; height: 5px; accent-color: var(--sage); }
+.stepHeading { display: grid; gap: 8px; }
+.stepHeading p, .hint { font-size: 12px; line-height: 1.5; color: var(--muted); }
+.badge { display: inline-flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 7px; background: var(--sage2); color: var(--sage); font-size: 11px; width: fit-content; }
+.badge[data-conflict="true"] { color: var(--warning); background: var(--warning-bg); }
+.fields { display: grid; gap: 12px; min-width: 0; }
+.field { padding: 10px; border: 1px solid var(--line); border-radius: 12px; margin: 0; min-width: 0; }
+.field legend { padding: 0 5px; font-size: 12px; max-width: 100%; overflow-wrap: anywhere; }
+.field legend span { margin-left: 7px; color: var(--muted); }
+.choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+.choice { display: grid; align-content: start; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 9px; min-width: 0; cursor: pointer; }
+.choice[data-selected="true"][data-side="device"] { border-color: var(--clay); background: color-mix(in srgb, var(--clay) 10%, var(--panel)); }
+.choice[data-selected="true"][data-side="server"] { border-color: var(--sage); background: var(--sage2); }
+.choiceTitle { display: flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700; }
+.choice[data-side="device"] .choiceTitle { color: var(--clay); }
+.choice[data-side="server"] .choiceTitle { color: var(--sage); }
+.choice input { margin: 0 0 0 auto; width: 17px; height: 17px; flex: none; accent-color: var(--sage); }
+.choice[data-side="device"] input { accent-color: var(--clay); }
+.choice:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
+.value { display: block; font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
+.valueDetails { display: grid; gap: 6px; margin: 5px 0; }
+.valueDetails > div { border-top: 1px solid var(--line); padding-top: 5px; }
+.valueDetails dt { font-size: 11px; color: var(--muted); }
+.valueDetails dd { margin: 2px 0 0; }
+.readyValues { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.readyValues > .value:first-child { color: var(--muted); }
+.before, .diagnostics { font-size: 11px; color: var(--muted); }
+.before summary, .diagnostics summary, .readyFields summary, .context summary { min-height: 44px; align-content: center; cursor: pointer; }
+.diagnostics p { display: grid; gap: 3px; margin-bottom: 8px; }
+.diagnostics small { overflow-wrap: anywhere; }
+.readyFields { border: 1px solid var(--line); padding: 0 10px; border-radius: 10px; font-size: 12px; }
+.readyFields summary svg, .context summary svg { vertical-align: middle; margin-right: 6px; }
+.readyFields summary { color: var(--sage); font-weight: 650; }
+.readyFields > label { display: flex; gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); min-height: 48px; }
+.readyFields input, .context input { width: 18px; height: 18px; flex: none; accent-color: var(--sage); }
+.readyFields strong { font-size: 11px; color: var(--muted); }
+.context { padding: 0 10px 10px; border: 1px solid var(--warning); border-radius: 10px; background: var(--warning-bg); color: var(--warning); font-size: 12px; }
+.context details > div { display: grid; gap: 4px; margin-bottom: 8px; }
+.contextValues { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.context > label { display: flex; align-items: center; gap: 8px; min-height: 44px; }
+.hint, .problem { display: flex; gap: 7px; align-items: flex-start; }
+.problem { padding: 10px; border-radius: 9px; background: var(--danger-bg); color: var(--danger); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.operationField { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; }
+.operationField > strong { grid-column: 1 / -1; font-size: 12px; }
+.operationField small { display: flex; gap: 5px; align-items: center; margin-bottom: 6px; font-size: 11px; }
+.footer { position: sticky; bottom: -1px; display: flex; flex-wrap: wrap; gap: 7px; padding: 12px 0 0; border-top: 1px solid var(--line); background: var(--panel); }
+.footer > button:last-child { flex: 1; }
+.totals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+.totals > span { display: grid; justify-items: center; gap: 5px; padding: 12px 5px; text-align: center; background: var(--sage2); border-radius: 10px; font-size: 11px; }
+.totals b { font-size: 24px; }
+.successIcon { width: 32px !important; height: 32px !important; color: var(--sage); }
+@media (max-width: 380px) {
+  .progress { flex-wrap: wrap; }
+  .steps li { flex-direction: column; font-size: 11px; }
+  .field { padding: 7px; }
+  .choice { padding: 8px; }
+  .choiceTitle { font-size: 10px; gap: 3px; }
+  .choiceTitle svg { width: 15px; }
+  .footer > button { font-size: 12px; padding-inline: 9px; }
+  .footer > button:last-child { flex-basis: 100%; }
+}

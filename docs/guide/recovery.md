@@ -12,20 +12,32 @@ Save either file somewhere outside the browser or device whose data you are prot
 
 ## Recover refused or conflicting changes
 
-Open **Settings → Backup & recovery → Review sync issues or restore a backup**. The screen lists waiting and refused changes with the time and server message.
+Open **Settings → Backup & recovery → Review sync issues or restore a backup**. The screen guides you through saving a copy, comparing, and reviewing. Expand **Device queue** for waiting and refused changes, their times, and server messages.
 
 If the browser refuses to open site storage, Recovery shows a blocking alert and does not offer export, reset, or restore actions. Do not clear site data as a troubleshooting step. Correct the browser or private-browsing restriction and reload Recovery so Stowplan can read the device copy before offering any action.
 
-Before changing anything, choose **Export full recovery bundle** and confirm that you saved the file. If your account can still read the online workspace, choose **Load authorized server copy** to compare without changing either copy.
+1. Choose **Export full recovery bundle** and confirm that you saved the file.
+2. Choose **Load authorized server copy**. This reads the online workspace without changing either copy.
+3. If your role permits edits, choose **Review queued changes**.
+4. For each conflicting field, choose **Use device** or **Keep online**. Expand the original value when you need more context. Nonconflicting fields appear under **Fields ready**; clear a checkbox to leave that field online as it is.
+5. Continue through the queue, review the final counts, and choose **Save reviewed choices**. Return to Stowplan to upload the reviewed changes through normal backup.
 
-If your role permits edits, choose one of these guarded paths:
+The review handles one queued change at a time in its original order. Online values include earlier choices in that review. **Back** clears the decision you revisit and later decisions, so you can reconsider their effects. **Skip change** explicitly keeps the online result for that whole change. Closing or cancelling the review changes neither copy.
+
+Item and space metadata, workspace names, and bulk item edits support individual field choices. Moves and other structural operations stay together as one change; review their values and confirm any changed online context. For a move, choose the result that matches the item's physical location. A missing record or invalid replay cannot be applied. Keep the recovery bundle and cancel, or explicitly skip the change if keeping the online result is correct. Queued history actions need a separate review in Activity because newer history can change what they would target.
+
+Before saving, Stowplan rechecks your access and the online copy, then saves only if the device copy still matches what you reviewed. A newer online edit clears the choices and refreshes the comparison. A newer device edit stops the save and asks you to export and review its latest queue. A connection failure keeps the review available for retry. Work already accepted online is recognized from retained history or receipts and is not reapplied.
+
+## Whole-queue recovery
+
+Under **Compare with the server**, expand **Reset or reapply the whole queue** to use either guarded path after exporting and confirming the recovery bundle:
 
 - Type `REAPPLY` and choose **Reapply queued work on server copy** to rebuild unresolved device changes against the latest online copy. Work already accepted online is skipped.
 - Type `RESET` and choose **Reset this device to server copy** to discard the device queue and use the online version.
 
 Use `REAPPLY` when the local intent is still correct and authorized. Use `RESET` only when the online copy is the result you want and you have saved the recovery bundle.
 
-If your role is now viewer or your membership ended, reset and reapply remain disabled. Keep the full recovery bundle, then either ask an owner to restore editor access or send a new invitation, or import the bundle and choose **Open as separate local copy** to preserve the device result as an independent workspace.
+If your role is now viewer or your membership ended, saving reviewed choices, reset, and reapply remain disabled. Keep the full recovery bundle, then either ask an owner to restore editor access or send a new invitation, or import the bundle and choose **Open as separate local copy** to preserve the device result as an independent workspace.
 
 If validation, access, or a replayed change fails, Stowplan leaves the existing device copy in place and reports that nothing was changed.
 
@@ -45,7 +57,7 @@ An exported file is a copy you control. It is not a server undelete service and 
 ## Open a backup without replacing anything
 
 1. Open **Settings → Backup & recovery → Review sync issues or restore a backup**.
-2. Choose the JSON file.
+2. Expand **Restore a portable JSON backup** and choose the JSON file.
 3. Review the validation report and the incoming workspace summary.
 4. Choose **Open as separate local copy**.
 
