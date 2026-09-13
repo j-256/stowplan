@@ -1,8 +1,11 @@
 import { DEFAULT_ITEM_CATEGORY, newId, nowIso } from "./factories";
+import { DomainError } from "./errors";
+import { planSelectionIssue, resolvePlanSelection } from "./plan-selection";
 import type {
     ItemRecord,
     Location,
     MovePlan,
+    PlanSelection,
     PlanStep,
     PlanWeights,
     WorkspaceState,
@@ -350,10 +353,13 @@ function containerStep(
 
 export function generatePlan(
     state: WorkspaceState,
-    options: { name?: string; weights?: PlanWeights } = {},
+    options: { name?: string; weights?: PlanWeights; selection?: PlanSelection } = {},
 ): MovePlan {
+    const selectionIssue = planSelectionIssue(state, options.selection);
+    if (selectionIssue) throw new DomainError("INVALID_PLAN_SELECTION", selectionIssue);
     const weights = options.weights ?? DEFAULT_PLAN_WEIGHTS;
     const projected = structuredClone(state);
+    const selection = resolvePlanSelection(projected, options.selection);
     const steps: PlanStep[] = [];
     const coveredItems = new Set<string>();
     const plannedItems = new Set<string>();
@@ -362,6 +368,7 @@ export function generatePlan(
         .filter(
             (location) =>
                 isMovableContainer(location) &&
+                selection.canMoveLocation(location.id, location.parentId) &&
                 location.captureStatus === "counted" &&
                 location.parentId &&
                 !location.archivedAt,
@@ -375,7 +382,7 @@ export function generatePlan(
         const suggestion = containerStep(
             projected,
             container,
-            projected.locations.filter(isStorageLocation),
+            projected.locations.filter((location) => isStorageLocation(location) && selection.canReceive(location.id)),
             weights,
         );
         if (!suggestion || suggestion.covered.some((id) => coveredItems.has(id))) continue;
@@ -388,6 +395,7 @@ export function generatePlan(
     while (plannedInPass) {
         plannedInPass = false;
         for (const item of projected.items.filter((candidate) => !candidate.archivedAt)) {
+            if (!selection.canMoveItem(item.id, item.locationId)) continue;
             if (coveredItems.has(item.id) || plannedItems.has(item.id)) continue;
             const currentLocation = projected.locations.find(
                 (location) => location.id === item.locationId,
@@ -401,6 +409,7 @@ export function generatePlan(
             );
             const ranked = projected.locations
                 .filter(isStorageLocation)
+                .filter((location) => selection.canReceive(location.id))
                 .filter((location) => location.id !== item.locationId)
                 .map((location) => ({
                     location,
@@ -434,6 +443,7 @@ export function generatePlan(
         createdAt: timestamp,
         id: newId("plan"),
         name: options.name?.trim() || `Organization plan · ${new Date(timestamp).toLocaleDateString()}`,
+        ...(options.selection ? { selection: structuredClone(options.selection) } : {}),
         status: "active",
         steps,
         weights: { ...weights },

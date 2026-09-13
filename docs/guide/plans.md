@@ -4,7 +4,7 @@ A move plan turns your captured layout into a sequence of practical physical cha
 
 ## Check readiness
 
-Open **Plan** after the relevant spaces are mostly counted. When there is no active plan, **Generate move plan** appears before the explanation, priorities, and readiness guidance so you can act immediately when the evidence is already sufficient. The readiness panel separates information required to make a useful plan from details that would only improve confidence.
+Open **Plan** after the relevant spaces are mostly counted. **Areas**, **Pins**, and **Generate move plan** lead the setup. On a phone, tap the compact **Planning readiness** summary to inspect the evidence in a focused sheet. Readiness follows the selected areas and available placements, separating information required for a useful plan from details that improve confidence.
 
 It may ask you to:
 
@@ -15,9 +15,17 @@ It may ask you to:
 
 Each prompt opens the relevant Capture, Inventory, or Spaces editor. Measurements remain optional when capacity is not the question.
 
+## Choose areas and pins
+
+**Areas** starts with **Whole workspace**. Select a room, cabinet, drawer, or another space to limit the plan to that space and its nested contents. Select several areas to allow moves between them. Selected areas appear highlighted; nested spaces say **Included with parent**. Search by name, path, or physical code. **Clear areas** lets you start again, and generation stays unavailable until an area is included.
+
+**Pins** keeps settled placements in place for the plan. Switch between **Items** and **Spaces**, search, then check what should stay put. A pinned space keeps itself and all its contents in place and receives no planned additions. A pinned item also prevents its surrounding container from carrying it elsewhere. Pins outside the chosen areas remain available if you widen the scope. **Clear pins** removes all pins.
+
+These choices apply to planning; manual organizing remains available. The generated plan retains its areas and pins, shows a compact summary, and restores those choices when you return to Plan. **Plan options** lets you adjust them before replacing a plan. Changing a setup choice does not alter the active plan until you generate its replacement. If nothing beneficial fits your choices, review areas, pins, or priorities. Items that stay put still occupy capacity and can attract related items.
+
 ## Generate and review
 
-Generate a plan to move directly to a focused **Next move** card. When you return to **Plan**, the active plan's next physical move appears before plan priorities and readiness guidance. Its source, destination, amount, and **Mark moved** action stay visible. On a phone, the route emphasizes the two physical endpoints; open **Why this move and review details** to see their full hierarchy paths, the reasoning, and links to the underlying records. **Review full plan**, planning readiness, and active **Plan options** open in focused sheets instead of lengthening the page. Before a plan exists, its setup and readiness guidance remain directly on the page.
+Generate a plan to move directly to a focused **Next move** card. When you return to **Plan**, the active plan's next physical move appears before plan priorities and readiness guidance. Its source, destination, amount, and **Mark moved** action stay visible. On a phone, the route emphasizes the two physical endpoints; open **Why this move and review details** to see their full hierarchy paths, the reasoning, and links to the underlying records. **Review full plan**, planning readiness, and active **Plan options** open in focused sheets instead of lengthening the page.
 
 Stowplan considers:
 

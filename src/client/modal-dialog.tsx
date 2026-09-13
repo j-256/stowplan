@@ -19,6 +19,8 @@ const FOCUSABLE_SELECTOR = [
   "[tabindex]:not([tabindex='-1'])",
 ].join(",");
 
+const MODAL_SELECTOR = "[aria-modal='true'][role='dialog']";
+
 const FOCUS_FALLBACK_SELECTOR = [
   "[data-dialog-focus-fallback]",
   "main",
@@ -129,6 +131,8 @@ export function ModalDialog({
     const keydown = (event: KeyboardEvent) => {
       const dialog = dialogRef.current;
       if (!dialog) return;
+      const topDialog = [...document.querySelectorAll(MODAL_SELECTOR)].at(-1);
+      if (topDialog !== dialog) return;
       if (event.key === "Escape") {
         if (busyRef.current) return;
         event.preventDefault();
@@ -162,14 +166,16 @@ export function ModalDialog({
       const invokingElement = invokingElementRef.current;
       const ancestors = restorationAncestorsRef.current;
       requestAnimationFrame(() => {
-        if (
-          document.querySelector("[aria-modal='true'][role='dialog']") ||
-          (
-            document.activeElement instanceof HTMLElement &&
+        const parentDialog = [...document.querySelectorAll(MODAL_SELECTOR)].at(-1);
+        if (parentDialog) {
+          if (invokingElement?.isConnected && parentDialog.contains(invokingElement)) {
+            invokingElement.focus({ preventScroll: true });
+          }
+          return;
+        }
+        if (document.activeElement instanceof HTMLElement &&
             document.activeElement !== document.body &&
-            document.activeElement.isConnected
-          )
-        ) {
+            document.activeElement.isConnected) {
           return;
         }
         const target = restorationTarget(invokingElement, ancestors);

@@ -62,6 +62,14 @@ The Sites manifest binds D1 as `DB`. `db/schema.ts` is the typed collaboration s
 
 Workspace snapshot schema 2 names the item's searchable free-text field `description`. Normalization upgrades schema 1 `notes` values in live items, retained whole-record and field history, queued item commands, and field expectations before validation or application. Adapters, local replicas, imports, restores, recovery bundles, and command application share that normalization path so an offline schema 1 edit keeps its conflict and undo meaning.
 
+## Scoped and pinned planning
+
+An optional `MovePlan.selection` carries selected subtree roots, pinned item IDs, and pinned space IDs. Its absence retains whole-workspace behavior for older plans. `src/domain/plan-selection.ts` resolves the union of selected subtrees and protects their outer roots. Space pins freeze the subtree and refuse planned incoming contents; item and space pins also fix every enclosing location so a container move cannot carry a protected placement. The generator retains the full workspace for capacity and grouping scores while filtering movable subjects and destinations.
+
+The command engine validates live selection references and step boundaries at plan creation, activation, and execution. Plan creation retains the reviewed revision expectation through the local mutation queue. Changes to selection evidence invalidate affected active plans. Snapshot and whole-plan history validation preserve selection shape, while completed and discarded plans can retain references to records removed later. Selection travels through the ordinary local replica, outbox, history, and authorized snapshot stores without a database migration.
+
+The planner exposes labeled area and pin buttons, searchable bounded lists, inherited-selection explanations, and a saved-plan summary shared with read-only views. Phone readiness uses a summary and focused sheet. Nested selection sheets trap keyboard focus and Escape only in the foremost dialog, restoring focus to the invoking control when they close.
+
 ## Bulk inventory editing
 
 `src/domain/bulk-edit.ts` converts opt-in shared edits into per-item `item.bulkUpdate` changes. Category, frequency, and tags are allowed top-level fields; placement requirements are partial constraint changes. Tag operations resolve separately against each selected record, and records with no actual change are omitted. Preview applies the real command to an isolated state and displays its meaningful item patches, affected plans, and completed spaces.

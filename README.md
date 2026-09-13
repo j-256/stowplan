@@ -53,6 +53,7 @@ A mobile-first, local-first organizer for rooms, cabinets, drawers, boxes, bins,
 - Bulk inventory editing previews category, tags, usage frequency, and placement requirements across selected records, then saves the reviewed changes and confirmed space reopening as one undoable action.
 - Item and space editors expose structured attributes, conditions, dimensions, partial moves, archive/delete review, drag-and-drop, and equivalent touch/keyboard controls.
 - Plans account for warmth, humidity, food safety, dimensions, grouping, access, distance, and whole-container moves.
+- Plan within selected areas and pin items or whole spaces to keep settled placements in place, including during container moves.
 - Field-level history supports selected undo/reapply ("plucking") and batch undo/redo without overwriting newer same-field edits.
 - Blocked offline work remains inspectable and exportable; an explicit recovery flow can rebase unresolved commands or reset to an authorized server copy.
 - Public Google sign-in is protected by Managed Turnstile; Cloudflare Access remains an independent admin-only perimeter around database-authorized administration.

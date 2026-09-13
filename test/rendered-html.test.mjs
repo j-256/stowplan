@@ -416,6 +416,7 @@ const organizerSourceFiles = Object.freeze([
   "inventory-view.tsx",
   "item-editor.tsx",
   "planner-view.tsx",
+  "plan-selection-controls.tsx",
   "spaces-view.tsx",
   "stowplan-app.tsx",
   "workspace-application.tsx",

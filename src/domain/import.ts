@@ -5,6 +5,8 @@ import {
     type ValidationIssue,
     type WorkspaceState,
 } from "./types";
+import { planSelectionIssue, planSelectionStepIssue, validPlanSelection } from "./plan-selection";
+import type { MovePlan } from "./types";
 
 const LEGACY_SCHEMA_VERSION = 1;
 const ITEM_DESCRIPTION_FIELD = "description";
@@ -190,7 +192,8 @@ function validFullPatchRecord(target: string, value: unknown, id: string): boole
             ["accessibility", "capacity", "grouping", "moveCost", "suitability"].every(
                 (field) => Number.isFinite((value.weights as Record<string, unknown>)[field]),
             ) &&
-            validPlanSteps(value.steps)
+            validPlanSteps(value.steps) &&
+            validPlanSelection(value.selection)
         );
     }
     return false;
@@ -686,6 +689,9 @@ export function validateSnapshot(value: unknown): ValidationIssue[] {
         requireString(candidate, "createdAt", planPath, issues);
         if (!["active", "completed", "discarded"].includes(String(candidate.status))) issue(issues, "PLAN_STATUS", "Invalid plan status", `${planPath}.status`);
         if (candidate.status === "active") activePlanCount += 1;
+        if (!validPlanSelection(candidate.selection)) {
+            issue(issues, "PLAN_SELECTION", "Plan areas and pins are malformed", `${planPath}.selection`);
+        }
         const weights = candidate.weights;
         if (!isRecord(weights)) issue(issues, "PLAN_WEIGHTS", "Plan weights must be an object", `${planPath}.weights`);
         else if (["accessibility", "capacity", "grouping", "moveCost", "suitability"].some((field) => !Number.isFinite(weights[field]))) issue(issues, "PLAN_WEIGHTS", "Every plan weight must be numeric", `${planPath}.weights`);
@@ -873,6 +879,18 @@ export function validateSnapshot(value: unknown): ValidationIssue[] {
     });
     if (activePlanCount > 1) {
         issue(issues, "MULTIPLE_ACTIVE_PLANS", "A workspace can have only one active plan", "$.plans");
+    }
+
+    if (!issues.some((candidate) => candidate.severity === "error")) {
+        for (const plan of plans as MovePlan[]) {
+            if (plan.status !== "active" || !plan.selection) continue;
+            const state = value as unknown as WorkspaceState;
+            const selectionIssue = planSelectionIssue(state, plan.selection) ??
+                plan.steps.filter((step) => !step.completedAt)
+                    .map((step) => planSelectionStepIssue(state, plan.selection, step))
+                    .find(Boolean);
+            if (selectionIssue) issue(issues, "PLAN_SELECTION", selectionIssue, `$.plans[${plans.indexOf(plan)}].selection`);
+        }
     }
 
     const activityIds = new Set<string>();

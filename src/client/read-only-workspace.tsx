@@ -11,6 +11,7 @@ import { workspacePath, type WorkspaceView } from "../domain/app-url";
 import { ActivityHistory } from "./activity-history";
 import { USER_GUIDE_URL } from "./external-links";
 import { ModalDialog } from "./modal-dialog";
+import { PlanSelectionSummary } from "./plan-selection-controls";
 import styles from "./read-only-workspace.module.css";
 
 const EXPORT_FAILURE_MESSAGE =
@@ -382,6 +383,7 @@ function ReadOnlyPlans({
         <span><p className="eyebrow">{plan.status}</p><h2>{plan.name}</h2></span>
         <b>{plan.steps.filter((step) => step.completedAt).length} of {plan.steps.length} complete</b>
       </header>
+      <PlanSelectionSummary selection={plan.selection} state={state} />
       <ol>
         {plan.steps.map((step) => {
           const subject = step.type === "item"

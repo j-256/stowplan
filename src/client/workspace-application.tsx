@@ -1410,7 +1410,7 @@ export function WorkspaceApplication({
       />}
       {!readOnly && view === "spaces" && <Spaces state={state} current={current} select={selectLocation} commit={dispatch} focusEditorKey={guidanceTarget?.view === "spaces" ? guidanceTarget.token : null} focusEditorSection={guidanceTarget?.view === "spaces" ? guidanceTarget.focus : undefined} />}
       {!readOnly && view === "inventory" && <Inventory state={state} commit={dispatch} editing={validInventoryItemId} editFocus={guidanceTarget?.view === "inventory" ? guidanceTarget.focus : undefined} locationFilter={validInventoryLocationId ?? ""} onEditingChange={changeInventoryItem} onLocationFilterChange={changeInventoryLocation} onOpenLocation={(id) => openGuidanceTarget("spaces", id)} />}
-      {!readOnly && view === "plan" && <Planner state={state} commit={dispatch} openGuidanceTarget={openGuidanceTarget} />}
+      {!readOnly && view === "plan" && <Planner key={state.workspace.id} state={state} commit={dispatch} openGuidanceTarget={openGuidanceTarget} />}
       {!readOnly && view === "activity" && <History state={state} commit={dispatch} />}
       {!readOnly && view === "settings" && <Preferences state={state} commit={dispatch} theme={theme} setTheme={selectTheme} openMenu={openWorkspaceMenu} returnTo={canonicalPath ?? tabPath("settings")} serverBacked={authorization?.kind === "server"} />}
     </ApplicationShell>

@@ -1946,7 +1946,7 @@ test("puts the next Plan action before setup on a narrow phone", async ({
       ".plan-actions .primary",
     );
     const main = hero.closest("main");
-    const readiness = hero.querySelector<HTMLElement>(".plan-readiness");
+    const readiness = hero.querySelector<HTMLElement>(".plan-readiness-summary, .plan-readiness");
     const buttonBounds = button?.getBoundingClientRect();
     const mainBounds = main?.getBoundingClientRect();
     return {
@@ -5098,10 +5098,17 @@ test("moves a space from a compact mobile action sheet and atomically reopens it
   await expect(inspector.getByLabel("Parent space")).toHaveValue("loc_right");
 });
 
+async function openPlanningReadiness(page: Page) {
+  if (await page.evaluate((query) => matchMedia(query).matches, STACKED_TOUCH_LAYOUT_QUERY)) {
+    await page.getByRole("button", { name: /Review planning readiness/ }).click();
+  }
+}
+
 test("guides incomplete evidence into a reviewable plan", async ({ page }) => {
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await page.locator(".nav:visible", { hasText: "Plan" }).click();
 
+  await openPlanningReadiness(page);
   const readiness = page.getByRole("region", { name: "Planning readiness" });
   await expect(readiness.getByRole("heading", { name: "Enough to try, with gaps to review" })).toBeVisible();
   await expect(readiness.getByText("7 counted destinations")).toBeVisible();
@@ -5126,12 +5133,14 @@ test("guides incomplete evidence into a reviewable plan", async ({ page }) => {
 
   await page.locator(".nav:visible", { hasText: "Plan" }).click();
   const refreshedReadiness = page.getByRole("region", { name: "Planning readiness" });
+  await openPlanningReadiness(page);
   await refreshedReadiness.getByText("2 more ways to improve confidence").click();
   await refreshedReadiness.getByRole("button", { name: "Review a space" }).click();
   await expect(page.getByRole("group", { name: "Suitability" })).toBeFocused();
 
   await page.locator(".nav:visible", { hasText: "Plan" }).click();
   const capacityReadiness = page.getByRole("region", { name: "Planning readiness" });
+  await openPlanningReadiness(page);
   await capacityReadiness.getByText("2 more ways to improve confidence").click();
   await capacityReadiness.getByRole("button", { name: "Review capacity" }).click();
   await expect(page.getByRole("group", { name: "Interior dimensions (optional)" })).toBeFocused();
@@ -5295,6 +5304,7 @@ test("opens the exact item section needed for planning evidence", async ({ page 
   await page.getByRole("button", { name: "Save & add next" }).click();
   await page.locator(".nav:visible", { hasText: "Plan" }).click();
 
+  await openPlanningReadiness(page);
   const readiness = page.getByRole("region", { name: "Planning readiness" });
   await readiness.getByText(/more ways to improve confidence/).click();
   await readiness.getByRole("button", { name: "Review an item" }).click();

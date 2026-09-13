@@ -1,5 +1,6 @@
 import { meaningfulActivityPatches } from "./activity";
 import { ConflictError, DomainError } from "./errors";
+import { planSelectionIssue, planSelectionStepIssue, resolvePlanSelection } from "./plan-selection";
 import {
     isLegacyCompatibleIssue,
     normalizeCommandEnvelope,
@@ -364,7 +365,14 @@ function requirePlan(state: WorkspaceState, id: string): MovePlan {
     return plan;
 }
 
+function assertPlanSelection(state: WorkspaceState, plan: MovePlan, step?: MovePlan["steps"][number]): void {
+    const issue = planSelectionIssue(state, plan.selection) ??
+        (step ? planSelectionStepIssue(state, plan.selection, step) : null);
+    if (issue) throw new DomainError("INVALID_PLAN_SELECTION", issue);
+}
+
 function assertPlanCanActivate(state: WorkspaceState, plan: MovePlan): void {
+    assertPlanSelection(state, plan);
     if (!Array.isArray(plan.steps) || plan.steps.length === 0) {
         throw new DomainError("EMPTY_PLAN", "An active plan needs at least one move");
     }
@@ -372,6 +380,7 @@ function assertPlanCanActivate(state: WorkspaceState, plan: MovePlan): void {
         throw new DomainError("PLAN_COMPLETE", "A fully completed plan cannot be made active again");
     }
     for (const step of plan.steps.filter((candidate) => !candidate.completedAt)) {
+        assertPlanSelection(state, plan, step);
         const source = requireActiveLocation(state, step.sourceId);
         const destination = requireActiveLocation(state, step.destinationId);
         if (source.id === destination.id) {
@@ -623,14 +632,19 @@ function planInvalidationPatches(
         .filter(
             (plan) =>
                 plan.status === "active" &&
-                plan.steps.some(
+                (Boolean(plan.selection && (
+                    plan.selection.pinnedItemIds.some((id) => affectedItems.has(id)) ||
+                    [...(plan.selection.locationIds ?? []), ...plan.selection.pinnedLocationIds]
+                        .some((id) => affectedLocations.has(id)) ||
+                    locationIds.some((id) => resolvePlanSelection(state, plan.selection).fixedLocationIds.has(id))
+                )) || plan.steps.some(
                     (step) =>
                         !step.completedAt &&
                         ((step.itemId && affectedItems.has(step.itemId)) ||
                             (step.locationId && affectedLocations.has(step.locationId)) ||
                             affectedLocations.has(step.sourceId) ||
                             affectedLocations.has(step.destinationId)),
-                ),
+                )),
         )
         .map((plan) => patch("plan", plan.id, "status", plan.status, "discarded"));
 }
@@ -1747,6 +1761,7 @@ function normalPatches(
             throw new DomainError("INVALID_PLAN", "The new plan is malformed");
         }
         if (!command.plan.steps.length) throw new DomainError("EMPTY_PLAN", "The plan has no moves");
+        assertPlanSelection(state, command.plan);
         if (command.plan.status !== "active") {
             throw new DomainError("INVALID_PLAN", "A new plan must start active");
         }
@@ -1772,6 +1787,7 @@ function normalPatches(
                 throw new DomainError("DUPLICATE_PLAN_STEP", "Plan step IDs must be unique");
             }
             stepIds.add(step.id);
+            assertPlanSelection(state, command.plan, step);
             if (step.completedAt) {
                 throw new DomainError("INVALID_PLAN_STEP", "A new plan cannot contain completed steps");
             }
@@ -1900,6 +1916,7 @@ function normalPatches(
         const step = plan.steps.find((candidate) => candidate.id === command.stepId);
         if (!step) throw new DomainError("PLAN_STEP_NOT_FOUND", "Plan step was not found");
         if (step.completedAt) throw new DomainError("PLAN_STEP_COMPLETE", "Plan step is already complete");
+        assertPlanSelection(state, plan, step);
         const stepIndex = plan.steps.findIndex((candidate) => candidate.id === step.id);
         if (plan.steps.slice(0, stepIndex).some((candidate) => !candidate.completedAt)) {
             throw new DomainError(

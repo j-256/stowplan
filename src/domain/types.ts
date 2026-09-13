@@ -116,9 +116,16 @@ export interface MovePlan {
     createdAt: string;
     id: string;
     name: string;
+    selection?: PlanSelection;
     status: "active" | "completed" | "discarded";
     steps: PlanStep[];
     weights: PlanWeights;
+}
+
+export interface PlanSelection {
+    locationIds: string[] | null;
+    pinnedItemIds: string[];
+    pinnedLocationIds: string[];
 }
 
 export type PatchTarget = "item" | "location" | "plan" | "workspace";

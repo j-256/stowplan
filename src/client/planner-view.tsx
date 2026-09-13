@@ -11,7 +11,10 @@ import {
   ChevronDown,
   ChevronRight,
   Info,
+  Route,
 } from "lucide-react";
+import { expectationsForCommand } from "../domain/expectations";
+import { emptyPlanSelection, planSelectionIssue, resolvePlanSelection } from "../domain/plan-selection";
 import {
   DEFAULT_PLAN_WEIGHTS,
   generatePlan as buildMovePlan,
@@ -22,11 +25,13 @@ import {
 } from "../domain/planning-readiness";
 import type {
   Location,
+  PlanSelection,
   PlanStep,
   PlanWeights,
   WorkspaceState,
 } from "../domain/types";
 import { ModalDialog } from "./modal-dialog";
+import { PlanSelectionControls, PlanSelectionSummary } from "./plan-selection-controls";
 import { locationPath } from "./workspace-hierarchy";
 import {
   countLabel,
@@ -94,12 +99,14 @@ function PlanningReadinessPanel({
   readiness,
   state,
   summaryOnly = false,
+  summaryRef,
   openGuidanceTarget,
 }: {
   onOpenDetails?: () => void;
   readiness: PlanReadiness;
   state: WorkspaceState;
   summaryOnly?: boolean;
+  summaryRef?: React.RefObject<HTMLButtonElement | null>;
   openGuidanceTarget: (
     view: GuidanceTarget["view"],
     id: string,
@@ -223,6 +230,7 @@ function PlanningReadinessPanel({
       aria-label={`Review planning readiness: ${headline}`}
       className="plan-readiness-summary"
       onClick={onOpenDetails}
+      ref={summaryRef}
       type="button"
     >
       <span>
@@ -259,10 +267,20 @@ export function Planner({ state, commit, openGuidanceTarget }: { state: Workspac
   const active = activePlans[0];
   const hasConflictingPlans = activePlans.length > 1;
   const compactLayout = useMediaQuery(STACKED_TOUCH_LAYOUT_QUERY);
-  const readiness = useMemo(() => assessPlanReadiness(state), [state]);
+  const [selection, setSelection] = useState<PlanSelection>(() => structuredClone(active?.selection ?? state.plans.at(-1)?.selection ?? emptyPlanSelection()));
+  const planningState = useMemo(() => {
+    const resolved = resolvePlanSelection(state, selection);
+    return {
+      ...state,
+      items: state.items.filter((item) => resolved.canMoveItem(item.id, item.locationId)),
+      locations: state.locations.filter((location) => resolved.canReceive(location.id)),
+    };
+  }, [state, selection]);
+  const readiness = useMemo(() => assessPlanReadiness(planningState), [planningState]);
   const [weights, setWeights] = useState<PlanWeights>({ ...DEFAULT_PLAN_WEIGHTS });
   const [name, setName] = useState("Suggested reset");
   const [message, setMessage] = useState("");
+  const [generating, setGenerating] = useState(false);
   const [nextMoveFocusRequest, setNextMoveFocusRequest] = useState(0);
   const [planOptionsOpen, setPlanOptionsOpen] = useState(false);
   const [readinessOpen, setReadinessOpen] = useState(false);
@@ -272,19 +290,24 @@ export function Planner({ state, commit, openGuidanceTarget }: { state: Workspac
   const nextMoveCard = useRef<HTMLElement | null>(null);
   const itineraryTrigger = useRef<HTMLButtonElement | null>(null);
   const planOptionsTrigger = useRef<HTMLButtonElement | null>(null);
+  const readinessTrigger = useRef<HTMLButtonElement | null>(null);
   const stepSupportTrigger = useRef<HTMLButtonElement | null>(null);
   const generate = async () => {
-    const plan = buildMovePlan(state, { name, weights });
-    if (!plan.steps.length) {
-      setMessage("No beneficial moves were found.");
-      return;
-    }
+    if (generating) return;
+    setGenerating(true);
     try {
-      await commit({ type: "plan.create", plan });
+      const plan = buildMovePlan(state, { name, weights, selection });
+      if (!plan.steps.length) {
+        setMessage("No beneficial moves were found. Review Areas, Pins, or Plan priorities to try a different plan.");
+        return;
+      }
+      const command = { type: "plan.create" as const, plan };
+      await commit(command, expectationsForCommand(state, command));
       setMessage(`${plan.steps.length} explainable ${plan.steps.length === 1 ? "move" : "moves"} added to the new plan.`);
       setNextMoveFocusRequest((request) => request + 1);
       setPlanOptionsOpen(false);
     } catch (error) { setMessage(error instanceof Error ? error.message : "Could not create the plan"); }
+    finally { setGenerating(false); }
   };
   const updateWeight = (key: keyof PlanWeights, value: number) => setWeights((current) => ({ ...current, [key]: value }));
   const complete = active?.steps.filter((step) => step.completedAt).length ?? 0;
@@ -404,14 +427,16 @@ export function Planner({ state, commit, openGuidanceTarget }: { state: Workspac
   const readinessPanel = <PlanningReadinessPanel
     openGuidanceTarget={openGuidanceTarget}
     readiness={readiness}
-    state={state}
+    state={planningState}
   />;
   const plannerBody = <div className="planner-hero-body">
     <div className="planner-overview">
       <p className="eyebrow">Explainable recommendations</p>
       <h2>Fewer moves, better homes.</h2>
+      <PlanSelectionControls state={state} value={selection} onChange={(next) => { setSelection(next); setMessage(""); }} />
       <div className="plan-actions">
-        <button className="primary" onClick={() => void generate()}>
+        <button className="primary" disabled={generating || selection.locationIds?.length === 0 || Boolean(planSelectionIssue(state, selection))} onClick={() => void generate()}>
+          <Route aria-hidden="true" width={16} height={16} style={{ verticalAlign: "middle", marginRight: 6 }} />
           {active ? "Replace with fresh plan" : "Generate move plan"}
         </button>
         {active && !hasConflictingPlans && <button onClick={() => void perform(
@@ -426,7 +451,7 @@ export function Planner({ state, commit, openGuidanceTarget }: { state: Workspac
         </button>}
       </div>
       {message && <output className="form-message">{message}</output>}
-      <p>Balance suitability, access, grouping, capacity, and move effort, including moving a whole nested box when that is simpler. Marking a step moved updates Inventory immediately; Activity can undo it.</p>
+      <p>Choose where to organize and what stays put. Mark each physical move as you go; Activity can undo it.</p>
     </div>
     <details className="plan-settings">
       <summary>Plan priorities</summary>
@@ -447,7 +472,7 @@ export function Planner({ state, commit, openGuidanceTarget }: { state: Workspac
         </div>;
       })}
     </details>
-    {compactLayout && active
+    {compactLayout
       ? <PlanningReadinessPanel
         onOpenDetails={() => {
           setPlanOptionsOpen(false);
@@ -455,8 +480,9 @@ export function Planner({ state, commit, openGuidanceTarget }: { state: Workspac
         }}
         openGuidanceTarget={openGuidanceTarget}
         readiness={readiness}
-        state={state}
+        state={planningState}
         summaryOnly
+        summaryRef={readinessTrigger}
       />
       : readinessPanel}
   </div>;
@@ -477,7 +503,7 @@ export function Planner({ state, commit, openGuidanceTarget }: { state: Workspac
         <span>
           <strong>{active ? "Plan options" : "Create a move plan"}</strong>
           <small>{active
-            ? "Priorities, readiness, replace, or discard"
+            ? "Areas, pins, priorities, replace, or discard"
             : "Generate now or review the available evidence"}</small>
         </span>
         {compactLayout && active
@@ -531,6 +557,7 @@ export function Planner({ state, commit, openGuidanceTarget }: { state: Workspac
     {hasConflictingPlans && <section className="panel form-message" role="alert"><h3>Resolve overlapping active plans</h3><p>This older workspace contains {activePlans.length} active plans. Generate a fresh plan to replace all of them, or discard plans until one remains before executing a move.</p>{activePlans.map((plan) => <button key={plan.id} onClick={() => void perform(commit, { type: "plan.status", planId: plan.id, status: "discarded" })}>Discard {plan.name}</button>)}</section>}
     {active && !hasConflictingPlans && nextStep && nextSubject && nextRoute ? <>
       <div className="plan-progress"><strong>{active.name}</strong><span>{complete} of {active.steps.length} complete</span></div>
+      <PlanSelectionSummary selection={active.selection} state={state} />
       <section
         aria-label="Next move"
         className="panel plan-next-move"
@@ -626,16 +653,16 @@ export function Planner({ state, commit, openGuidanceTarget }: { state: Workspac
       </ModalDialog>}
     </> : null}
     {plannerHero}
-    {compactLayout && active && <ModalDialog
+    {compactLayout && <ModalDialog
       mobileSheet="full"
       onClose={() => setReadinessOpen(false)}
       open={readinessOpen}
-      returnFocusRef={planOptionsTrigger}
+      returnFocusRef={active ? planOptionsTrigger : readinessTrigger}
       title="Planning readiness"
     >
       {readinessPanel}
       <button className="planner-sheet-close" onClick={() => setReadinessOpen(false)} type="button">Close</button>
     </ModalDialog>}
-    {(!active || hasConflictingPlans || !nextStep || !nextSubject) && <Empty title="No active plan" text={readiness.canGenerateUsefulPlan ? "There is enough evidence to try a plan. Review the readiness guidance, then generate when you are comfortable with the gaps." : emptyPlanGuidance(readiness)} />}
+    {(!active || hasConflictingPlans || !nextStep || !nextSubject) && <Empty title="No active plan" text={planningState.items.length === 0 && state.items.some((item) => !item.archivedAt) ? "Choose more areas or unpin placements to include something to move." : readiness.canGenerateUsefulPlan ? "Choose your areas and pins, then generate a plan." : emptyPlanGuidance(readiness)} />}
   </div>;
 }
