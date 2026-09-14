@@ -45,6 +45,30 @@ test("renders the landing hero at the site root", async () => {
   const html = await response.text();
   assert.match(html, /Find what you packed without opening every box\./);
   assert.match(html, /Organize one space at a time/);
+  assert.match(html, /<link[^>]+rel="canonical"[^>]+href="https:\/\/stowplan\.lasers\.app\/"[^>]*>/);
+  assert.match(html, /<meta[^>]+name="robots"[^>]+content="index, follow"[^>]*>/);
+});
+
+test("serves crawler files containing only public canonical pages", async () => {
+  const { default: worker } = await import("../dist/server/index.js");
+  const environment = {
+    ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) },
+  };
+  const context = { waitUntil() {}, passThroughOnException() {} };
+  const sitemap = await worker.fetch(new Request("https://stowplan.lasers.app/sitemap.xml"), environment, context);
+  assert.equal(sitemap.status, 200);
+  assert.match(sitemap.headers.get("content-type") ?? "", /xml/);
+  const xml = await sitemap.text();
+  assert.deepEqual(
+    [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map((match) => match[1]).sort(),
+    ["https://stowplan.lasers.app/", "https://stowplan.lasers.app/privacy", "https://stowplan.lasers.app/terms"],
+  );
+  const robots = await worker.fetch(new Request("https://stowplan.lasers.app/robots.txt"), environment, context);
+  assert.equal(robots.status, 200);
+  assert.match(robots.headers.get("content-type") ?? "", /^text\/plain/);
+  const rules = await robots.text();
+  assert.match(rules, /Sitemap: https:\/\/stowplan\.lasers\.app\/sitemap\.xml/);
+  assert.match(rules, /Disallow: \/api\//);
 });
 
 test("renders canonical workspace view routes", async () => {
@@ -75,7 +99,10 @@ test("renders canonical workspace view routes", async () => {
   assert.match(response.headers.get("content-security-policy") ?? "", /frame-ancestors 'none'/);
   assert.equal(response.headers.get("x-frame-options"), "DENY");
   assert.equal(response.headers.get("x-content-type-options"), "nosniff");
-  assert.match(await response.text(), developmentPreviewMeta);
+  const html = await response.text();
+  assert.match(html, developmentPreviewMeta);
+  assert.match(html, /<meta[^>]+name="robots"[^>]+content="noindex, follow"[^>]*>/);
+  assert.doesNotMatch(html, /rel="canonical"/);
 });
 
 test("renders the direct kitchen demo route", async () => {

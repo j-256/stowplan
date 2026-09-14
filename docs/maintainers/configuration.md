@@ -22,10 +22,12 @@
 | `LIVE_RELAY_SECRET` | with `LIVE_RELAY_URL` | durable server secret | Shared HMAC secret of at least 32 UTF-8 bytes installed on both the application and relay; never exposed to the client |
 | `STOWPLAN_LIVE_LOCAL_ENABLED` | Node composition root | server internal | Enables the process-local SSE notification adapter; `scripts/node-server.mjs` sets it automatically and a complete remote relay configuration takes precedence |
 | `NEXT_PUBLIC_REPOSITORY_URL` | no | build/client | Quiet Help/About source link for forks |
+| `NEXT_PUBLIC_SITE_URL` | public deployment | build | Public application origin for canonical URLs and the sitemap; defaults to the official hosted service |
 | `NEXT_PUBLIC_DOCS_URL` | no | build/client | Independently hosted full documentation link |
 | `NEXT_PUBLIC_PRIVACY_POLICY_URL` | public deployment | build/client | Privacy policy linked from the app and sign-in surface |
 | `NEXT_PUBLIC_TERMS_OF_SERVICE_URL` | public deployment | build/client | Terms linked from the app and required sign-in agreement |
 | `DOCS_BASE` | docs build | build | `/` for the canonical documentation Worker, or `/repo/` for compatible project-subpath hosts |
+| `DOCS_SITE_URL` | public docs deployment | docs build | Documentation origin for canonical URLs, the sitemap, and robots.txt; defaults to the official documentation host and combines with `DOCS_BASE` |
 | `DOCS_APPLICATION_URL` | no | docs build | Application origin used by the docs site's direct demo links |
 | `DOCS_PRIVACY_POLICY_URL` | public deployment | docs build | Privacy policy linked from documentation; defaults to `/privacy` on `DOCS_APPLICATION_URL` |
 | `DOCS_TERMS_OF_SERVICE_URL` | public deployment | docs build | Terms linked from documentation; defaults to `/terms` on `DOCS_APPLICATION_URL` |

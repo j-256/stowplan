@@ -13,6 +13,8 @@ import styles from "../privacy/privacy.module.css";
 const LEGAL_CONTACT_EMAIL = "legal@strangelasers.com";
 
 export const metadata: Metadata = {
+  alternates: { canonical: "/terms" },
+  robots: { index: true, follow: true },
   description: "Terms for using the official hosted Stowplan service, including accounts, workspace content, acceptable use, and service availability.",
   title: "Terms of Service",
 };

@@ -11,6 +11,8 @@ const EFFECTIVE_DATE = "July 29, 2026";
 const PRIVACY_CONTACT_EMAIL = "privacy@strangelasers.com";
 
 export const metadata: Metadata = {
+  alternates: { canonical: "/privacy" },
+  robots: { index: true, follow: true },
   description: "How the official hosted Stowplan service handles personal information, browser storage, online workspaces, and privacy choices.",
   title: "Privacy policy",
 };

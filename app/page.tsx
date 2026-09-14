@@ -12,6 +12,7 @@ import { WORKSPACE_LIST_PATH } from "../src/domain/app-url";
 import styles from "./page.module.css";
 
 const SUBHEAD = "Find what you packed without opening every box.";
+const PAGE_TITLE = "Stowplan | Home inventory and storage organizer";
 
 const VALUE_POINTS = Object.freeze([
   {
@@ -33,10 +34,16 @@ const VALUE_POINTS = Object.freeze([
 ] as const);
 
 export const metadata: Metadata = {
+  title: { absolute: PAGE_TITLE },
   description: SUBHEAD,
+  alternates: { canonical: "/" },
+  robots: { index: true, follow: true },
   openGraph: {
-    title: "Stowplan",
+    title: PAGE_TITLE,
     description: SUBHEAD,
+    url: "/",
+    type: "website",
+    siteName: "Stowplan",
   },
 };
 

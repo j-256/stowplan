@@ -1,10 +1,14 @@
 import { defineConfig } from "vitepress";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 const DEMO_LINK_MARKER = "stowplan:demo";
 const PRIVACY_LINK_MARKER = "stowplan:privacy";
 const TERMS_LINK_MARKER = "stowplan:terms";
 const rawBase = process.env.DOCS_BASE ?? "/";
 const base = rawBase.startsWith("/") && rawBase.endsWith("/") ? rawBase : `/${rawBase.replace(/^\/+|\/+$/g, "")}/`;
+const documentationOrigin = process.env.DOCS_SITE_URL || "https://docs.stowplan.lasers.app";
+const documentationUrl = new URL(base, documentationOrigin).href;
 const applicationUrl = (
   process.env.DOCS_APPLICATION_URL ||
   "https://stowplan.lasers.app"
@@ -25,6 +29,32 @@ export default defineConfig({
   description: "Find what you packed without opening every box.",
   base,
   cleanUrls: true,
+  sitemap: {
+    hostname: documentationUrl,
+    transformItems: (items) => items.filter((item) => item.url !== "404"),
+  },
+  transformHead({ pageData }) {
+    if (pageData.relativePath === "404.md") {
+      return [["meta", { name: "robots", content: "noindex, follow" }]];
+    }
+    const route = pageData.relativePath
+      .replace(/(^|\/)index\.md$/, "$1")
+      .replace(/\.md$/, "");
+    const canonical = new URL(route, documentationUrl).href;
+    return [
+      ["link", { rel: "canonical", href: canonical }],
+      ["meta", { property: "og:url", content: canonical }],
+      ["meta", { property: "og:title", content: pageData.title || "Stowplan" }],
+      ["meta", { property: "og:description", content: pageData.description }],
+      ["meta", { property: "og:type", content: "website" }],
+    ];
+  },
+  async buildEnd(siteConfig) {
+    await writeFile(
+      join(siteConfig.outDir, "robots.txt"),
+      `User-agent: *\nAllow: /\n\nSitemap: ${documentationUrl}sitemap.xml\n`,
+    );
+  },
   lastUpdated: true,
   ignoreDeadLinks: false,
   head: [

@@ -1,9 +1,12 @@
 import type { Metadata, Viewport } from "next";
+import { PUBLIC_SITE_URL } from "../src/site-metadata";
 import { STOWPLAN_HISTORY_BRIDGE_SCRIPT } from "../src/client/browser-history-bridge";
 import { KeyboardNavigation } from "../src/client/keyboard-navigation";
 import "./globals.css";
 
 export const metadata: Metadata = {
+  metadataBase: PUBLIC_SITE_URL,
+  robots: { index: false, follow: true },
   title: { default: "Stowplan", template: "%s · Stowplan" },
   description: "A local-first organizer for boxes, cabinets, drawers, and everything nested inside.",
   manifest: "/manifest.webmanifest",
