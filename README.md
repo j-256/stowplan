@@ -107,7 +107,7 @@ npm ci
 npm run verify:ready
 ```
 
-Run the final gate after committing. It requires a clean worktree, installs the repository's pre-push hook, runs the core sequence and complete browser matrix, and records the exact verified commit in Git metadata. Amending or rebasing creates a different commit and requires another run. CI invokes the same core and browser scripts in parallel. Release validation also checks deployment automation and builds the artifacts a release publishes:
+Run the final gate after committing. It requires a clean worktree, installs the repository's pre-push hook, runs the core sequence and complete browser matrix, and records the exact verified commit in Git metadata. Amending or rebasing creates a different commit and requires another run. CI invokes the same core and browser scripts in parallel, with browser projects distributed across isolated runners. See [browser execution](docs/maintainers/testing.md#browser-execution) for shard selection and coverage rules. Release validation also checks deployment automation and builds the artifacts a release publishes:
 
 ```bash
 bash scripts/deploy-checks.sh

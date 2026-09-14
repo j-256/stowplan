@@ -1,5 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
+import { forProjects } from "./browser-projects";
 
 const CSV_FILE = [
   "Name,Quantity,Unit,Category,Description,Tags,Frequency,Location",
@@ -9,10 +10,10 @@ const CSV_FILE = [
   ",1,each,Misc,Blank name,,monthly,C-01",
   "Bad quantity,-2,each,Misc,Invalid row,,rarely,C-01",
 ].join("\n");
-const CSV_IMPORT_PROJECTS = new Set([
+const CSV_IMPORT_PROJECTS = Object.freeze([
   "desktop-chromium",
   "mobile-chromium",
-]);
+] as const);
 const IMPORTED_ITEM_NAMES = [
   "Imported olive oil",
   "Imported, whisk",
@@ -82,23 +83,14 @@ async function openSettings(page: Page): Promise<void> {
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/workspaces");
-  await page.evaluate(() => new Promise<void>((resolve) => {
-    const request = indexedDB.deleteDatabase("stowplan-v1");
-    request.onsuccess = request.onerror = request.onblocked = () => resolve();
-  }));
-  await page.reload();
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await page.locator(".nav:visible", { hasText: "Inventory" }).click();
 });
 
-test("imports mapped valid rows offline and undoes the whole change", async ({
+test("imports mapped valid rows offline and undoes the whole change", forProjects(CSV_IMPORT_PROJECTS, "Phone and desktop cover the responsive CSV import workflow"), async ({
   context,
   page,
 }, testInfo) => {
-  test.skip(
-    !CSV_IMPORT_PROJECTS.has(testInfo.project.name),
-    "Phone and desktop cover the responsive CSV import workflow",
-  );
   const before = await localReplica(page);
   const originalStatuses = new Map(before.state.locations.map((location) => [
     location.id,
@@ -276,11 +268,7 @@ test("imports mapped valid rows offline and undoes the whole change", async ({
   await context.setOffline(false);
 });
 
-test("keeps malformed CSV local and recoverable", async ({ page }, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "desktop-chromium",
-    "One desktop project covers file-level recovery",
-  );
+test("keeps malformed CSV local and recoverable", forProjects(["desktop-chromium"], "One desktop project covers file-level recovery"), async ({ page }) => {
   const before = await localReplica(page);
   await page.getByRole("button", { name: "Import CSV" }).click();
   const dialog = page.getByRole("dialog", {

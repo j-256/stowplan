@@ -17,11 +17,6 @@ async function localReplica(page: Page): Promise<LocalReplica> {
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/workspaces");
-  await page.evaluate(() => new Promise<void>((resolve) => {
-    const request = indexedDB.deleteDatabase("stowplan-v1");
-    request.onsuccess = request.onerror = request.onblocked = () => resolve();
-  }));
-  await page.reload();
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await page.locator(".nav:visible", { hasText: "Plan" }).click();
 });

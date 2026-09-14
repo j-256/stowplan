@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import config, {
   PLAYWRIGHT_WORKER_LIMITS,
 } from "../playwright.config";
+import { BROWSER_SHARDS } from "./e2e/browser-projects";
 
 const FULL_CHROMIUM_CHANNEL = "chromium";
 const IN_PROCESS_GPU_ARGUMENT = "--in-process-gpu";
@@ -82,5 +83,33 @@ describe("Playwright browser process isolation", () => {
       "utf8",
     );
     expect(releaseWorkflow).toContain(PLAYWRIGHT_TRACE_ARTIFACT_PATH);
+  });
+
+  it("schedules every configured browser shard in CI", () => {
+    const workflow = readFileSync(
+      join(projectRoot, ".github", "workflows", "ci.yml"),
+      "utf8",
+    );
+    const matrix = workflow.match(/^\s+shard: (\[[^\]]+\])$/m);
+    expect(matrix).not.toBeNull();
+    expect(JSON.parse(matrix![1])).toEqual(
+      BROWSER_SHARDS.map((_, index) => index + 1),
+    );
+    expect(workflow).toContain("STOWPLAN_BROWSER_SHARD: ${{ matrix.shard }}");
+    expect(workflow).toContain("--config=playwright.ci.config.ts");
+  });
+
+  it("keeps inherited process credentials out of serialized server config", () => {
+    const servers = [config.webServer].flat();
+    for (const server of servers) {
+      expect(Object.keys(server?.env ?? {}).sort()).toEqual([
+        "AUTH_BASE_URL",
+        "AUTH_DEV_ENABLED",
+        "AUTH_IDENTITY_DIGEST_KEY",
+        "HOST",
+        "PORT",
+        "STOWPLAN_SQLITE_PATH",
+      ]);
+    }
   });
 });

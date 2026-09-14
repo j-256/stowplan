@@ -253,23 +253,6 @@ async function workspaceAccess(
   );
 }
 
-async function resetBrowserStorage(page: Page): Promise<void> {
-  await page.goto("/workspaces");
-  await page.evaluate((databaseName) => new Promise<void>(
-    (resolve, reject) => {
-      const request = indexedDB.deleteDatabase(databaseName);
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(
-        request.error ?? new Error("Could not delete the local test database"),
-      );
-      request.onblocked = () => reject(
-        new Error("The local test database remained open during reset"),
-      );
-    },
-  ), DATABASE_NAME);
-  await page.reload();
-}
-
 export async function readLocalReplicas(
   page: Page,
 ): Promise<Record<string, StoredBrowserReplica>> {
@@ -391,7 +374,7 @@ export async function tabTo(
 
 export const test = base.extend<{ safeBeta: SafeBetaFixture }>({
   safeBeta: async ({ page }, provide, testInfo) => {
-    await resetBrowserStorage(page);
+    await page.goto("/workspaces");
     const namespace = namespaceFor(testInfo);
     const origin = originFor(testInfo);
     const accountIds = new WeakMap<BrowserContext, string>();

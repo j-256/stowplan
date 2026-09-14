@@ -1,4 +1,5 @@
-import { defineConfig, devices } from "@playwright/test";
+import { defineConfig, devices, type PlaywrightTestConfig } from "@playwright/test";
+import { projectFilter } from "./test/e2e/browser-projects";
 
 const TEST_OUTPUT_DIRECTORY = "test-results";
 const E2E_DATABASE_PATH =
@@ -43,9 +44,9 @@ export default defineConfig({
     url: "https://localhost:3100/api/health",
     reuseExistingServer: false,
     timeout: 120_000,
-    env: { ...process.env, AUTH_BASE_URL:"https://localhost:3100", AUTH_DEV_ENABLED:"true", AUTH_IDENTITY_DIGEST_KEY:E2E_IDENTITY_DIGEST_KEY, HOST:"127.0.0.1", PORT:"3100", STOWPLAN_SQLITE_PATH:E2E_DATABASE_PATH },
+    env: { AUTH_BASE_URL:"https://localhost:3100", AUTH_DEV_ENABLED:"true", AUTH_IDENTITY_DIGEST_KEY:E2E_IDENTITY_DIGEST_KEY, HOST:"127.0.0.1", PORT:"3100", STOWPLAN_SQLITE_PATH:E2E_DATABASE_PATH },
   },
-  projects: [
+  projects: ([
     { name:"mobile-chromium", use:{ ...devices["Pixel 7 Pro"], ...CHROMIUM_USE } },
     { name:"mobile-landscape", use:{ ...devices["Pixel 7 Pro landscape"], ...CHROMIUM_USE } },
     { name:"tablet-portrait", use:{ ...devices["iPad Mini"], ...CHROMIUM_USE, browserName:"chromium" } },
@@ -62,5 +63,6 @@ export default defineConfig({
       testMatch: /safe-beta\.spec\.ts/,
       use: { ...devices["iPad Mini landscape"] },
     },
-  ],
+  ] satisfies NonNullable<PlaywrightTestConfig["projects"]>)
+    .map(project => ({ ...project, grep: projectFilter(project.name) })),
 });

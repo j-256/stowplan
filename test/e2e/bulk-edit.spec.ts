@@ -34,11 +34,6 @@ async function openActivity(page: Page) {
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/workspaces");
-  await page.evaluate(() => new Promise<void>((resolve) => {
-    const request = indexedDB.deleteDatabase("stowplan-v1");
-    request.onsuccess = request.onerror = request.onblocked = () => resolve();
-  }));
-  await page.reload();
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await page.locator(".nav:visible", { hasText: "Inventory" }).click();
 });

@@ -50,9 +50,25 @@ Browser gates use Chromium with Pixel 7 Pro phone profiles in portrait and lands
 
 Storage resilience coverage distinguishes a database that cannot open from a write that fails after initialization. It requires both failures to stay visible and non-destructive, and requires a failed write to preserve its draft and allow a later retry.
 
+## Browser execution
+
+CI groups whole projects into duration-balanced shards defined in `test/e2e/browser-projects.ts`. Each shard gets its own runner, application server, database, and browser worker. Tests within a file keep their declared order. The `browser` check succeeds only when every shard succeeds; a failed, cancelled, or skipped shard keeps the aggregate check from passing. The complete local and release gates use `playwright.config.ts` and do not select a shard.
+
+To reproduce a CI shard locally:
+
+```bash
+STOWPLAN_BROWSER_SHARD=1 bash scripts/verify-browser.sh --config=playwright.ci.config.ts
+```
+
+The CI config requires a valid shard identifier and fixes concurrency at one worker. Use `--list` to inspect its selected tests. CI retains each shard's `test-results/results.json` timing report alongside failure and retry traces in its `playwright-results-*` artifact. Compare project durations when adjusting the groups, and keep the workflow matrix aligned with the configured shard identifiers. Splitting across runners adds repeated install and build work, so reduced elapsed time does not imply proportionally fewer runner minutes.
+
+Project-specific tests declare `forProjects(...)` metadata. Each project's filter excludes inapplicable tests before fixtures and hooks run. Tests without project metadata run in every matching project; WebKit's existing file selection still applies. Keep restrictions in metadata rather than calling `test.skip` inside the test body.
+
+Playwright's per-test contexts isolate IndexedDB, Cache Storage, cookies, local storage, and session storage. The storage-isolation regression leaves data in consecutive test contexts and verifies that each starts empty while reloads retain its own data. Setup navigates directly to the initial page without deleting an already-empty database or reloading it. Tests that exercise persistence, offline reload, recovery, or multiple tabs keep those transitions inside their bodies.
+
 ## Known browser flakiness
 
-Browser gates retry in CI, so an intermittent failure can still report success for the run. Treat a `flaky` line in the Playwright summary as a real signal rather than noise: it means a gate needed a retry to pass. Chromium projects use Playwright's full Chromium channel because [issue 20](https://github.com/j-256/stowplan/issues/20) captured repeated crashes in the separate legacy headless-shell executable while tracing was enabled. CI and release verification install Chromium with `--no-shell` so an accidental return to the legacy executable fails immediately instead of weakening trace evidence. Keep the channel scoped to Chromium so WebKit retains its standard browser. Every Playwright worker owns a browser process, so CI uses one worker and local verification caps concurrency at four to keep runner saturation from becoming a browser launch fault. Record a runner-level recurrence in issue 20 with the browser log, and record each test-level flake in a dedicated issue with the annotation text and run link before the workflow run ages out; Playwright annotations are discarded with the run. Read the relevant issue before changing browser channels, launch arguments, worker limits, retry settings, adding a device project, or reworking a test, and prefer fixing a demonstrated race over widening a timeout. The suite intentionally leaves `failOnFlakyTests` unset because it cannot distinguish a runner-level browser startup fault from an application or test failure.
+Browser gates retry in CI, so an intermittent failure can still report success for the run. Treat a `flaky` line in the Playwright summary as a real signal rather than noise: it means a gate needed a retry to pass. Chromium projects use Playwright's full Chromium channel because [issue 20](https://github.com/j-256/stowplan/issues/20) captured repeated crashes in the separate legacy headless-shell executable while tracing was enabled. CI and release verification install Chromium with `--no-shell` so an accidental return to the legacy executable fails immediately instead of weakening trace evidence. Keep the channel scoped to Chromium so WebKit retains its standard browser. Every Playwright worker owns a browser process, so each CI runner uses one worker and local verification caps concurrency at four to keep runner saturation from becoming a browser launch fault. Record a runner-level recurrence in issue 20 with the browser log, and record each test-level flake in a dedicated issue with the annotation text and run link before the workflow run ages out; Playwright annotations are discarded with the run. Read the relevant issue before changing browser channels, launch arguments, worker limits, retry settings, adding a device project, or reworking a test, and prefer fixing a demonstrated race over widening a timeout. The suite intentionally leaves `failOnFlakyTests` unset because it cannot distinguish a runner-level browser startup fault from an application or test failure.
 
 ## Authentication and abuse matrix
 

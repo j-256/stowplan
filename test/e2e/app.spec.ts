@@ -8,6 +8,7 @@ import {
   ACCOUNT_CHANGE_MESSAGE_TYPE,
   WORKSPACE_CHANNEL_NAME,
 } from "../../src/client/account-channel";
+import { forProjects } from "./browser-projects";
 
 const MAX_FACING_CONTENT_GAP = 54;
 const MAX_PANEL_GUTTER = 16;
@@ -487,11 +488,6 @@ async function reopenCaptureLocation(
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/workspaces");
-  await page.evaluate(() => new Promise<void>((resolve) => {
-    const request = indexedDB.deleteDatabase("stowplan-v1");
-    request.onsuccess = request.onerror = request.onblocked = () => resolve();
-  }));
-  await page.reload();
 });
 
 test("names a new workspace during first run", async ({ page }) => {
@@ -545,24 +541,16 @@ test("uses one application name in invitation titles", async ({ page }) => {
   );
 });
 
-test("names standalone utility pages", async ({ page }, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "desktop-chromium",
-    "One desktop project covers static page metadata",
-  );
+test("names standalone utility pages", forProjects(["desktop-chromium"], "One desktop project covers static page metadata"), async ({ page }) => {
   for (const [path, title] of Object.entries(STANDALONE_PAGE_TITLES)) {
     await page.goto(path);
     await expect(page).toHaveTitle(`${title} · Stowplan`);
   }
 });
 
-test("keeps printable label metadata readable in dark mode", async ({
+test("keeps printable label metadata readable in dark mode", forProjects(["desktop-chromium"], "One desktop project covers printable label contrast"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "desktop-chromium",
-    "One desktop project covers printable label contrast",
-  );
+}) => {
   await page.emulateMedia({ colorScheme: "dark" });
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await expect.poll(async () => {
@@ -858,6 +846,10 @@ test("starts workspaces and primary views at the top", async ({ page }) => {
   });
   await demo.scrollIntoViewIfNeeded();
   await demo.click();
+  await expect(page.getByRole("heading", {
+    exact: true,
+    name: "Capture",
+  })).toBeVisible();
   const appMain = page.locator(".app-shell > main");
   await expect(appMain).toBeVisible();
   await expect.poll(() => appMain.evaluate((element) => element.scrollTop)).toBe(0);
@@ -875,6 +867,10 @@ test("starts workspaces and primary views at the top", async ({ page }) => {
     await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
   }
   await page.locator(".nav:visible", { hasText: /^Spaces$/u }).click();
+  await expect(page.getByRole("heading", {
+    exact: true,
+    name: "Spaces",
+  })).toBeVisible();
   await expect.poll(() => appMain.evaluate((element) => element.scrollTop)).toBe(0);
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
 });
@@ -1009,14 +1005,10 @@ test("closes item routes without duplicating Inventory history", async ({
   await expect(page).toHaveURL(captureUrl);
 });
 
-test("reconciles device-only editor changes across open tabs", async ({
+test("reconciles device-only editor changes across open tabs", forProjects(["desktop-chromium"], "One desktop project covers device-only cross-tab reconciliation"), async ({
   context,
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "desktop-chromium",
-    "One desktop project covers device-only cross-tab reconciliation",
-  );
+}) => {
   await page.getByRole("button", {
     name: "Open kitchen demo",
   }).click();
@@ -1280,12 +1272,7 @@ test("announces share outcomes without reporting an ordinary cancel", async ({ p
   await expect(page.locator(".feedback-toast")).toHaveCount(0);
 });
 
-test("collapses the desktop sidebar and persists the icon-only preference", async ({ page }, testInfo) => {
-  test.skip(
-    (page.viewportSize()?.width ?? 0) <= AUTO_COMPACT_SIDEBAR_MAX_WIDTH ||
-      testInfo.project.name === "mobile-landscape",
-    "Phone, compact desktop, and short touch layouts use automatic compact navigation",
-  );
+test("collapses the desktop sidebar and persists the icon-only preference", forProjects(["desktop-chromium"], "Phone, compact desktop, and short touch layouts use automatic compact navigation"), async ({ page }) => {
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
 
   const shell = page.locator(".app-shell");
@@ -1305,8 +1292,7 @@ test("collapses the desktop sidebar and persists the icon-only preference", asyn
   await expect(shell).toHaveAttribute("data-sidebar-collapsed", "false");
 });
 
-test("keeps short touch landscape navigation fully visible", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== "mobile-landscape", "The landscape phone project covers short touch navigation");
+test("keeps short touch landscape navigation fully visible", forProjects(["mobile-landscape"], "The landscape phone project covers short touch navigation"), async ({ page }) => {
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
 
   const sidebar = page.getByRole("complementary", {
@@ -1373,8 +1359,7 @@ test("keeps short touch landscape navigation fully visible", async ({ page }, te
   });
 });
 
-test("uses the automatic compact icon rail at its responsive boundaries", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== "tablet-portrait", "The portrait tablet project probes the compact rail boundaries");
+test("uses the automatic compact icon rail at its responsive boundaries", forProjects(["tablet-portrait"], "The portrait tablet project probes the compact rail boundaries"), async ({ page }) => {
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
 
   for (const viewport of [
@@ -1520,13 +1505,9 @@ test("switches, resizes, and persists responsive panel layouts", async ({ page }
   }))).toEqual({ body: true, document: true });
 });
 
-test("keeps mobile Capture stable while responsive state settles", async ({
+test("keeps mobile Capture stable while responsive state settles", forProjects(["mobile-chromium"], "The portrait phone project measures Capture layout stability"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "mobile-chromium",
-    "The portrait phone project measures Capture layout stability",
-  );
+}) => {
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   const capture = page.locator(".capture.resizable-panels");
   await expect(capture).toHaveAttribute("data-panel-layout", "stacked");
@@ -1597,13 +1578,9 @@ test("keeps mobile Capture stable while responsive state settles", async ({
   );
 });
 
-test("uses the available phone height for the Capture queue", async ({
+test("uses the available phone height for the Capture queue", forProjects(["mobile-chromium"], "The portrait phone project measures Capture viewport use"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "mobile-chromium",
-    "The portrait phone project measures Capture viewport use",
-  );
+}) => {
   await page.setViewportSize({ height: 844, width: 390 });
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await showCapturePanel(page, "capture queue");
@@ -1629,13 +1606,9 @@ test("uses the available phone height for the Capture queue", async ({
   expect(layout.treeOwnsOverflow).toBe(true);
 });
 
-test("identifies non-personal organizer fields for browser autofill", async ({
+test("identifies non-personal organizer fields for browser autofill", forProjects(["desktop-chromium"], "One desktop project covers browser form diagnostics"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "desktop-chromium",
-    "One desktop project covers browser form diagnostics",
-  );
+}) => {
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
 
   const containerSearch = page.getByRole("textbox", {
@@ -1701,13 +1674,9 @@ test("identifies non-personal organizer fields for browser autofill", async ({
   await expectFormControlsIdentified(page);
 });
 
-test("makes Recovery storage failures explicit and non-destructive", async ({
+test("makes Recovery storage failures explicit and non-destructive", forProjects(["desktop-chromium"], "One desktop project covers the unavailable-storage boundary"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "desktop-chromium",
-    "One desktop project covers the unavailable-storage boundary",
-  );
+}) => {
   await page.addInitScript(() => {
     Object.defineProperty(window, "indexedDB", {
       configurable: true,
@@ -1739,13 +1708,9 @@ test("makes Recovery storage failures explicit and non-destructive", async ({
   })).toHaveCount(0);
 });
 
-test("keeps failed workspace writes visible, non-destructive, and retryable", async ({
+test("keeps failed workspace writes visible, non-destructive, and retryable", forProjects(["desktop-chromium"], "One desktop project covers the IndexedDB write-failure boundary"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "desktop-chromium",
-    "One desktop project covers the IndexedDB write-failure boundary",
-  );
+}) => {
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await page.locator(".nav:visible", { hasText: "Settings" }).click();
   const workspaceName = page.getByLabel("Workspace name");
@@ -1788,13 +1753,9 @@ test("keeps failed workspace writes visible, non-destructive, and retryable", as
   }).toBe(recoveredName);
 });
 
-test("opens a selected Capture container in one tap on mobile", async ({
+test("opens a selected Capture container in one tap on mobile", forProjects(["mobile-chromium"], "The Pixel 7 Pro project covers the focused Capture workflow"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "mobile-chromium",
-    "The Pixel 7 Pro project covers the focused Capture workflow",
-  );
+}) => {
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
 
   const capture = page.locator(".capture.resizable-panels");
@@ -1836,13 +1797,9 @@ test("opens a selected Capture container in one tap on mobile", async ({
   })).toBeVisible();
 });
 
-test("keeps compact Capture actions clear and exposes nested containers", async ({
+test("keeps compact Capture actions clear and exposes nested containers", forProjects(["mobile-chromium"], "The Chromium phone project covers the compact Capture action order"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "mobile-chromium",
-    "The Chromium phone project covers the compact Capture action order",
-  );
+}) => {
   await page.setViewportSize(NARROW_PHONE_VIEWPORT);
   await page.getByLabel("Your workspace name").fill("Garage organizer");
   await page.getByRole("button", { exact: true, name: "Create" }).click();
@@ -1925,13 +1882,9 @@ test("keeps compact Capture actions clear and exposes nested containers", async 
   })).toBeVisible();
 });
 
-test("puts the next Plan action before setup on a narrow phone", async ({
+test("puts the next Plan action before setup on a narrow phone", forProjects(["mobile-chromium"], "The Chromium phone project covers the narrow Plan action order"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "mobile-chromium",
-    "The Chromium phone project covers the narrow Plan action order",
-  );
+}) => {
   await page.setViewportSize(NARROW_PHONE_VIEWPORT);
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await page.locator(".nav:visible", { hasText: "Plan" }).click();
@@ -2015,13 +1968,9 @@ test("puts the next Plan action before setup on a narrow phone", async ({
   await expect(page.locator(".planner-hero-body")).toBeVisible();
 });
 
-test("opens secondary Plan details in focused phone sheets", async ({
+test("opens secondary Plan details in focused phone sheets", forProjects(["mobile-chromium"], "The Chromium phone project covers compact Plan sheets"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "mobile-chromium",
-    "The Chromium phone project covers compact Plan sheets",
-  );
+}) => {
   await page.setViewportSize(NARROW_PHONE_VIEWPORT);
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await page.locator(".nav:visible", { hasText: "Plan" }).click();
@@ -2081,13 +2030,9 @@ test("opens secondary Plan details in focused phone sheets", async ({
   await expect(optionsTrigger).toBeFocused();
 });
 
-test("top-aligns short compact workspace pages below the header", async ({
+test("top-aligns short compact workspace pages below the header", forProjects(["mobile-chromium"], "The Chromium phone project covers compact content alignment"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "mobile-chromium",
-    "The Chromium phone project covers compact content alignment",
-  );
+}) => {
   await page.setViewportSize(TALL_PHONE_VIEWPORT);
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   const contentTopGap = (selector: string) => page.locator(selector).evaluate(
@@ -2115,15 +2060,14 @@ test("top-aligns short compact workspace pages below the header", async ({
   );
 });
 
-test("keeps the focused workspace header reachable on a narrow phone", async ({
+test("keeps the focused workspace header reachable on a narrow phone", forProjects(["mobile-chromium"], "The Chromium phone project covers the narrow header boundary"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "mobile-chromium",
-    "The Chromium phone project covers the narrow header boundary",
-  );
+}) => {
   await page.setViewportSize(NARROW_PHONE_VIEWPORT);
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
+  await expect(page.getByRole("button", {
+    name: "Search ⌘ / Ctrl K and jump",
+  })).toBeVisible();
   await page.locator(".app-shell > main").evaluate((main) => {
     main.scrollTop = 0;
   });
@@ -2186,13 +2130,9 @@ test("keeps the focused workspace header reachable on a narrow phone", async ({
   expect(metrics.visibleLabels[1]).toMatch(/^Open user menu/);
 });
 
-test("prioritizes phone workspace navigation and groups secondary actions in More", async ({
+test("prioritizes phone workspace navigation and groups secondary actions in More", forProjects(["mobile-chromium"], "The Chromium phone project covers the persistent phone navigation"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "mobile-chromium",
-    "The Chromium phone project covers the persistent phone navigation",
-  );
+}) => {
   await page.setViewportSize(NARROW_PHONE_VIEWPORT);
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
 
@@ -2315,13 +2255,9 @@ test("prioritizes phone workspace navigation and groups secondary actions in Mor
   )).toEqual([]);
 });
 
-test("keeps the Spaces tree and editor dense at compact desktop widths", async ({
+test("keeps the Spaces tree and editor dense at compact desktop widths", forProjects(["desktop-compact"], "The compact desktop project covers the constrained two-panel workspace"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "desktop-compact",
-    "The compact desktop project covers the constrained two-panel workspace",
-  );
+}) => {
   await page.getByRole("button", {
     name: "Open kitchen demo",
   }).click();
@@ -2396,8 +2332,7 @@ test("keeps the Spaces tree and editor dense at compact desktop widths", async (
   expect(density.panelsAligned).toBe(true);
 });
 
-test("keeps preferences usable when browser storage is unavailable", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== "desktop-chromium", "Preference failure behavior is viewport-independent");
+test("keeps preferences usable when browser storage is unavailable", forProjects(["desktop-chromium"], "Preference failure behavior is viewport-independent"), async ({ page }) => {
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
   await page.addInitScript(() => {
@@ -2432,13 +2367,9 @@ test("keeps preferences usable when browser storage is unavailable", async ({ pa
   expect(pageErrors).toEqual([]);
 });
 
-test("keeps account and administration controls easy to find", async ({
+test("keeps account and administration controls easy to find", forProjects(["desktop-chromium", "mobile-chromium"], "Portrait phone and wide desktop cover both account navigation layouts"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    !["desktop-chromium", "mobile-chromium"].includes(testInfo.project.name),
-    "Portrait phone and wide desktop cover both account navigation layouts",
-  );
+}) => {
   let globalRole: "admin" | "user" = "user";
   let signedIn = true;
   let signOutRequests = 0;
@@ -2617,13 +2548,9 @@ test("keeps account and administration controls easy to find", async ({
   await expect(page.locator('[data-account-role="admin"]')).toHaveCount(0);
 });
 
-test("aligns header controls and immediately toggles the applied system theme", async ({
+test("aligns header controls and immediately toggles the applied system theme", forProjects(["desktop-chromium", "mobile-chromium"], "Portrait phone and wide desktop cover both header control layouts"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    !["desktop-chromium", "mobile-chromium"].includes(testInfo.project.name),
-    "Portrait phone and wide desktop cover both header control layouts",
-  );
+}) => {
   await page.emulateMedia({ colorScheme: "dark" });
   await page.evaluate(() => localStorage.removeItem("stowplan-theme"));
   await page.reload();
@@ -2761,13 +2688,9 @@ test("aligns header controls and immediately toggles the applied system theme", 
   })).toBeFocused();
 });
 
-test("removes organizer transitions when reduced motion is requested", async ({
+test("removes organizer transitions when reduced motion is requested", forProjects(["desktop-chromium"], "One desktop project covers reduced-motion styling"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "desktop-chromium",
-    "One desktop project covers reduced-motion styling",
-  );
+}) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await page.locator(".nav:visible", { hasText: /^Spaces$/u }).click();
@@ -2803,13 +2726,9 @@ test("removes organizer transitions when reduced motion is requested", async ({
   });
 });
 
-test("keeps Plan sliders large enough for direct pointer input", async ({
+test("keeps Plan sliders large enough for direct pointer input", forProjects(["desktop-chromium"], "One desktop project covers slider target geometry"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "desktop-chromium",
-    "One desktop project covers slider target geometry",
-  );
+}) => {
   await page.setViewportSize(NARROW_PHONE_VIEWPORT);
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await page.locator(".nav:visible", { hasText: "Plan" }).click();
@@ -2853,6 +2772,11 @@ test("navigates every active surface with arrow keys while preserving native con
   await page.locator(
     '.capture-location-row[data-location-id="loc_corner"] .queue-row',
   ).click();
+  if (await usesStackedTouchLayout(page)) {
+    await expect(page.getByRole("region", {
+      name: "Capture inside Corner cabinet",
+    })).toBeFocused();
+  }
   const quantity = page.getByLabel("Qty");
   await quantity.focus();
   await expect(quantity).toHaveValue("1");
@@ -3287,13 +3211,9 @@ test("requires Reopen before completed contents change from Spaces or Inventory"
   await expect(page.getByRole("button", { name: "Save item" })).toBeVisible();
 });
 
-test("guides completed inventory edits and moves through recertification", async ({
+test("guides completed inventory edits and moves through recertification", forProjects(["desktop-chromium", "mobile-chromium"], "Phone and wide desktop cover the guided item flow"), async ({
   page,
 }, testInfo) => {
-  test.skip(
-    !["desktop-chromium", "mobile-chromium"].includes(testInfo.project.name),
-    "Phone and wide desktop cover the guided item flow",
-  );
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await page.locator(".nav:visible", { hasText: "Inventory" }).click();
 
@@ -3702,13 +3622,9 @@ test("collapses Capture branches while search temporarily reveals matches", asyn
   await expect(drawer).toBeVisible();
 });
 
-test("keeps combined Capture branch handles stable across Pixel taps and drags", async ({
+test("keeps combined Capture branch handles stable across Pixel taps and drags", forProjects(["mobile-chromium"], "The Pixel 7 Pro project covers combined touch controls"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "mobile-chromium",
-    "The Pixel 7 Pro project covers combined touch controls",
-  );
+}) => {
   await page.getByRole("button", {
     name: "Open kitchen demo",
   }).click();
@@ -3848,8 +3764,7 @@ test("keeps combined Capture branch handles stable across Pixel taps and drags",
   })).toHaveCount(0);
 });
 
-test("previews desktop hierarchy destinations and confirms completed-parent changes", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== "desktop-chromium", "Native mouse feedback is a desktop contract");
+test("previews desktop hierarchy destinations and confirms completed-parent changes", forProjects(["desktop-chromium"], "Native mouse feedback is a desktop contract"), async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await expect(page.getByRole("heading", {
@@ -4054,8 +3969,7 @@ test("previews desktop hierarchy destinations and confirms completed-parent chan
   );
 });
 
-test("keeps touch reordering available on draggable handles", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== "mobile-chromium", "Touch input is a mobile contract");
+test("keeps touch reordering available on draggable handles", forProjects(["mobile-chromium"], "Touch input is a mobile contract"), async ({ page }) => {
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   const capturePanelNavigation = page.getByRole("group", {
     name: "Capture panels navigation",
@@ -4472,13 +4386,9 @@ test("keeps touch reordering available on draggable handles", async ({ page }, t
   );
 });
 
-test("confirms a Capture touch reparent and atomically reopens completed parents", async ({
+test("confirms a Capture touch reparent and atomically reopens completed parents", forProjects(["mobile-chromium"], "The Pixel 7 Pro project covers touch hierarchy changes"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "mobile-chromium",
-    "The Pixel 7 Pro project covers touch hierarchy changes",
-  );
+}) => {
   await page.getByRole("button", {
     name: "Open kitchen demo",
   }).click();
@@ -4659,13 +4569,9 @@ test("confirms a Capture touch reparent and atomically reopens completed parents
   await expect(source.locator(".queue-row")).toBeFocused();
 });
 
-test("keeps Capture rows compact and supports a focused mobile Move fallback", async ({
+test("keeps Capture rows compact and supports a focused mobile Move fallback", forProjects(["mobile-chromium"], "The Pixel 7 Pro project covers the Capture mobile fallback"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "mobile-chromium",
-    "The Pixel 7 Pro project covers the Capture mobile fallback",
-  );
+}) => {
   await page.getByRole("button", {
     name: "Open kitchen demo",
   }).click();
@@ -4877,13 +4783,9 @@ test("keeps Capture rows compact and supports a focused mobile Move fallback", a
   await expect(foodRow.locator(".queue-row")).toBeFocused();
 });
 
-test("moves a space from a compact mobile action sheet and atomically reopens its completed parents", async ({
+test("moves a space from a compact mobile action sheet and atomically reopens its completed parents", forProjects(["mobile-chromium"], "The Pixel 7 Pro project covers the mobile hierarchy fallback"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "mobile-chromium",
-    "The Pixel 7 Pro project covers the mobile hierarchy fallback",
-  );
+}) => {
   await page.getByRole("button", {
     name: "Open kitchen demo",
   }).click();
@@ -5194,7 +5096,7 @@ test("guides incomplete evidence into a reviewable plan", async ({ page }) => {
   await expect(support.getByText("Capacity unverified")).toBeVisible();
   await expect(support.getByRole("button", { name: "Review destination" }))
     .toBeVisible();
-  const planLayout = await nextMove.evaluate((card) => {
+  await expect.poll(() => nextMove.evaluate((card) => {
     const markMoved = card.querySelector<HTMLButtonElement>(
       'button[data-step-state="ready"]',
     );
@@ -5210,10 +5112,11 @@ test("guides incomplete evidence into a reviewable plan", async ({ page }) => {
         .filter((button) => button.getBoundingClientRect().height < 44)
         .map((button) => button.textContent),
     };
+  })).toEqual({
+    documentOverflow: false,
+    markMovedInViewport: true,
+    narrowTargets: [],
   });
-  expect(planLayout.documentOverflow).toBe(false);
-  expect(planLayout.markMovedInViewport).toBe(true);
-  expect(planLayout.narrowTargets).toEqual([]);
   const planAccessibility = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa"])
     .analyze();
@@ -5456,13 +5359,9 @@ test("distinguishes duplicate inventory actions by quantity and unit", async ({ 
   }
 });
 
-test("keeps the Capture hierarchy readable at compact desktop widths", async ({
+test("keeps the Capture hierarchy readable at compact desktop widths", forProjects(["desktop-compact"], "The compact desktop project covers the constrained Capture workspace"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "desktop-compact",
-    "The compact desktop project covers the constrained Capture workspace",
-  );
+}) => {
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await expect(page.getByRole("heading", { name: "Capture" })).toBeVisible();
   const capture = page.locator(".capture.resizable-panels");
@@ -5581,13 +5480,9 @@ test("keeps the Capture hierarchy readable at compact desktop widths", async ({
   expect(populatedMetrics.rowOverflow).toEqual([]);
 });
 
-test("keeps Inventory rows dense at compact desktop widths", async ({
+test("keeps Inventory rows dense at compact desktop widths", forProjects(["desktop-compact"], "The compact desktop project covers the intermediate Inventory row"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "desktop-compact",
-    "The compact desktop project covers the intermediate Inventory row",
-  );
+}) => {
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await page.locator(".nav:visible", { hasText: "Inventory" }).click();
 
@@ -5644,13 +5539,9 @@ test("keeps Inventory rows dense at compact desktop widths", async ({
   expect(density.rowOverflow).toEqual([]);
 });
 
-test("keeps Inventory rows compact and scannable on phones", async ({
+test("keeps Inventory rows compact and scannable on phones", forProjects(["mobile-chromium"], "The Pixel phone project covers compact Inventory rows"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "mobile-chromium",
-    "The Pixel phone project covers compact Inventory rows",
-  );
+}) => {
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await page.locator(".nav:visible", { hasText: "Inventory" }).click();
 
@@ -5803,13 +5694,9 @@ test("executes a planned move and rolls it back from Activity", async ({ page })
   }
 });
 
-test("plucks an older same-item edit and records each history action", async ({
+test("plucks an older same-item edit and records each history action", forProjects(["desktop-chromium", "mobile-chromium"], "Phone and desktop cover the responsive Activity workflow"), async ({
   page,
 }, testInfo) => {
-  test.skip(
-    !["desktop-chromium", "mobile-chromium"].includes(testInfo.project.name),
-    "Phone and desktop cover the responsive Activity workflow",
-  );
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await reopenCaptureLocation(page, "loc_warm");
   await page.locator(".nav:visible", { hasText: "Inventory" }).click();
@@ -6018,13 +5905,9 @@ test("supports drag organization and the partial-move fallback", async ({ page }
   await expect(page.getByRole("checkbox", { name: "Select Pasta, 4 boxes in Kitchen › Left side › Cabinet above oven" })).toBeVisible();
 });
 
-test("confirms one atomic bulk move across completed spaces", async ({
+test("confirms one atomic bulk move across completed spaces", forProjects(["desktop-chromium", "mobile-chromium"], "Phone and desktop cover the responsive bulk-move confirmation"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    !["desktop-chromium", "mobile-chromium"].includes(testInfo.project.name),
-    "Phone and desktop cover the responsive bulk-move confirmation",
-  );
+}) => {
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await page.locator(".nav:visible", { hasText: "Inventory" }).click();
   const pasta = page.getByRole("checkbox", {
@@ -6213,13 +6096,9 @@ test("shows workspace backup state and removes only the device copy", async ({ p
   })).toBeVisible();
 });
 
-test("removes an inactive device copy without switching the active workspace", async ({
+test("removes an inactive device copy without switching the active workspace", forProjects(["desktop-chromium"], "One desktop project covers inactive workspace removal"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "desktop-chromium",
-    "One desktop project covers inactive workspace removal",
-  );
+}) => {
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await openWorkspaceHub(page);
   await page.getByLabel("New workspace").fill("Active workspace");
@@ -6265,13 +6144,9 @@ test("removes an inactive device copy without switching the active workspace", a
   }).toBe("Active workspace");
 });
 
-test("presents unavailable backup as device storage without crushing workspace tools", async ({
+test("presents unavailable backup as device storage without crushing workspace tools", forProjects(["desktop-compact"], "The compact desktop project covers the constrained two-column action row"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "desktop-compact",
-    "The compact desktop project covers the constrained two-column action row",
-  );
+}) => {
   await page.route("**/api/auth/me", (route) => route.fulfill({
     body: JSON.stringify({ configured: false, user: null }),
     contentType: "application/json",
@@ -6338,13 +6213,9 @@ test("presents unavailable backup as device storage without crushing workspace t
   }
 });
 
-test("treats signed-out local backup as optional and dismisses its account hint", async ({
+test("treats signed-out local backup as optional and dismisses its account hint", forProjects(["desktop-chromium"], "One desktop project covers optional backup messaging"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "desktop-chromium",
-    "One desktop project covers optional backup messaging",
-  );
+}) => {
   await page.route("**/api/auth/me", (route) => route.fulfill({
     body: JSON.stringify({ configured: true, user: null }),
     contentType: "application/json",
@@ -6376,13 +6247,9 @@ test("treats signed-out local backup as optional and dismisses its account hint"
   await expect(optionalNotice).toBeHidden();
 });
 
-test("makes an ended session loud only for a server-backed workspace", async ({
+test("makes an ended session loud only for a server-backed workspace", forProjects(["desktop-chromium"], "One desktop project covers interrupted backup messaging"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "desktop-chromium",
-    "One desktop project covers interrupted backup messaging",
-  );
+}) => {
   let signedIn = true;
   await page.route("**/api/auth/me", (route) => route.fulfill({
     body: JSON.stringify({
@@ -6461,13 +6328,9 @@ test("makes an ended session loud only for a server-backed workspace", async ({
   await expect(hubAlert).toBeHidden();
 });
 
-test("does not label the active workspace as backing up while another workspace syncs", async ({
+test("does not label the active workspace as backing up while another workspace syncs", forProjects(["desktop-chromium"], "One desktop project covers concurrent background sync presentation"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "desktop-chromium",
-    "One desktop project covers concurrent background sync presentation",
-  );
+}) => {
   let delayedWorkspaceId: string | null = null;
   let inactiveSyncObserved = false;
   let inactiveSyncReleased = false;
@@ -6567,8 +6430,7 @@ test("does not label the active workspace as backing up while another workspace 
   }
 });
 
-test("surfaces a background backup failure on mobile", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== "mobile-chromium", "The portrait phone project covers the mobile alert");
+test("surfaces a background backup failure on mobile", forProjects(["mobile-chromium"], "The portrait phone project covers the mobile alert"), async ({ page }) => {
   await page.route("**/api/auth/me", (route) => route.fulfill({
     body: JSON.stringify({
       configured: true,
@@ -6614,13 +6476,9 @@ test("surfaces a background backup failure on mobile", async ({ page }, testInfo
   );
 });
 
-test("distinguishes Cloudflare Access from Stowplan admin sign-in", async ({
+test("distinguishes Cloudflare Access from Stowplan admin sign-in", forProjects(["desktop-chromium"], "One desktop project covers administrator sign-in recovery"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "desktop-chromium",
-    "One desktop project covers administrator sign-in recovery",
-  );
+}) => {
   await page.route("**/api/admin/overview*", (route) => route.fulfill({
     body: JSON.stringify({
       code: "AUTHENTICATION_REQUIRED",
@@ -6651,13 +6509,9 @@ test("distinguishes Cloudflare Access from Stowplan admin sign-in", async ({
   })).toBeEnabled();
 });
 
-test("keeps redacted post-ban accounts disabled in administration", async ({
+test("keeps redacted post-ban accounts disabled in administration", forProjects(["desktop-chromium"], "One desktop project covers redacted account controls"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "desktop-chromium",
-    "One desktop project covers redacted account controls",
-  );
+}) => {
   await page.route("**/api/admin/overview*", (route) => route.fulfill({
     body: JSON.stringify({
       audit: [],
@@ -6702,13 +6556,9 @@ test("keeps redacted post-ban accounts disabled in administration", async ({
   await expectVisibleLabelsInAccessibleNames(page);
 });
 
-test("surfaces transport failures from admin mutations", async ({
+test("surfaces transport failures from admin mutations", forProjects(["desktop-chromium"], "One desktop project covers admin transport feedback"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "desktop-chromium",
-    "One desktop project covers admin transport feedback",
-  );
+}) => {
   await page.route("**/api/admin/overview", (route) => route.fulfill({
     body: JSON.stringify({
       audit: [],
@@ -6750,13 +6600,9 @@ test("surfaces transport failures from admin mutations", async ({
   );
 });
 
-test("sends concurrency revisions with global membership changes", async ({
+test("sends concurrency revisions with global membership changes", forProjects(["desktop-chromium"], "One desktop project covers administrative membership preconditions"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "desktop-chromium",
-    "One desktop project covers administrative membership preconditions",
-  );
+}) => {
   const mutations: Record<string, unknown>[] = [];
   await page.route("**/api/admin/overview*", (route) => route.fulfill({
     body: JSON.stringify({
@@ -6828,13 +6674,9 @@ test("sends concurrency revisions with global membership changes", async ({
   });
 });
 
-test("shows and searches the member who accepted a retained guest link", async ({
+test("shows and searches the member who accepted a retained guest link", forProjects(["desktop-chromium"], "One desktop project covers retained guest-link attribution"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "desktop-chromium",
-    "One desktop project covers retained guest-link attribution",
-  );
+}) => {
   const requestedQueries: string[] = [];
   await page.route("**/api/admin/overview*", (route) => {
     const query = new URL(route.request().url()).searchParams.get("q");
@@ -6929,13 +6771,9 @@ test("shows and searches the member who accepted a retained guest link", async (
   await expect(page.locator("#admin-memberships")).toBeFocused();
 });
 
-test("lets a global administrator delete a retained guest-link record", async ({
+test("lets a global administrator delete a retained guest-link record", forProjects(["desktop-chromium"], "One desktop project covers the destructive admin confirmation"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "desktop-chromium",
-    "One desktop project covers the destructive admin confirmation",
-  );
+}) => {
   let mutation: Record<string, unknown> | null = null;
   const overview = {
     audit: [],
@@ -7309,13 +7147,9 @@ test("keeps server administration searchable and responsive", async ({
   await expect(page.locator("#admin-users")).toBeFocused();
 });
 
-test("keeps the newest admin search response", async ({
+test("keeps the newest admin search response", forProjects(["desktop-chromium"], "One desktop project covers request ordering"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "desktop-chromium",
-    "One desktop project covers request ordering",
-  );
+}) => {
   let initialStarted = false;
   let initialFinished = false;
   let releaseInitial = () => {};
@@ -7379,13 +7213,9 @@ test("keeps the newest admin search response", async ({
   }
 });
 
-test("reports blocked safety and workspace downloads", async ({
+test("reports blocked safety and workspace downloads", forProjects(["desktop-chromium"], "One desktop project covers download failure feedback"), async ({
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "desktop-chromium",
-    "One desktop project covers download failure feedback",
-  );
+}) => {
   await page.getByRole("button", {
     name: "Open kitchen demo",
   }).click();
@@ -7443,14 +7273,10 @@ test("has no serious accessibility violations and reloads offline", async ({ pag
   await expect(page.getByRole("heading", { name: "Capture" })).toBeVisible();
 });
 
-test("keeps approved shell routes available without caching APIs", async ({
+test("keeps approved shell routes available without caching APIs", forProjects(["desktop-chromium"], "One production Chromium project covers service-worker cache boundaries"), async ({
   context,
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "desktop-chromium",
-    "One production Chromium project covers service-worker cache boundaries",
-  );
+}) => {
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await expect(page.getByRole("heading", {
     name: "Capture",
@@ -7515,13 +7341,9 @@ test("keeps approved shell routes available without caching APIs", async ({
   )).toBe(false);
 });
 
-test("includes visible labels in names of core controls", async ({
+test("includes visible labels in names of core controls", forProjects(["desktop-chromium", "mobile-chromium"], "Phone and wide desktop cover responsive visible labels"), async ({
   page,
 }, testInfo) => {
-  test.skip(
-    !["desktop-chromium", "mobile-chromium"].includes(testInfo.project.name),
-    "Phone and wide desktop cover responsive visible labels",
-  );
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await expectVisibleLabelsInAccessibleNames(page);
 

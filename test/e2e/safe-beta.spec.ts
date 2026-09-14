@@ -5,7 +5,6 @@ import type {
   Page,
   Request,
   Route,
-  TestInfo,
 } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { workspacePath } from "../../src/domain/app-url";
@@ -20,6 +19,7 @@ import { ACCOUNT_CONTEXT_HEADER } from "../../src/shared/account-context";
 import {
   SERVER_WORKSPACE_DELETION_FRAGMENT,
 } from "../../src/shared/workspace-deletion";
+import { forProjects } from "./browser-projects";
 
 const CHROMIUM_RESPONSIVE_PROJECTS = Object.freeze([
   "mobile-chromium",
@@ -28,7 +28,7 @@ const CHROMIUM_RESPONSIVE_PROJECTS = Object.freeze([
   "tablet-landscape",
   "desktop-compact",
   "desktop-chromium",
-]);
+] as const);
 const PHONE_PROJECT = "mobile-chromium";
 const DESKTOP_PROJECT = "desktop-chromium";
 const WEBKIT_PHONE_PROJECT = "webkit-phone";
@@ -39,16 +39,6 @@ const ACTIVE_CATALOG_ACCOUNT_KEY = "catalog-account:active";
 const CATALOG_KEY_PREFIX = "catalog:";
 const SERVER_DELETION_RECOVERY_REASON =
   "server workspace was deleted before this local change was backed up";
-
-function skipUnlessProject(
-  testInfo: TestInfo,
-  projects: readonly string[],
-): void {
-  test.skip(
-    !projects.includes(testInfo.project.name),
-    `Covered in ${projects.join(", ")}`,
-  );
-}
 
 function cardFor(page: Page, workspaceName: string): Locator {
   return page.getByRole("article").filter({
@@ -468,12 +458,8 @@ test(
 );
 
 test(
-  "keeps a known viewer read-only while preserving search and inspection",
-  async ({ browser, context, page, safeBeta }, testInfo) => {
-    skipUnlessProject(testInfo, [
-      ...CHROMIUM_RESPONSIVE_PROJECTS,
-      WEBKIT_TABLET_PROJECT,
-    ]);
+  "keeps a known viewer read-only while preserving search and inspection", forProjects([...CHROMIUM_RESPONSIVE_PROJECTS, WEBKIT_TABLET_PROJECT]),
+  async ({ browser, context, page, safeBeta }) => {
     const ownerContext = await newContext(browser, safeBeta.origin);
     try {
       await safeBeta.signIn(ownerContext, "viewer owner");
@@ -590,9 +576,8 @@ test(
 );
 
 test(
-  "allows editor content changes without exposing owner-only access actions",
-  async ({ browser, context, page, safeBeta }, testInfo) => {
-    skipUnlessProject(testInfo, [DESKTOP_PROJECT]);
+  "allows editor content changes without exposing owner-only access actions", forProjects([DESKTOP_PROJECT]),
+  async ({ browser, context, page, safeBeta }) => {
     const ownerContext = await newContext(browser, safeBeta.origin);
     try {
       await safeBeta.signIn(ownerContext, "editor owner");
@@ -668,9 +653,8 @@ test(
 );
 
 test(
-  "streams collaborator changes within five seconds without polling or focus",
-  async ({ browser, context, page, safeBeta }, testInfo) => {
-    skipUnlessProject(testInfo, [DESKTOP_PROJECT]);
+  "streams collaborator changes within five seconds without polling or focus", forProjects([DESKTOP_PROJECT]),
+  async ({ browser, context, page, safeBeta }) => {
     await safeBeta.signIn(context, "live reconciliation owner");
     const workspace = await safeBeta.createWorkspace(
       context,
@@ -767,9 +751,8 @@ test(
 );
 
 test(
-  "opens blocked workspace recovery directly from the workspace hub",
-  async ({ context, page, safeBeta }, testInfo) => {
-    skipUnlessProject(testInfo, [DESKTOP_PROJECT]);
+  "opens blocked workspace recovery directly from the workspace hub", forProjects([DESKTOP_PROJECT]),
+  async ({ context, page, safeBeta }) => {
     await safeBeta.signIn(context, "hub recovery owner");
     const workspace = await safeBeta.createWorkspace(
       context,
@@ -806,12 +789,8 @@ test(
 );
 
 test(
-  "manages members and invite links with keyboard-confirmed owner actions",
-  async ({ browser, context, page, safeBeta }, testInfo) => {
-    skipUnlessProject(testInfo, [
-      ...CHROMIUM_RESPONSIVE_PROJECTS,
-      WEBKIT_TABLET_PROJECT,
-    ]);
+  "manages members and invite links with keyboard-confirmed owner actions", forProjects([...CHROMIUM_RESPONSIVE_PROJECTS, WEBKIT_TABLET_PROJECT]),
+  async ({ browser, context, page, safeBeta }) => {
     test.slow();
     await page.addInitScript(() => {
       Object.defineProperty(navigator, "share", {
@@ -1079,12 +1058,8 @@ test(
 );
 
 test(
-  "keeps invitation previews inert until a signed-in account confirms",
+  "keeps invitation previews inert until a signed-in account confirms", forProjects([DESKTOP_PROJECT, WEBKIT_PHONE_PROJECT]),
   async ({ browser, context, page, safeBeta }, testInfo) => {
-    skipUnlessProject(testInfo, [
-      DESKTOP_PROJECT,
-      WEBKIT_PHONE_PROJECT,
-    ]);
     const ownerContext = await newContext(browser, safeBeta.origin);
     try {
       await safeBeta.signIn(ownerContext, "browser invite owner");
@@ -1221,9 +1196,8 @@ test(
 );
 
 test(
-  "rejects a stale tab sync after the shared browser session switches accounts",
-  async ({ browser, context, page, safeBeta }, testInfo) => {
-    skipUnlessProject(testInfo, [DESKTOP_PROJECT]);
+  "rejects a stale tab sync after the shared browser session switches accounts", forProjects([DESKTOP_PROJECT]),
+  async ({ browser, context, page, safeBeta }) => {
     test.slow();
     const secondTab = await context.newPage();
     await page.bringToFront();
@@ -1371,12 +1345,8 @@ test(
 );
 
 test(
-  "reconciles an offline role downgrade and retains the rejected local command",
-  async ({ browser, context, page, safeBeta }, testInfo) => {
-    skipUnlessProject(testInfo, [
-      DESKTOP_PROJECT,
-      WEBKIT_PHONE_PROJECT,
-    ]);
+  "reconciles an offline role downgrade and retains the rejected local command", forProjects([DESKTOP_PROJECT, WEBKIT_PHONE_PROJECT]),
+  async ({ browser, context, page, safeBeta }) => {
     test.slow();
     const ownerContext = await newContext(browser, safeBeta.origin);
     try {
@@ -1484,9 +1454,8 @@ test(
 );
 
 test(
-  "hides owner access controls when reconciliation downgrades the active account",
-  async ({ browser, context, page, safeBeta }, testInfo) => {
-    skipUnlessProject(testInfo, [DESKTOP_PROJECT]);
+  "hides owner access controls when reconciliation downgrades the active account", forProjects([DESKTOP_PROJECT]),
+  async ({ browser, context, page, safeBeta }) => {
     const ownerContext = await newContext(browser, safeBeta.origin);
     try {
       await safeBeta.signIn(ownerContext, "access downgrade owner");
@@ -1566,9 +1535,8 @@ test(
 );
 
 test(
-  "replaces an open access page with retained-copy guidance after remote removal",
-  async ({ browser, context, page, safeBeta }, testInfo) => {
-    skipUnlessProject(testInfo, [DESKTOP_PROJECT]);
+  "replaces an open access page with retained-copy guidance after remote removal", forProjects([DESKTOP_PROJECT]),
+  async ({ browser, context, page, safeBeta }) => {
     test.slow();
     const ownerContext = await newContext(browser, safeBeta.origin);
     try {
@@ -1688,9 +1656,8 @@ test(
 );
 
 test(
-  "keeps each tab on its selected workspace during catalog reconciliation",
-  async ({ context, page, safeBeta }, testInfo) => {
-    skipUnlessProject(testInfo, [DESKTOP_PROJECT]);
+  "keeps each tab on its selected workspace during catalog reconciliation", forProjects([DESKTOP_PROJECT]),
+  async ({ context, page, safeBeta }) => {
     await safeBeta.signIn(context, "cross-tab owner");
     const workspaceA = await safeBeta.createWorkspace(
       context,
@@ -1741,9 +1708,8 @@ test(
 );
 
 test(
-  "removes only the device copy and rediscovers the server copy on a fresh device",
-  async ({ browser, context, page, safeBeta }, testInfo) => {
-    skipUnlessProject(testInfo, [DESKTOP_PROJECT]);
+  "removes only the device copy and rediscovers the server copy on a fresh device", forProjects([DESKTOP_PROJECT]),
+  async ({ browser, context, page, safeBeta }) => {
     await safeBeta.signIn(context, "device removal owner");
     const workspace = await safeBeta.createWorkspace(
       context,
@@ -1824,9 +1790,8 @@ test(
 );
 
 test(
-  "leaves membership while retaining an explicitly read-only device copy",
-  async ({ browser, context, page, safeBeta }, testInfo) => {
-    skipUnlessProject(testInfo, [DESKTOP_PROJECT]);
+  "leaves membership while retaining an explicitly read-only device copy", forProjects([DESKTOP_PROJECT]),
+  async ({ browser, context, page, safeBeta }) => {
     const ownerContext = await newContext(browser, safeBeta.origin);
     try {
       await safeBeta.signIn(ownerContext, "leave owner");
@@ -1901,9 +1866,8 @@ test(
 );
 
 test(
-  "retires a backed-up demo before opening a fresh private instance",
-  async ({ context, page, safeBeta }, testInfo) => {
-    skipUnlessProject(testInfo, [PHONE_PROJECT, DESKTOP_PROJECT]);
+  "retires a backed-up demo before opening a fresh private instance", forProjects([PHONE_PROJECT, DESKTOP_PROJECT]),
+  async ({ context, page, safeBeta }) => {
     const owner = await safeBeta.signIn(
       context,
       "isolated demo reset owner",
@@ -2008,13 +1972,8 @@ test(
 );
 
 test(
-  "deletes the server workspace without silently deleting the local replica",
-  async ({ browser, context, page, safeBeta }, testInfo) => {
-    skipUnlessProject(testInfo, [
-      ...CHROMIUM_RESPONSIVE_PROJECTS,
-      WEBKIT_PHONE_PROJECT,
-      WEBKIT_TABLET_PROJECT,
-    ]);
+  "deletes the server workspace without silently deleting the local replica", forProjects([...CHROMIUM_RESPONSIVE_PROJECTS, WEBKIT_PHONE_PROJECT, WEBKIT_TABLET_PROJECT]),
+  async ({ browser, context, page, safeBeta }) => {
     await safeBeta.signIn(context, "deletion owner");
     const workspace = await safeBeta.createWorkspace(
       context,
@@ -2216,12 +2175,8 @@ test(
 );
 
 test(
-  "returns through sign-in to an ordinary shared workspace URL",
+  "returns through sign-in to an ordinary shared workspace URL", forProjects([DESKTOP_PROJECT, WEBKIT_PHONE_PROJECT]),
   async ({ browser, page, safeBeta }, testInfo) => {
-    skipUnlessProject(testInfo, [
-      DESKTOP_PROJECT,
-      WEBKIT_PHONE_PROJECT,
-    ]);
     const setupContext = await newContext(browser, safeBeta.origin);
     let identity;
     let workspace;
@@ -2266,12 +2221,8 @@ test(
 );
 
 test(
-  "keeps session and global-admin controls usable in WebKit",
-  async ({ page }, testInfo) => {
-    skipUnlessProject(testInfo, [
-      WEBKIT_PHONE_PROJECT,
-      WEBKIT_TABLET_PROJECT,
-    ]);
+  "keeps session and global-admin controls usable in WebKit", forProjects([WEBKIT_PHONE_PROJECT, WEBKIT_TABLET_PROJECT]),
+  async ({ page }) => {
     const accountId = "usr_webkit_control";
     const responseHeaders = {
       [ACCOUNT_CONTEXT_HEADER]: accountId,
@@ -2452,14 +2403,8 @@ test(
 );
 
 test(
-  "inspects and controls a server workspace through the audited admin surface",
+  "inspects and controls a server workspace through the audited admin surface", forProjects([PHONE_PROJECT, DESKTOP_PROJECT, WEBKIT_PHONE_PROJECT, WEBKIT_TABLET_PROJECT]),
   async ({ page }, testInfo) => {
-    skipUnlessProject(testInfo, [
-      PHONE_PROJECT,
-      DESKTOP_PROJECT,
-      WEBKIT_PHONE_PROJECT,
-      WEBKIT_TABLET_PROJECT,
-    ]);
     const accountId = "usr_admin_inspector";
     const workspaceId = "ws_admin_inspector";
     const workspaceName = "Admin inspection workspace";
@@ -2847,9 +2792,8 @@ test(
 );
 
 test(
-  "ignores an older inspection response after newer custody reconciliation",
-  async ({ page }, testInfo) => {
-    skipUnlessProject(testInfo, [DESKTOP_PROJECT]);
+  "ignores an older inspection response after newer custody reconciliation", forProjects([DESKTOP_PROJECT]),
+  async ({ page }) => {
     const accountId = "usr_admin_inspection_race";
     const workspaceId = "ws_admin_inspection_race";
     const workspaceName = "Inspection race workspace";
