@@ -129,32 +129,32 @@ function mockOwnerSyncResponse(
 }
 
 async function localReplica(page: Page) {
-  const handle = await page.waitForFunction(() =>
-    new Promise<false | Record<string, unknown>>((resolve, reject) => {
-      const open = indexedDB.open("stowplan-v1", 1);
-      open.onerror = () => reject(open.error);
-      open.onsuccess = () => {
-        const database = open.result;
-        const request = database.transaction("records")
-          .objectStore("records")
-          .get("active");
-        request.onerror = () => {
-          database.close();
-          reject(request.error);
+  let replica: Record<string, unknown> | undefined;
+  await expect.poll(async () => {
+    replica = await page.evaluate(() =>
+      new Promise<Record<string, unknown> | undefined>((resolve, reject) => {
+        const open = indexedDB.open("stowplan-v1", 1);
+        open.onerror = () => reject(open.error);
+        open.onsuccess = () => {
+          const database = open.result;
+          const request = database.transaction("records")
+            .objectStore("records")
+            .get("active");
+          request.onerror = () => {
+            database.close();
+            reject(request.error);
+          };
+          request.onsuccess = () => {
+            const replica = request.result as Record<string, unknown> | undefined;
+            database.close();
+            resolve(replica);
+          };
         };
-        request.onsuccess = () => {
-          const replica = request.result as Record<string, unknown> | undefined;
-          database.close();
-          resolve(replica ?? false);
-        };
-      };
-    })
-  );
-  try {
-    return await handle.jsonValue() as Record<string, unknown>;
-  } finally {
-    await handle.dispose();
-  }
+      })
+    );
+    return Boolean(replica?.state);
+  }).toBe(true);
+  return replica!;
 }
 
 async function expectVisibleLabelsInAccessibleNames(
@@ -7452,6 +7452,10 @@ test("keeps approved shell routes available without caching APIs", async ({
     "One production Chromium project covers service-worker cache boundaries",
   );
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
+  await expect(page.getByRole("heading", {
+    name: "Capture",
+    exact: true,
+  })).toBeVisible();
   await page.evaluate(() => navigator.serviceWorker.ready);
   await page.reload();
 
