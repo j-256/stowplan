@@ -70,7 +70,7 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
-    "@cloudflare/vite-plugin": "1.54.6",
+    "@cloudflare/vite-plugin": "1.54.7",
     "@cloudflare/vitest-pool-workers": "0.22.0",
     "@cloudflare/workers-types": "^5.20260826.1",
     "@opennextjs/cloudflare": "^1.20.6",
@@ -78,8 +78,8 @@
     "@tailwindcss/postcss": "4.3.3",
     "@types/node": "^26.5.1",
     "@types/qrcode": "^1.5.6",
-    "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "6.1.1",
     "@vitejs/plugin-rsc": "0.5.34",
     "@vitest/coverage-v8": "4.1.11",
@@ -93,7 +93,7 @@
     "tsx": "^4.23.13",
     "typescript": "^6.0.3",
     "vinext": "0.0.45",
-    "vite": "8.2.2",
+    "vite": "8.3.0",
     "vitepress": "^1.6.4",
     "vitest": "^4.1.10",
     "wrangler": "^4.125.0"
