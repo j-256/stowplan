@@ -1,6 +1,5 @@
 import { expect, test, type Route } from "@playwright/test";
 
-const DATABASE_NAME = "stowplan-v1";
 const OWNER_ID = "usr_collaboration_owner";
 const OWNER_EMAIL = "collaboration-owner@example.test";
 const OWNER_NAME = "Collaboration Owner";
@@ -10,11 +9,6 @@ const OWNER_HEADERS = {
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/workspaces");
-  await page.evaluate((databaseName) => new Promise<void>((resolve) => {
-    const request = indexedDB.deleteDatabase(databaseName);
-    request.onsuccess = request.onerror = request.onblocked = () => resolve();
-  }), DATABASE_NAME);
-  await page.reload();
   await page.route("**/api/auth/sessions*", (route) => route.fulfill({
     body: JSON.stringify({
       currentSession: {

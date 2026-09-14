@@ -34,8 +34,14 @@ jobs:
         with:
           name: sbom
           path: stowplan-sbom.cdx.json
-  browser:
+  browser-shards:
+    name: Browser shard ${{ matrix.shard }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -44,7 +50,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps --no-shell chromium webkit
-      - run: bash scripts/verify-browser.sh
+      - run: bash scripts/verify-browser.sh --config=playwright.ci.config.ts
+        env:
+          STOWPLAN_BROWSER_SHARD: ${{ matrix.shard }}
       # Traces for retried attempts are the only evidence an intermittent
       # failure leaves behind, and the run that produced them is where they
       # would otherwise be discarded. Upload them even when the job passes,
@@ -52,7 +60,18 @@ jobs:
       - if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
-          name: playwright-traces
-          path: test-results/**/trace.zip
+          name: playwright-results-${{ matrix.shard }}
+          path: |
+            test-results/**/trace.zip
+            test-results/results.json
           if-no-files-found: ignore
           retention-days: 30
+  browser:
+    if: ${{ always() }}
+    needs: browser-shards
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every browser shard
+        env:
+          SHARD_RESULT: ${{ needs.browser-shards.result }}
+        run: test "$SHARD_RESULT" = success

@@ -5,6 +5,7 @@ import type { Command, WorkspaceState } from "../../src/domain/types";
 import type { LocalReplica } from "../../src/client/local-replica";
 import { expect, readActiveReplica, test, type SafeBetaFixture, type SyntheticWorkspace } from "./safe-beta-fixtures";
 import { projectContextOptions } from "./project-context";
+import { forProjects } from "./browser-projects";
 
 async function seedReplica(page: Page, replica: LocalReplica) {
   await page.evaluate((serialized) => new Promise<void>((resolve, reject) => {
@@ -116,8 +117,7 @@ test("reviews mixed field choices, revisits decisions, persists, and backs up th
   expect((await snapshot.json()).state.items[0]).toMatchObject({ category: "Staples", frequency: "daily", description: "Shared online note" });
 });
 
-test("cancels without writes and keeps choices through a failed offline save", async ({ page, context, safeBeta }, testInfo) => {
-  test.skip(!["mobile-chromium", "desktop-chromium"].includes(testInfo.project.name), "Phone and desktop cover cancellation and an offline retry");
+test("cancels without writes and keeps choices through a failed offline save", forProjects(["mobile-chromium", "desktop-chromium"], "Phone and desktop cover cancellation and an offline retry"), async ({ page, context, safeBeta }) => {
   const { replica } = await prepare(page, context, safeBeta);
   const { dialog } = await saveBundleAndCompare(page);
   await dialog.getByRole("radio", { name: "Use device: Grains", exact: true }).check();
@@ -171,8 +171,7 @@ test("invalidates changed online values and refuses to replace a newer device qu
   } finally { await second.close(); }
 });
 
-test("rechecks editor access before saving and keeps the recovery bundle available", async ({ browser, page, context, safeBeta }, testInfo) => {
-  test.skip(testInfo.project.name !== "desktop-chromium", "One desktop project covers a real membership change during review");
+test("rechecks editor access before saving and keeps the recovery bundle available", forProjects(["desktop-chromium"], "One desktop project covers a real membership change during review"), async ({ browser, page, context, safeBeta }, testInfo) => {
   await safeBeta.signIn(context, "recovery owner");
   const workspace = await safeBeta.createWorkspace(context, "permissions", "Permission pantry");
   const invite = await safeBeta.createInvite(context, workspace.state.workspace.id, "editor");
