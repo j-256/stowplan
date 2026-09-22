@@ -3,7 +3,7 @@
 //
 // Programmatic rather than hand-captured: the page is the app (no chrome to
 // crop), the input is fixed (the built-in "Kitchen reset" demo the /demo route
-// seeds), and deviceScaleFactor 2 keeps the dense capture/plan UI crisp.
+// seeds), and deviceScaleFactor 4 preserves detail when the preview is enlarged
 //
 // The app is a client-rendered SPA backed by a Node server over HTTPS with a
 // __Host- session cookie, so it needs the SAME server the e2e suite uses -- a
@@ -173,7 +173,7 @@ async function main() {
       // the same kitchen at this profile's viewport.
       const context = await browserInstance.newContext({
         viewport: profile.viewport,
-        deviceScaleFactor: 2, // retina: capture rows and item editors stay sharp
+        deviceScaleFactor: 4, // retina: capture rows and item editors stay sharp
         ignoreHTTPSErrors: true,
         // The app's default theme is "system"; dark here makes it resolve to dark.
         colorScheme: 'dark',
