@@ -60,9 +60,9 @@
     "deploy:live-relay": "wrangler deploy --config wrangler.live.jsonc"
   },
   "dependencies": {
-    "drizzle-orm": "0.45.2",
+    "drizzle-orm": "0.45.3",
     "jose": "^6.2.12",
-    "lucide-react": "^1.46.0",
+    "lucide-react": "^1.47.0",
     "next": "^16.3.5",
     "qrcode": "^1.5.4",
     "react": "^19.3.0",
@@ -82,7 +82,7 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "6.1.1",
     "@vitejs/plugin-rsc": "0.5.35",
-    "@vitest/coverage-v8": "5.0.1",
+    "@vitest/coverage-v8": "4.1.11",
     "drizzle-kit": "0.31.11",
     "eslint": "9.39.5",
     "eslint-config-next": "^16.3.5",
@@ -95,7 +95,7 @@
     "vinext": "0.0.45",
     "vite": "8.3.0",
     "vitepress": "^1.6.4",
-    "vitest": "^5.0.1",
+    "vitest": "^4.1.11",
     "wrangler": "^4.125.0"
   },
   "overrides": {
