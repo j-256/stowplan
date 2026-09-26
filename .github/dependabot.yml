@@ -21,6 +21,11 @@ updates:
     # while every other package in it is fine. Hold both back and drop the entry
     # once the bundled plugins accept the new major
     ignore:
+      # Cloudflare workers test pool requires Vitest 4
+      - dependency-name: vitest
+        versions: ["5.x"]
+      - dependency-name: "@vitest/coverage-v8"
+        versions: ["5.x"]
       # Vinext 0.0.46 through 0.2.1 pin vulnerable image-size 2.0.2
       # Resume proposals when Vinext ships beyond the affected range
       - dependency-name: vinext
