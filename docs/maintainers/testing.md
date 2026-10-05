@@ -16,7 +16,7 @@ The component commands below are useful when diagnosing a failed final gate. The
 
 ```bash
 npm ci
-npm audit
+node scripts/audit-dependencies.mjs
 npm run typecheck
 npm run lint
 npm run test:coverage
@@ -92,7 +92,7 @@ One real production Google account is sufficient to canary Google's hosted flow,
 
 Quota and circuit tests assert both the preflight response and the transaction-time guard. A test that pauses one circuit must prove unaffected paths remain available. Security-pause tests cover future resume and repeated-trigger metadata; capacity-pause tests remain latched until an audited reopen. Reconnect tests limit concurrent workspaces, preserve the full `Retry-After` not-before floor while bounding local backoff and timer slices, and prove no outbox envelope is lost or reordered.
 
-The release gate audits the complete dependency tree and fails on every reported severity. Production packages and development tooling can both process inputs, contact services, or expose local servers during builds, so keep every reported advisory resolved and run tooling only against trusted source on localhost or in isolated CI.
+The release gate audits the complete dependency tree and fails on every reported severity except `GHSA-vfj7-8cjw-p6xm` when the report proves that the advisory reaches only direct development tools. The affected `braces` release has no patched successor, and Stowplan supplies only trusted source-owned glob patterns to its lint and preview tooling. The audit wrapper verifies the exact advisory URL, traces every reported parent back to that advisory, refuses runtime dependencies, and fails closed on any additional finding. Keep every other reported advisory resolved and run tooling only against trusted source on localhost or in isolated CI.
 
 Bulk-edit regressions cover no-op selection, tag operations, per-item and per-constraint expectations, explicit completed-space reopening, atomic refusal, history validation and reversal, and independent later fields. Node SQLite and D1 adapter tests persist the same queued command, deduplicate its replay, and retain a refused batch. Browser coverage exercises the edit/review/save flow offline, selection filtering, cancellation and focus restoration, accessibility, responsive overflow, undo, and stale review after another tab edits a selected field.
 
