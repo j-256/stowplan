@@ -25,8 +25,8 @@ endgroup() {
   echo "::endgroup::"
 }
 
-group "full dependency audit"
-npm audit
+group "bounded dependency audit"
+node scripts/audit-dependencies.mjs
 endgroup
 
 group "documentation cover"
