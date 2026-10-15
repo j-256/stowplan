@@ -2071,6 +2071,8 @@ test(
         status: "blocked",
       }),
     ]);
+    // Return keyboard focus from the browser's native download UI
+    await exportCopy.focus();
     await page.keyboard.press("Shift+Tab");
     await expect(keepCopy).toBeFocused();
     await page.keyboard.press("Enter");

@@ -12,6 +12,8 @@ It requires a clean worktree, installs the versioned pre-push hook, runs `script
 
 The project-local Codex hooks add an agent-specific guard: they reject `git push --no-verify`, reject Stowplan pushes unless `HEAD` is exact-verified and the worktree is clean, and continue a turn that tries to claim completion or push readiness before verification. Codex requires review and trust whenever a project hook definition is new or changes; inspect and trust this repository's hooks with `/hooks`. The Git hook remains the client-independent backstop, while both mechanisms are local workflow controls rather than a security boundary against a person deliberately disabling them.
 
+Next configuration initializes OpenNext's local Cloudflare bindings only for the development-server phase. Production configuration evaluation must not create a local Worker or retain its handles; the phase regression test and bounded Sites build cover that boundary.
+
 The component commands below are useful when diagnosing a failed final gate. The browser component is included explicitly so a local verification list cannot omit the matrix that CI runs:
 
 ```bash

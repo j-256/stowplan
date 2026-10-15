@@ -6,7 +6,7 @@ On a phone, choose **More → Activity**. Wider layouts keep **Activity** in the
 
 ## Read the timeline
 
-Activity lists the newest changes first. Each entry names the affected records and meaningful fields, while whole-record creation or deletion is labeled as a record change. Stowplan's internal timestamps and version bookkeeping do not appear as user changes.
+Activity lists the newest changes first. Dates and times follow your locale, with seconds omitted to keep the timeline compact; backups retain the exact timestamps. Each entry names the affected records and meaningful fields, while whole-record creation or deletion is labeled as a record change. Stowplan's internal timestamps and version bookkeeping do not appear as user changes.
 
 The separate **Undo and reapply log** shows each history action and the changes it targeted. Choose **Show older changes** or **Show older actions** when a retained list is longer than the first page. Viewers see the same timeline and log without editing controls.
 

@@ -1,15 +1,6 @@
 import type { NextConfig } from "next";
+import { PHASE_DEVELOPMENT_SERVER } from "next/constants.js";
 import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
-
-// Makes getCloudflareContext() and local Wrangler bindings available to
-// `next dev`. OpenNext treats this as a no-op for production builds
-const localPersistencePath =
-  process.env.STOWPLAN_WRANGLER_PERSIST_PATH;
-initOpenNextCloudflareForDev(
-  localPersistencePath
-    ? { persist: { path: localPersistencePath } }
-    : undefined,
-);
 
 function liveRelayConnectSources(value: string | undefined): string[] {
   if (!value?.trim()) return [];
@@ -87,4 +78,14 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+export default function configure(phase: string): NextConfig {
+  if (phase === PHASE_DEVELOPMENT_SERVER) {
+    const localPersistencePath = process.env.STOWPLAN_WRANGLER_PERSIST_PATH;
+    initOpenNextCloudflareForDev(
+      localPersistencePath
+        ? { persist: { path: localPersistencePath } }
+        : undefined,
+    );
+  }
+  return nextConfig;
+}

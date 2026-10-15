@@ -3239,6 +3239,11 @@ test("guides completed inventory edits and moves through recertification", forPr
   );
   await editor.getByRole("button", { name: "Reopen capture" }).click();
   editor = page.getByRole("dialog", { name: "Edit item" });
+  const coarsePointer = await page.evaluate(() =>
+    matchMedia("(pointer: coarse)").matches
+  );
+  await expect(coarsePointer ? editor : editor.getByLabel("Item name"))
+    .toBeFocused();
   await editor.getByLabel("Description").fill("Unbleached all-purpose flour");
   await editor.getByRole("button", { name: "Save item" }).click();
   await expect(editor.getByText("Saved on this device.")).toBeVisible();
@@ -5697,6 +5702,7 @@ test("executes a planned move and rolls it back from Activity", async ({ page })
 test("plucks an older same-item edit and records each history action", forProjects(["desktop-chromium", "mobile-chromium"], "Phone and desktop cover the responsive Activity workflow"), async ({
   page,
 }, testInfo) => {
+  await page.clock.setSystemTime(new Date(2026, 9, 15, 11, 30));
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await reopenCaptureLocation(page, "loc_warm");
   await page.locator(".nav:visible", { hasText: "Inventory" }).click();
