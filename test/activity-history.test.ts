@@ -127,6 +127,20 @@ describe("Activity history presentation", () => {
     )).toBe("Change 1; Change 2; 1 more retained change");
   });
 
+  it("keeps visible timestamps compact while preserving the complete event time", () => {
+    const state = createDemoState();
+    const timestamp = "2026-10-15T11:30:45.000Z";
+    state.activities = [activity(1, { timestamp })];
+    const markup = renderToStaticMarkup(createElement(ActivityHistory, { state }));
+    const time = markup.match(/<time([^>]*)>([^<]*)<\/time>/);
+    expect(time?.[1]).toContain(`dateTime="${timestamp}"`);
+    expect(time?.[1]).toContain(`title="${new Date(timestamp).toLocaleString()}"`);
+    expect(time?.[2]).toBe(new Date(timestamp).toLocaleString(undefined, {
+      dateStyle: "short",
+      timeStyle: "short",
+    }));
+  });
+
   it("renders changes and history actions newest first in both modes", () => {
     const state = createDemoState();
     state.activities = [activity(1), activity(2)];

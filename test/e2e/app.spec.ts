@@ -5702,6 +5702,7 @@ test("executes a planned move and rolls it back from Activity", async ({ page })
 test("plucks an older same-item edit and records each history action", forProjects(["desktop-chromium", "mobile-chromium"], "Phone and desktop cover the responsive Activity workflow"), async ({
   page,
 }, testInfo) => {
+  await page.clock.setSystemTime(new Date(2026, 9, 15, 11, 30));
   await page.getByRole("button", { name: "Open kitchen demo" }).click();
   await reopenCaptureLocation(page, "loc_warm");
   await page.locator(".nav:visible", { hasText: "Inventory" }).click();

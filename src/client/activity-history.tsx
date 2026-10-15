@@ -141,9 +141,17 @@ export function createActivityActionGate(): ActivityActionGate {
   };
 }
 
-function formatTimestamp(timestamp: string): string {
+const COMPACT_TIMESTAMP_OPTIONS = Object.freeze({
+  dateStyle: "short",
+  timeStyle: "short",
+} as const);
+
+function formatTimestamp(
+  timestamp: string,
+  options?: Intl.DateTimeFormatOptions,
+): string {
   const date = new Date(timestamp);
-  return Number.isFinite(date.getTime()) ? date.toLocaleString() : timestamp;
+  return Number.isFinite(date.getTime()) ? date.toLocaleString(undefined, options) : timestamp;
 }
 
 export function ActivityHistory({ onCommand, state }: ActivityHistoryProps) {
@@ -238,13 +246,13 @@ export function ActivityHistory({ onCommand, state }: ActivityHistoryProps) {
         {activities.map((entry, index) => {
           const action = entry.status === "applied" ? "Undo" : "Reapply";
           const key = `activity-${entry.id}`;
-          const timestamp = formatTimestamp(entry.timestamp);
+          const timestamp = formatTimestamp(entry.timestamp, COMPACT_TIMESTAMP_OPTIONS);
           return <div className="activity-row" data-status={entry.status} key={entry.id}>
             <Undo2 aria-hidden="true" />
             <span>
               <strong>{entry.label}</strong>
               <small id={`activity-detail-${index}`}>
-                <time dateTime={entry.timestamp}>{timestamp}</time>
+                <time dateTime={entry.timestamp} title={formatTimestamp(entry.timestamp)}>{timestamp}</time>
                 {` · ${activityChangeSummary(entry)}`}
               </small>
             </span>
@@ -303,7 +311,7 @@ export function ActivityHistory({ onCommand, state }: ActivityHistoryProps) {
           <span>
             <strong>{event.label}</strong>
             <small>
-              <time dateTime={event.timestamp}>{formatTimestamp(event.timestamp)}</time>
+              <time dateTime={event.timestamp} title={formatTimestamp(event.timestamp)}>{formatTimestamp(event.timestamp, COMPACT_TIMESTAMP_OPTIONS)}</time>
               {` · ${auditTargetSummary(event, state.activities)}`}
             </small>
           </span>
