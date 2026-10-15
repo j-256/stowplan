@@ -3239,6 +3239,11 @@ test("guides completed inventory edits and moves through recertification", forPr
   );
   await editor.getByRole("button", { name: "Reopen capture" }).click();
   editor = page.getByRole("dialog", { name: "Edit item" });
+  const coarsePointer = await page.evaluate(() =>
+    matchMedia("(pointer: coarse)").matches
+  );
+  await expect(coarsePointer ? editor : editor.getByLabel("Item name"))
+    .toBeFocused();
   await editor.getByLabel("Description").fill("Unbleached all-purpose flour");
   await editor.getByRole("button", { name: "Save item" }).click();
   await expect(editor.getByText("Saved on this device.")).toBeVisible();
