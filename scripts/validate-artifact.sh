@@ -22,7 +22,7 @@ artifact="${SITES_PROJECT_ROOT}/dist"
   exit 66
 }
 
-node --input-type=module - \
+node --import "${script_dir}/register-sites-validation-loader.mjs" --input-type=module - \
   "${worker}" \
   "${hosting}" \
   "${source_hosting}" \
