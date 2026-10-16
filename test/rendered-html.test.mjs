@@ -45,7 +45,7 @@ test("renders the landing hero at the site root", async () => {
   const html = await response.text();
   assert.match(html, /Find what you packed without opening every box\./);
   assert.match(html, /Organize one space at a time/);
-  assert.match(html, /<link[^>]+rel="canonical"[^>]+href="https:\/\/stowplan\.lasers\.app\/"[^>]*>/);
+  assert.match(html, /<link[^>]+rel="canonical"[^>]+href="https:\/\/stowplan\.lasers\.app\/?"[^>]*>/);
   assert.match(html, /<meta[^>]+name="robots"[^>]+content="index, follow"[^>]*>/);
 });
 
