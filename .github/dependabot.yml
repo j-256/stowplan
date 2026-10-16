@@ -30,6 +30,10 @@ updates:
       # Resume proposals when Vinext ships beyond the affected range
       - dependency-name: vinext
         versions: [">=0.0.46 <=0.2.1"]
+      # OpenNext 1.20.10 through 1.20.12 pull in audited vulnerable build tools
+      # Recheck the next release before lifting this bounded hold
+      - dependency-name: "@opennextjs/cloudflare"
+        versions: [">=1.20.10 <=1.20.12"]
       # typescript-eslint declares typescript <6.1 and refuses to load under 7.
       # Blocked upstream on asynchronous ESLint parser support, not a release
       - dependency-name: typescript
