@@ -4,7 +4,7 @@ set -euo pipefail
 # shellcheck disable=SC2016
 readonly GENERATED_AGENTS_BLOCK='<!-- BEGIN:nextjs-agent-rules -->
 
-# This is NOT the Next.js you know
+## This is NOT the Next.js you know
 
 This version has breaking changes \0342\0200\0224 APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file\0047s directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
 
