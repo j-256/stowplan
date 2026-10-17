@@ -2,6 +2,21 @@
 
 All notable changes follow Keep a Changelog. Versions use Semantic Versioning.
 
+## [1.2.9] - 2026-10-17
+
+### Changed
+
+- Updated supported application and development dependencies, including React, Vinext, OpenNext, Lucide, and the Node container image.
+- Published canonical page metadata, sitemap and robots directives, and refreshed project covers.
+
+### Fixed
+
+- Preserved compact Activity entries after the dependency updates.
+
+### Security
+
+- Updated patchable dependencies while retaining audit coverage for an unpatched development-tool advisory.
+
 ## [1.2.8] - 2026-09-13
 
 ### Added
