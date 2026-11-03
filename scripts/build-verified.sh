@@ -18,6 +18,21 @@ if [[ ! -x "${vinext}" ]]; then
   exit 69
 fi
 
+# Vinext removes dist without retries, so late Finder metadata can leave it nonempty
+node --input-type=module - "${SITES_PROJECT_ROOT}/dist" <<'NODE'
+import { rmSync } from "node:fs";
+
+const CLEANUP_MAX_RETRIES = 12;
+const CLEANUP_RETRY_DELAY_MILLISECONDS = 100;
+
+rmSync(process.argv[2], {
+  force: true,
+  maxRetries: CLEANUP_MAX_RETRIES,
+  recursive: true,
+  retryDelay: CLEANUP_RETRY_DELAY_MILLISECONDS,
+});
+NODE
+
 echo "Running bounded vinext build..."
 timeout \
   --signal=TERM \
