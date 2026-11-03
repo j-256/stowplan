@@ -111,6 +111,14 @@ export function ItemEditor({ item, state, commit, close, focus }: { item: ItemRe
       available[nextIndex]?.focus();
     };
     const frame = requestAnimationFrame(() => {
+      // A fast edit may focus a field before delayed initial focus runs
+      const active = document.activeElement;
+      if (
+        (active instanceof HTMLInputElement ||
+          active instanceof HTMLTextAreaElement ||
+          active instanceof HTMLSelectElement) &&
+        dialog.current?.contains(active)
+      ) return;
       if (captureComplete) {
         dialog.current
           ?.querySelector<HTMLButtonElement>("[data-reopen-capture]")
@@ -227,12 +235,6 @@ export function ItemEditor({ item, state, commit, close, focus }: { item: ItemRe
     });
     if (!reopened) return;
     setReopenedLocationId(locationId);
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() =>
-        dialog.current?.querySelector<HTMLInputElement>('input[name="name"]')
-          ?.focus()
-      );
-    });
   };
   const recertifyCapture = async () => {
     if (!reopenedLocation || recertifying) return;

@@ -5712,12 +5712,26 @@ test("plucks an older same-item edit and records each history action", forProjec
   await page.getByLabel("Quantity", { exact: true }).fill("7");
   await page.getByRole("button", { name: "Save item" }).click();
   await expect(page.getByText("Saved on this device.")).toBeVisible();
+  await expect.poll(async () => {
+    const replica = await localReplica(page) as {
+      state: { items: { id: string; quantity: number }[] };
+    };
+    return replica.state.items.find((item) => item.id === "item_pasta")
+      ?.quantity;
+  }).toBe(7);
   await page.getByRole("button", { name: "Close item editor" }).click();
 
   await page.locator('[data-item-id="item_pasta"] .item-name').click();
   await page.getByLabel("Description").fill("Added after the quantity edit");
   await page.getByRole("button", { name: "Save item" }).click();
   await expect(page.getByText("Saved on this device.")).toBeVisible();
+  await expect.poll(async () => {
+    const replica = await localReplica(page) as {
+      state: { items: { description: string; id: string }[] };
+    };
+    return replica.state.items.find((item) => item.id === "item_pasta")
+      ?.description;
+  }).toBe("Added after the quantity edit");
   await page.getByRole("button", { name: "Close item editor" }).click();
 
   await navigateToWorkspaceView(page, "Activity");
