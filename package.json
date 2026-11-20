@@ -70,11 +70,11 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.14.0",
-    "@cloudflare/vite-plugin": "1.68.0",
-    "@cloudflare/vitest-plugin": "1.6.1",
-    "@cloudflare/workers-types": "^5.20261110.1",
-    "@opennextjs/cloudflare": "1.20.16",
-    "@playwright/test": "^1.65.0",
+    "@cloudflare/vite-plugin": "1.69.1",
+    "@cloudflare/vitest-plugin": "1.8.3",
+    "@cloudflare/workers-types": "^5.20261117.1",
+    "@opennextjs/cloudflare": "1.20.17",
+    "@playwright/test": "^1.65.1",
     "@tailwindcss/postcss": "4.3.5",
     "@types/node": "^26.6.6",
     "@types/qrcode": "^1.5.6",
@@ -93,10 +93,10 @@
     "tsx": "^4.23.15",
     "typescript": "^6.0.3",
     "vinext": "1.4.4",
-    "vite": "8.3.7",
+    "vite": "8.3.8",
     "vitepress": "^1.6.4",
     "vitest": "^4.1.11",
-    "wrangler": "^4.159.0"
+    "wrangler": "^4.163.0"
   },
   "overrides": {
     "@esbuild-kit/core-utils": {
