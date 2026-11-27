@@ -61,8 +61,8 @@
   },
   "dependencies": {
     "drizzle-orm": "0.45.4",
-    "jose": "^6.2.17",
-    "lucide-react": "^1.73.0",
+    "jose": "^6.2.18",
+    "lucide-react": "^1.78.0",
     "next": "^16.4.6",
     "qrcode": "^1.5.4",
     "react": "^19.3.1",
