@@ -70,10 +70,10 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.14.0",
-    "@cloudflare/vite-plugin": "1.69.1",
-    "@cloudflare/vitest-plugin": "1.8.3",
-    "@cloudflare/workers-types": "^5.20261117.1",
-    "@opennextjs/cloudflare": "1.20.17",
+    "@cloudflare/vite-plugin": "1.70.1",
+    "@cloudflare/vitest-plugin": "1.9.1",
+    "@cloudflare/workers-types": "^5.20261124.1",
+    "@opennextjs/cloudflare": "1.20.18",
     "@playwright/test": "^1.65.1",
     "@tailwindcss/postcss": "4.3.5",
     "@types/node": "^26.6.6",
@@ -87,7 +87,7 @@
     "eslint": "9.39.5",
     "eslint-config-next": "^16.4.6",
     "fake-indexeddb": "^6.2.8",
-    "fast-check": "^4.10.2",
+    "fast-check": "^4.11.0",
     "react-server-dom-webpack": "19.3.1",
     "tailwindcss": "4.3.5",
     "tsx": "^4.23.15",
@@ -96,7 +96,7 @@
     "vite": "8.3.8",
     "vitepress": "^1.6.4",
     "vitest": "^4.1.11",
-    "wrangler": "^4.163.0"
+    "wrangler": "^4.167.0"
   },
   "overrides": {
     "@esbuild-kit/core-utils": {
